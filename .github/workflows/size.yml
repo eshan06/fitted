@@ -1,0 +1,39 @@
+name: Size
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+concurrency:
+  group: size-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  size:
+    name: Size
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Count changed lines
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          BODY: ${{ github.event.pull_request.body }}
+        # Runs main's copy of the counter, so a PR can't change how it is measured.
+        run: |
+          git show "$BASE:scripts/count-lines.sh" > /tmp/count-lines.sh 2>/dev/null || cp scripts/count-lines.sh /tmp/count-lines.sh
+          n=$(bash /tmp/count-lines.sh "$BASE")
+          echo "Counted changed lines: $n (cap 400 without a Size line, hard cap 800)"
+          if [ "$n" -gt 800 ]; then
+            echo "::error::$n counted lines is over the hard cap of 800. Split this PR."
+            exit 1
+          fi
+          if [ "$n" -gt 400 ] && ! printf '%s\n' "$BODY" | grep -qE '^Size: [^<[:space:]]'; then
+            echo "::error::$n counted lines is over 400. Split this PR, or add a 'Size: <reason>' line to its description."
+            exit 1
+          fi
