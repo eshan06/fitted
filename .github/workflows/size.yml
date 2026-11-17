@@ -1,7 +1,10 @@
 name: Size
 
+# pull_request_target runs main's copy of this workflow and checks out the base
+# commit, so a PR can't change the caps, the counter or its git attributes. The
+# PR is read only as git objects; none of its code runs here.
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened, edited]
 
 concurrency:
@@ -18,16 +21,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 0
+          persist-credentials: false
       - name: Count changed lines
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR: ${{ github.event.pull_request.number }}
           BODY: ${{ github.event.pull_request.body }}
-        # Runs main's copy of the counter, so a PR can't change how it is measured.
         run: |
-          git show "$BASE:scripts/count-lines.sh" > /tmp/count-lines.sh 2>/dev/null || cp scripts/count-lines.sh /tmp/count-lines.sh
-          n=$(bash /tmp/count-lines.sh "$BASE")
+          git fetch --no-tags origin "pull/$PR/head"
+          n=$(bash scripts/count-lines.sh "$BASE" "$HEAD_SHA")
           echo "Counted changed lines: $n (cap 400 without a Size line, hard cap 800)"
           if [ "$n" -gt 800 ]; then
             echo "::error::$n counted lines is over the hard cap of 800. Split this PR."

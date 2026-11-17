@@ -1,4 +1,4 @@
-# Careful paths: code where a bug does real damage. A change touching one runs
+# Careful paths: code where a bug does real damage, plus the gates themselves. A change touching one runs
 # the worker and both reviewers at max effort. Shell globs, one per line;
 # * also matches /. Read by /plan, /santa-loop (scripts/careful-paths.sh) and
 # the CI review, always from main.
@@ -12,3 +12,6 @@ app/*sync*
 app/*returns*
 app/routes/proxy.*
 extensions/*
+.github/*
+scripts/*
+.claude/*

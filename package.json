@@ -21,7 +21,7 @@
     "test": "vitest run --passWithNoTests",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test:scripts": "bash scripts/count-lines.test.sh && bash scripts/check-attribution.test.sh",
+    "test:scripts": "bash scripts/count-lines.test.sh && bash scripts/check-attribution.test.sh && bash scripts/careful-paths.test.sh",
     "check": "npm run typecheck && npm run lint && npm run format:check && npm test && npm run test:scripts"
   },
   "type": "module",

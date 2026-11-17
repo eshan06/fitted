@@ -6,7 +6,7 @@
 set -euo pipefail
 base="${1:-origin/main}"
 globs="$(git show "$base:.claude/careful-paths" 2>/dev/null || cat "$(git rev-parse --show-toplevel)/.claude/careful-paths")"
-git diff --name-only "$base...HEAD" | while IFS= read -r f; do
+git diff --name-only --no-renames "$base...HEAD" | while IFS= read -r f; do
   while IFS= read -r g; do
     case "$g" in '' | '#'*) continue ;; esac
     # shellcheck disable=SC2053  # $g is a glob on purpose; * also matches /

@@ -31,3 +31,6 @@ database.sqlite
 # Private market research, not for the public repo
 /reports/
 /research_notes/
+
+# ensure-deps install lock
+/.ensure-deps.lock
