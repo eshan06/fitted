@@ -9,3 +9,4 @@ Live traps only, one short entry each. The PR that fixes a trap deletes its entr
 - **Reviewer subagents must run in the foreground** of the worker's turn; a backgrounded one is lost when the turn ends.
 - **In a cloud session `gh pr create` may fail.** Use the GitHub MCP, then strip the footer it adds to the description.
 - **The Shopify CLI needs an interactive terminal** for sign-in and prompts. Run it in the owner's terminal, or pass every flag (`--name`, `--flavor`, `--client-id`).
+- **The agent shell may be zsh,** which compares `[[ $f == $glob ]]` as plain text. Run the pipeline scripts by path (their shebang is bash), never by pasting their loops into the shell.
