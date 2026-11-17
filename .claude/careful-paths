@@ -15,3 +15,9 @@ extensions/*
 .github/*
 scripts/*
 .claude/*
+package.json
+tsconfig.json
+*.config.*
+.eslintrc*
+.eslintignore
+.prettierignore

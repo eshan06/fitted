@@ -7,8 +7,8 @@ cd "$tmp"
 git init -q -b main && git config user.email t@example.com && git config user.name t
 git commit -q --allow-empty -m base && git checkout -qb work
 git commit -q --allow-empty -m "feat: clean change"
-expect() { # expect <pass|fail> <label> [PR_BODY]
-  if PR_BODY="${3:-}" bash "$script" main >/dev/null 2>&1; then r=pass; else r=fail; fi
+expect() { # expect <pass|fail> <label> [PR_BODY]; HEAD_ARG / BASE_ARG override the range
+  if PR_BODY="${3:-}" bash "$script" "${BASE_ARG:-main}" ${HEAD_ARG:+"$HEAD_ARG"} >/dev/null 2>&1; then r=pass; else r=fail; fi
   [ "$r" = "$1" ] || { echo "check-attribution self-test: $2 should $1" >&2; exit 1; }
 }
 expect pass "clean history"
@@ -24,4 +24,8 @@ for msg in $'fix: thing\n\nCo-Authored-By: Claude <noreply@anthropic.com>' \
   expect fail "attribution in a commit below the tip: ${msg##*$'\n'}"
   git reset -q --hard HEAD~2
 done
+git commit -q --allow-empty -m $'fix: thing\n\nCo-Authored-By: Claude <noreply@anthropic.com>'
+git checkout -q main                                          # CI's shape: checkout at base, head passed in
+HEAD_ARG=work expect fail "attribution with an explicit head"
+BASE_ARG=no-such-ref HEAD_ARG=work expect fail "a base that doesn't exist"
 echo "check-attribution self-test: ok"

@@ -16,7 +16,7 @@ git diff --numstat "$base...$head" | awk -F'\t' '
   p ~ /\.(test|spec)\.[^\/]+$/ { next }                         # test files
   p ~ /\.md$/ { next }                                          # Markdown
   p ~ /(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?)$/ { next }
-  p ~ /\.generated\./ || p ~ /^app\/types\// { next }           # generated code, GraphQL codegen
+  p ~ /\.generated\./ || p ~ /^app\/types\/.*\.d\.ts$/ { next }   # generated code, GraphQL codegen
   p ~ /(^|\/)migrations\// { next }                             # migrations
   { n += $1 + $2 }
   END { print n + 0 }'

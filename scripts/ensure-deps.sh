@@ -6,6 +6,7 @@
 top=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 [ -f "$top/package-lock.json" ] || exit 0
 [ -f "$top/node_modules/.package-lock.json" ] && exit 0 # npm writes this last, so a half install retries
+find "$top/.ensure-deps.lock" -maxdepth 0 -mmin +20 -exec rmdir {} \; 2>/dev/null # a killed install left it
 mkdir "$top/.ensure-deps.lock" 2>/dev/null || exit 0  # another call is already installing
 trap 'rmdir "$top/.ensure-deps.lock"' EXIT
 echo "ensure-deps: installing dependencies in $top" >&2

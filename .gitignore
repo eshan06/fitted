@@ -34,3 +34,6 @@ database.sqlite
 
 # ensure-deps install lock
 /.ensure-deps.lock
+
+# Local tool caches
+/.impeccable/

@@ -5,6 +5,7 @@ name: Size
 # PR is read only as git objects; none of its code runs here.
 on:
   pull_request_target:
+    branches: [main]
     types: [opened, synchronize, reopened, edited]
 
 concurrency:
@@ -21,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.sha }} # main's tip: the same commit this workflow file comes from
           fetch-depth: 0
           persist-credentials: false
       - name: Count changed lines

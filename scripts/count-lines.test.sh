@@ -24,4 +24,7 @@ git add . && git commit -qm work
 git checkout -q main && printf 'later\n' > later.ts && git add . && git commit -qm "main moves on" && git checkout -q work
 got="$(bash "$script" main)"
 [ "$got" = 5 ] || { echo "count-lines self-test: expected 5, got $got" >&2; exit 1; }
+git checkout -q main                                           # CI's shape: checkout at base, head passed in
+got="$(bash "$script" main work)"
+[ "$got" = 5 ] || { echo "count-lines self-test: with an explicit head, expected 5, got $got" >&2; exit 1; }
 echo "count-lines self-test: ok"
