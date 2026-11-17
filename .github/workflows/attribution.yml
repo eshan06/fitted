@@ -1,0 +1,35 @@
+name: Attribution
+
+# pull_request_target runs main's copy of this workflow and script against the
+# PR's commits, read as git objects; a PR can't loosen the check.
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
+
+concurrency:
+  group: attribution-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  attribution:
+    name: Attribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }} # main's tip: the same commit this workflow file comes from
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check commits and description
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR: ${{ github.event.pull_request.number }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          git fetch --no-tags origin "pull/$PR/head"
+          bash scripts/check-attribution.sh "$BASE" "$HEAD_SHA"

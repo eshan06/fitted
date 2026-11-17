@@ -1,0 +1,45 @@
+name: Size
+
+# pull_request_target runs main's copy of this workflow and checks out the base
+# commit, so a PR can't change the caps, the counter or its git attributes. The
+# PR is read only as git objects; none of its code runs here.
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
+
+concurrency:
+  group: size-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  size:
+    name: Size
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }} # main's tip: the same commit this workflow file comes from
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Count changed lines
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR: ${{ github.event.pull_request.number }}
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          git fetch --no-tags origin "pull/$PR/head"
+          n=$(bash scripts/count-lines.sh "$BASE" "$HEAD_SHA")
+          echo "Counted changed lines: $n (cap 400 without a Size line, hard cap 800)"
+          if [ "$n" -gt 800 ]; then
+            echo "::error::$n counted lines is over the hard cap of 800. Split this PR."
+            exit 1
+          fi
+          if [ "$n" -gt 400 ] && ! printf '%s\n' "$BODY" | grep -qE '^Size: [^<[:space:]]'; then
+            echo "::error::$n counted lines is over 400. Split this PR, or add a 'Size: <reason>' line to its description."
+            exit 1
+          fi

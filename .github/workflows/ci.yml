@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A newer push to a PR cancels its outdated run; pushes to main are never cancelled.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    name: Changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        # Docs-only PRs skip the test jobs through job-level ifs. Never use a
+        # workflow paths filter: a filtered-out required check never reports.
+        run: |
+          if [ -z "$BASE" ]; then echo "code=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          files=$(git diff --name-only --no-renames "$BASE"...HEAD)
+          if printf '%s\n' "$files" | grep -qvE '\.md$'; then code=true; else code=false; fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+
+  typecheck:
+    name: Typecheck
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: npm run typecheck
+
+  lint:
+    name: Lint
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: npm run lint
+
+  test:
+    name: Test
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: npm test
+
+  build:
+    name: Build
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: npm run build
+
+  format:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: npm run format:check
+
+  scripts:
+    name: Script self-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm run test:scripts
+
+  docs-cap:
+    name: Word caps
+    uses: ./.github/workflows/docs-cap.yml
+
+  # The one check branch protection requires.
+  gate:
+    name: CI gate
+    if: always()
+    needs: [changes, typecheck, lint, test, build, format, scripts, docs-cap]
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -e '.changes.result == "success" and ([.[].result] | all(. == "success" or . == "skipped"))'

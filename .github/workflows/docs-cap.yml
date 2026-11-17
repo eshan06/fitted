@@ -1,0 +1,16 @@
+name: Word caps
+
+# Called from ci.yml so the CI gate enforces it.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  caps:
+    name: Word caps
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/docs-cap.sh

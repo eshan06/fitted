@@ -1,0 +1,13 @@
+name: Setup
+description: Node 22, a cached npm install and the Prisma client.
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
+        cache: npm
+    - run: npm ci --no-audit --no-fund
+      shell: bash
+    - run: npx prisma generate
+      shell: bash
