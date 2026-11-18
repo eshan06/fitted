@@ -2,7 +2,7 @@
 
 ## Status (2026-11-17)
 
-Phase 0, the pipeline, is in its first PR (chore/pipeline). The app is scaffolded from Shopify's template; nothing Fitted-specific is built yet.
+Phase 0, the pipeline, is done and proven end to end by PR #2 (merged). main is protected by the "Protect main" ruleset. Nothing Fitted-specific is built yet.
 
 ## Phases
 
@@ -15,11 +15,11 @@ Phase 0, the pipeline, is in its first PR (chore/pipeline). The app is scaffolde
 
 ## Open steps
 
-None yet. Run /plan on phase 1 once the pipeline is proven.
+None yet. Next: /plan on phase 1.
 
 ## Owner's open items
 
-- Add the CLAUDE_CODE_OAUTH_TOKEN secret (`claude setup-token`).
+- Move CLAUDE_CODE_OAUTH_TOKEN from a repo secret into the `claude-review` environment, then delete the repo copy.
 - Create a development store for `npm run dev`.
 - Before phase 2: confirm Kiwi's terms allow reading charts from a merchant's own live storefront.
 - Final privacy wording for the fit finder.
@@ -28,3 +28,5 @@ None yet. Run /plan on phase 1 once the pipeline is proven.
 ## Done
 
 - 9597d08 chore: scaffold Shopify app from the React Router template
+- #1 chore(ci): add the AI pipeline: CI, review, size and attribution gates
+- #2 test(webhooks): cover the uninstall and scopes webhooks
