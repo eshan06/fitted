@@ -1,8 +1,8 @@
 # Plan
 
-## Status (2026-11-18)
+## Status (2026-11-17)
 
-Phase 0, the pipeline, is done and proven end to end (PR #2: plan to auto-merge in about 22 minutes). main is protected by the "Protect main" ruleset. Nothing Fitted-specific is built yet.
+Phase 0, the pipeline, is done and proven end to end by PR #2 (merged). main is protected by the "Protect main" ruleset. Nothing Fitted-specific is built yet.
 
 ## Phases
 
