@@ -18,7 +18,7 @@
     "graphql-codegen": "graphql-codegen",
     "vite": "vite",
     "typecheck": "react-router typegen && tsc --noEmit",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test:scripts": "bash scripts/count-lines.test.sh && bash scripts/check-attribution.test.sh && bash scripts/careful-paths.test.sh",
