@@ -10,3 +10,4 @@ Live traps only, one short entry each. The PR that fixes a trap deletes its entr
 - **In a cloud session `gh pr create` may fail.** Use the GitHub MCP, then strip the footer it adds to the description.
 - **The Shopify CLI needs an interactive terminal** for sign-in and prompts. Run it in the owner's terminal, or pass every flag (`--name`, `--flavor`, `--client-id`).
 - **The agent shell may be zsh,** which compares `[[ $f == $glob ]]` as plain text. Run the pipeline scripts by path (their shebang is bash), never by pasting their loops into the shell.
+- **Every file in `app/routes/` is a route** (flatRoutes). Test files there are dropped by `ignoredRouteFiles` in `app/routes.ts`, which must match the Vitest `include` in `vitest.config.ts`. If they drift, `npm run build` or `npm test` fails.
