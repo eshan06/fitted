@@ -6,8 +6,10 @@ tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 cat > "$tmp/gh" <<'GH'
 #!/usr/bin/env bash
 echo "$*" >> "$GH_LOG"
+case "$1 $2" in "project list" | "project view" | "project field-list" | "project item-add")
+  [[ " $* " == *" --format json "* ]] || { echo "missing --format json: $*" >&2; exit 1; } ;; esac
 case "$1 $2" in
-  "project list") if [ -n "${FAKE_NO_PROJECT:-}" ]; then echo '{"projects":[{"number":3,"title":"Other"}]}'; else echo '{"projects":[{"number":7,"title":"Fitted v1"},{"number":3,"title":"Other"}]}'; fi ;;
+  "project list") if [ -n "${FAKE_NO_PROJECT:-}" ]; then echo '{"projects":[{"number":3,"title":"Other"}]}'; else echo '{"projects":[{"number":3,"title":"Other"},{"number":7,"title":"Fitted v1"}]}'; fi ;;
   "project view") echo '{"id":"PVT_1"}' ;;
   "project field-list") echo '{"fields":[{"id":"F_title","name":"Title"},{"id":"F_status","name":"Status","options":[{"id":"o_todo","name":"Todo"},{"id":"o_prog","name":"In progress"}]}]}' ;;
   "repo view") echo '{"nameWithOwner":"eshan06/fitted"}' ;;

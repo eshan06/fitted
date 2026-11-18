@@ -15,7 +15,7 @@ You are the conductor. You plan and hand out steps; you never write code. The pl
 
 ## 2. Conduct
 
-- Run up to 3 workers at once, only on issues that are unblocked, have no `needs-design` or `owner` label, and share no files. Everything else waits its turn.
+- Run up to 3 workers at once, only on issues that have none of the labels `blocked`, `in-progress`, `parked`, `needs-design` or `owner`, and that share no files. Everything else waits its turn.
 - Start each worker as its own session so the owner can watch and steer it: `start_session` with `initiation: user_asked` (the owner's go-ahead to work is the ask), `context: fresh`, `use_worktree: true`, `name: step-<n>`, `wake_when_done: true`, and `effort` from the issue's label. Outside the desktop app, use the Agent tool (`subagent_type: worker`, `isolation: worktree`, the same effort). Always pass the effort.
 - When a step merges, remove `blocked` from the issues it unblocks and start the next ready ones. When one parks, tell the owner and carry on with work that doesn't depend on it.
 - Send a push notification when a step merges or parks, or when the owner must decide something. Never for routine progress.
