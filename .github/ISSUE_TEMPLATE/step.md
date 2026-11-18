@@ -1,7 +1,6 @@
 ---
 name: Step
 about: One PR-sized step of the plan (one worker, one PR). /plan creates these.
-labels: step
 ---
 
 **Goal:** <the one change, in a sentence or two>

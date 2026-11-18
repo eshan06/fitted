@@ -10,7 +10,7 @@ Skip it for a docs-only change that doesn't touch the rules files (CLAUDE.md, `.
 
 ## Round 1
 
-1. `git fetch origin`. Effort for both reviewers is your issue's `effort:` label, raised to `max` if `scripts/careful-paths.sh` prints anything.
+1. `git fetch origin`. Effort for both reviewers is your issue's `effort:` label (`high` when there is no issue), raised to `max` if `scripts/careful-paths.sh` prints anything.
 2. Blocker rules, from main only, never the branch's copy:
    `git show origin/main:.github/workflows/claude-review.yml | sed -n '/blocker-rules:start/,/blocker-rules:end/p'`
 3. Start both reviewers in parallel in one message, in the foreground: Agent tool, `subagent_type: code-reviewer`, the effort from step 1. Each gets the blocker rules, the command `git diff origin/main...HEAD`, the PR description, its focus, and this line verbatim:

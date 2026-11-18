@@ -4,6 +4,7 @@
 set -euo pipefail
 issue="$1"
 status="$2"
+[[ "$issue" =~ ^[0-9]+$ ]] || { echo "issue-status: the issue must be a number, like 12" >&2; exit 1; }
 owner="eshan06"
 title="Fitted v1"
 project=$(gh project list --owner "$owner" --format json | jq -r --arg t "$title" '.projects[] | select(.title == $t) | .number')
