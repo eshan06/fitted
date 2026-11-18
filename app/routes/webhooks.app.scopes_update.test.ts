@@ -11,6 +11,7 @@ vi.mock("../db.server", () => ({ default: { session: { update } } }));
 
 const shop = "fitted-test.myshopify.com";
 const topic = "APP_SCOPES_UPDATE";
+const session = { id: `offline_${shop}`, shop, scope: "read_products" };
 const payload = {
   previous: ["read_products"],
   current: ["read_products", "write_products"],
@@ -26,13 +27,12 @@ beforeEach(() => {
 
 describe("app/scopes_update webhook", () => {
   it("saves the current scopes on the webhook's session and returns 200", async () => {
-    const session = { id: `offline_${shop}`, shop, scope: "read_products" };
     webhook.mockResolvedValue({ shop, session, topic, payload });
     const request = webhookRequest();
 
     const response = await action({ request } as ActionFunctionArgs);
 
-    expect(webhook).toHaveBeenCalledWith(request);
+    expect(webhook.mock.calls[0]?.[0]).toBe(request);
     expect(update).toHaveBeenCalledExactlyOnceWith({
       where: { id: `offline_${shop}` },
       data: { scope: "read_products,write_products" },
@@ -59,5 +59,14 @@ describe("app/scopes_update webhook", () => {
       action({ request: webhookRequest() } as ActionFunctionArgs),
     ).rejects.toBe(unauthorized);
     expect(update).not.toHaveBeenCalled();
+  });
+
+  it("fails the request when the update fails, so Shopify retries", async () => {
+    webhook.mockResolvedValue({ shop, session, topic, payload });
+    update.mockRejectedValue(new Error("database unavailable"));
+
+    await expect(
+      action({ request: webhookRequest() } as ActionFunctionArgs),
+    ).rejects.toThrow("database unavailable");
   });
 });
