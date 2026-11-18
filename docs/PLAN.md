@@ -13,9 +13,9 @@ Phase 0, the pipeline, is done and proven end to end by PR #2 (merged). main is 
 4. Scale: returns by size (needs Shopify's protected customer data approval), multi-store sync, priority support.
 5. Launch: App Store listing, screenshots, privacy policy, review submission.
 
-## Open steps
+## Steps
 
-None yet. Next: /plan on phase 1.
+Every step is an issue in the [Fitted v1 milestone](https://github.com/eshan06/fitted/milestone/1), shown on the Fitted v1 project board. Things only the owner can do carry the `owner` label.
 
 ## Owner's open items
 
