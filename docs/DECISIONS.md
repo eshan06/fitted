@@ -2,6 +2,10 @@
 
 Dated entries, newest first. Grep for the area you touch; never read front to back.
 
+## 2026-11-17 Pipeline: steps are GitHub issues; workers are sessions
+
+The plan's steps live as issues in the "Fitted v1" milestone and project board instead of docs/PLAN.md, so many agents can share one source of truth without editing the same file. Workers run as separate sessions the owner can open and steer, claim their issue, and coordinate in issue comments tagged with their role. Each issue carries its effort label (high, or max on careful paths).
+
 ## 2026-11-17 Pipeline: Reviewer B shares Claude's model
 
 No second model (OpenAI or Gemini key) is set up, so /santa-loop's Reviewer B is a second Claude and every report says so. Add a key and switch B to `codex exec` or the Gemini CLI when one exists.
