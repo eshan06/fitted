@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Admin } from "./admin.server";
-import { FetchError, safeFetch } from "./fetch.server";
+import { FetchError, safeFetch } from "./import-fetch.server";
 import { scanForKiwi } from "./kiwi-import.server";
 
-vi.mock("./fetch.server", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./fetch.server")>()),
+vi.mock("./import-fetch.server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./import-fetch.server")>()),
   safeFetch: vi.fn(),
 }));
 
@@ -131,23 +131,30 @@ describe("scanForKiwi", () => {
     expect(await scan(shopWith([product("shirt")]))).toBe("kiwi_unreadable");
   });
 
-  it("finds nothing in a shop without Kiwi, after at most 5 pages", async () => {
-    const urls = ["a", "b", "c", "d", "e", "f"].map(product);
+  it("finds nothing in a shop without Kiwi, after at most 5 Online Store products", async () => {
+    const urls = ["a", "b", "c", "d", "e"].map(product);
     storefront(Object.fromEntries(urls.map((u) => [u, { html: PLAIN_PAGE }])));
-    expect(await scan(shopWith([null, ...urls]))).toBe("no_kiwi");
-    expect(vi.mocked(safeFetch).mock.calls.map(([url]) => url)).toEqual(
-      urls.slice(0, 5),
+    const admin = shopWith([null, ...urls]);
+    expect(await scan(admin)).toBe("no_kiwi");
+    expect(vi.mocked(safeFetch).mock.calls.map(([url]) => url)).toEqual(urls);
+    const [query, { variables }] = vi.mocked(admin.graphql).mock.calls[0] as [
+      string,
+      { variables: unknown },
+    ];
+    expect(query).toContain(
+      'query: "status:active AND published_status:published"',
     );
+    expect(variables).toEqual({ first: 5 });
   });
 
-  it("reads only the shop's own domains, at most 2 pages a second", async () => {
+  it("reads only the shop's own domains, at most 2 requests a second", async () => {
     const urls = ["a", "b", "c"].map(product);
     const asked = storefront(
       Object.fromEntries(urls.map((u) => [u, { html: PLAIN_PAGE }])),
     );
     expect(await scan(shopWith(urls))).toBe("no_kiwi");
     for (const [, options] of vi.mocked(safeFetch).mock.calls)
-      expect(options).toEqual({ allowHosts: [SHOP, HOST] });
+      expect(options).toEqual({ allowHosts: [SHOP, HOST], gapMs: 500 });
     expect(asked.slice(1).map((t, i) => t - asked[i])).toEqual([500, 500]);
   });
 
@@ -171,6 +178,11 @@ describe("scanForKiwi", () => {
     expect(await scan(shopWith([product("shirt")]))).toBe("password");
   });
 
+  it("doesn't take a product whose handle is password for the password page", async () => {
+    storefront({ [product("password")]: { html: KIWI_PAGE } });
+    expect(await scan(shopWith([product("password")]))).toBe("kiwi_unreadable");
+  });
+
   it("reports a shop with nothing on the Online Store, without fetching", async () => {
     expect(await scan(shopWith([null, null]))).toBe("no_products");
     expect(safeFetch).not.toHaveBeenCalled();
@@ -183,6 +195,21 @@ describe("scanForKiwi", () => {
     });
     const admin = shopWith([product("gone"), product("shirt")]);
     expect(await scan(admin)).toBe("kiwi_unreadable");
+  });
+
+  it("finds Kiwi's app embed on a 404 page, which still carries the theme", async () => {
+    const html = `${THEME_HEAD}${KIWI_EMBED}</head><body>Not found</body></html>`;
+    storefront({ [product("gone")]: { html, status: 404 } });
+    expect(await scan(shopWith([product("gone")]))).toBe("kiwi_unreadable");
+  });
+
+  it("fails instead of saying no Kiwi when every product page is gone", async () => {
+    storefront({
+      [product("a")]: { html: "Not found", status: 404 },
+      [product("b")]: { html: "Not found", status: 404 },
+    });
+    const admin = shopWith([product("a"), product("b")]);
+    await expect(scan(admin)).rejects.toMatchObject({ reason: "failed" });
   });
 
   it("fails, for the job to offer Try again, when the storefront can't be read", async () => {

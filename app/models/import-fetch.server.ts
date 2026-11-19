@@ -101,7 +101,9 @@ export const publicLookup: LookupFunction = (hostname, options, callback) =>
   });
 
 // agent: false gives every hop a fresh socket, so no pooled connection skips
-// publicLookup.
+// publicLookup. A request can close with neither a response nor an error (a
+// 101 Switching Protocols with no upgrade handler), so close settles it too;
+// after a response it changes nothing.
 const send = (url: URL, signal: AbortSignal) =>
   new Promise<http.IncomingMessage>((resolve, reject) => {
     (url.protocol === "https:" ? https : http)
@@ -111,8 +113,12 @@ const send = (url: URL, signal: AbortSignal) =>
         resolve,
       )
       .on("error", reject)
+      .on("close", () =>
+        reject(new FetchError("failed", "Closed without an answer")),
+      )
       .end();
   });
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function readBody(res: http.IncomingMessage) {
   const encoding = (res.headers["content-encoding"] || "identity")
@@ -128,23 +134,27 @@ async function readBody(res: http.IncomingMessage) {
     res.destroy();
     throw new FetchError("failed", `Unsupported encoding ${encoding}`);
   }
-  const chunks: Buffer[] = [];
+  // Copied into one buffer as it arrives, so a body trickled a byte per chunk
+  // holds 5 MB, not millions of chunk objects. Leaving the loop early
+  // destroys the streams, and the socket with them; a body cut short throws.
+  const body = Buffer.alloc(MAX_BYTES);
   let bytes = 0;
-  // Leaving the loop early destroys the streams, and the socket with them. A
-  // body cut short errors here too.
   for await (const chunk of decoder ? pipeline(res, decoder, () => {}) : res) {
-    bytes += chunk.length;
-    if (bytes > MAX_BYTES) throw new FetchError("too_large", "Over 5 MB");
-    chunks.push(chunk);
+    if (bytes + chunk.length > MAX_BYTES)
+      throw new FetchError("too_large", "Over 5 MB");
+    bytes += (chunk as Buffer).copy(body, bytes);
   }
-  return Buffer.concat(chunks);
+  return Buffer.from(body.subarray(0, bytes));
 }
 
 // Non-2xx answers come back for the caller to judge; only redirects are
-// followed.
+// followed, gapMs apart when a caller paces its requests.
 export async function safeFetch(
   link: string,
-  { allowHosts }: { allowHosts?: readonly string[] } = {},
+  {
+    allowHosts,
+    gapMs = 0,
+  }: { allowHosts?: readonly string[]; gapMs?: number } = {},
 ): Promise<{ url: string; status: number; body: Buffer }> {
   let url: URL;
   try {
@@ -157,6 +167,7 @@ export async function safeFetch(
   try {
     for (let redirects = 0; ; redirects++) {
       check(url, allowHosts);
+      if (redirects && gapMs) await sleep(gapMs);
       const res = await send(url, abort.signal);
       const status = res.statusCode ?? 0;
       if (REDIRECTS.includes(status) && res.headers.location) {

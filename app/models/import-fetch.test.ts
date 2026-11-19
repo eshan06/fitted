@@ -16,7 +16,7 @@ import {
   isPublicAddress,
   publicLookup,
   safeFetch,
-} from "./fetch.server";
+} from "./import-fetch.server";
 
 // Names resolve only to the answers a test sets, and never on the network.
 type Answer = { address: string; family: number };
@@ -299,16 +299,36 @@ describe("safeFetch follows redirects", () => {
   it("within allowHosts, returning the final URL", async () => {
     serveLocally();
     pages.set("shop.test/products/a", redirect("https://www.shop.test/a"));
-    pages.set("www.shop.test/a", redirect("/a?x=1", 307));
-    pages.set("www.shop.test/a?x=1", send("<p>ok</p>"));
-    const page = await safeFetch("https://shop.test/products/a", {
+    pages.set("www.shop.test/a", redirect("/b", 303));
+    pages.set("www.shop.test/b", redirect("http://www.shop.test:443/c", 308));
+    pages.set("www.shop.test:443/c", redirect("/a?x=1", 307));
+    pages.set("www.shop.test:443/a?x=1", send("<p>ok</p>"));
+    const page = await safeFetch("https://shop.test:443/products/a", {
       allowHosts: ["Shop.test", "www.shop.test"],
     });
     expect(page).toEqual({
-      url: "https://www.shop.test/a?x=1",
+      url: "http://www.shop.test:443/a?x=1",
       status: 200,
       body: Buffer.from("<p>ok</p>"),
     });
+  });
+
+  it("gapMs apart when the caller paces its requests", async () => {
+    serveLocally();
+    const hits: number[] = [];
+    const timed =
+      (page: (req: IncomingMessage, res: ServerResponse) => void) =>
+      (req: IncomingMessage, res: ServerResponse) => {
+        hits.push(Date.now());
+        page(req, res);
+      };
+    pages.set("shop.test/a", timed(redirect("/b")));
+    pages.set("shop.test/b", timed(redirect("/c")));
+    pages.set("shop.test/c", timed(send("ok")));
+    await safeFetch("http://shop.test/a", { gapMs: 100 });
+    expect(hits).toHaveLength(3);
+    for (let i = 1; i < hits.length; i++)
+      expect(hits[i] - hits[i - 1]).toBeGreaterThanOrEqual(95);
   });
 
   it("never off allowHosts", async () => {
@@ -360,8 +380,14 @@ describe("safeFetch reads the body", () => {
       "shop.test/br",
       send(brotliCompressSync(html), { "content-encoding": "br" }),
     );
-    expect((await safeFetch("http://shop.test/gz")).body.toString()).toBe(html);
-    expect((await safeFetch("http://shop.test/br")).body.toString()).toBe(html);
+    pages.set(
+      "shop.test/xgz",
+      send(gzipSync(html), { "content-encoding": "X-Gzip" }),
+    );
+    for (const path of ["gz", "br", "xgz"])
+      expect(
+        (await safeFetch(`http://shop.test/${path}`)).body.toString(),
+      ).toBe(html);
   });
 
   it("allows 5 MB and refuses a byte more, counted after decompression", async () => {
@@ -387,6 +413,16 @@ describe("safeFetch reads the body", () => {
     expect(await safeFetch("http://shop.test/odd")).toMatchObject({
       status: 302,
     });
+  });
+
+  it("fails, instead of hanging, when the server switches protocols", async () => {
+    serveLocally();
+    pages.set("shop.test/ws", (req) =>
+      req.socket.write(
+        "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n",
+      ),
+    );
+    expect(await reason(safeFetch("http://shop.test/ws"))).toBe("failed");
   });
 
   it("fails on an encoding it didn't ask for, or a body cut short", async () => {

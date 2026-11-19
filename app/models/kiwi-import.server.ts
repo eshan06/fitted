@@ -8,7 +8,7 @@
 // chart from Kiwi's own server in the shopper's browser. No chart number or
 // word is ever in the page, so the scan can only say why nothing was found.
 import { type Admin, adminGraphql } from "./admin.server";
-import { FetchError, safeFetch } from "./fetch.server";
+import { FetchError, safeFetch } from "./import-fetch.server";
 
 export type KiwiScan =
   | "no_products" // nothing published on the Online Store to read
@@ -22,7 +22,7 @@ const KIWI =
 // ponytail: samples 5 product pages, enough to see Kiwi's script; walk every
 // product if Kiwi ever puts charts in the page.
 const PAGES = 5;
-const GAP_MS = 500;
+const GAP_MS = 500; // between every request, redirects included
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // Throws FetchError when the storefront can't be read; the job shows Try
@@ -34,26 +34,31 @@ export async function scanForKiwi(admin: Admin): Promise<KiwiScan> {
   }>(
     admin,
     `#graphql
-    query KiwiScan {
+    query KiwiScan($first: Int!) {
       shop { myshopifyDomain primaryDomain { host } }
-      products(first: 25, query: "status:active") { nodes { onlineStoreUrl } }
+      products(first: $first, query: "status:active AND published_status:published") {
+        nodes { onlineStoreUrl }
+      }
     }`,
-    {},
+    { first: PAGES },
     { retry: true },
   );
-  const urls = products.nodes
-    .flatMap((p) => p.onlineStoreUrl ?? [])
-    .slice(0, PAGES);
+  const urls = products.nodes.flatMap((p) => p.onlineStoreUrl ?? []);
   if (!urls.length) return "no_products";
   const allowHosts = [shop.myshopifyDomain, shop.primaryDomain.host];
+  let read = false;
   for (const [i, url] of urls.entries()) {
     if (i) await sleep(GAP_MS);
-    const page = await safeFetch(url, { allowHosts });
-    if (new URL(page.url).pathname.endsWith("/password")) return "password";
-    if (page.status === 404) continue; // unpublished since the list was read
-    if (page.status !== 200)
+    const page = await safeFetch(url, { allowHosts, gapMs: GAP_MS });
+    // Shopify sends every page of a protected storefront to /password.
+    if (new URL(page.url).pathname === "/password") return "password";
+    // A 404 still carries the theme, and Kiwi's app embed with it.
+    if (page.status !== 200 && page.status !== 404)
       throw new FetchError("failed", `The storefront answered ${page.status}`);
     if (KIWI.test(page.body.toString("utf8"))) return "kiwi_unreadable";
+    read ||= page.status === 200;
   }
+  // Every product gone since the list was read: nothing to judge by.
+  if (!read) throw new FetchError("failed", "No product page could be read");
   return "no_kiwi";
 }
