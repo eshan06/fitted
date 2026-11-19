@@ -16,6 +16,10 @@ export const FREE_ACTIVE_CHARTS = 3;
 /** `activeCharts`: how many charts are Active now, not counting the one being published. */
 export const canPublishChart = (plan: Plan, activeCharts: number) =>
   plan !== "free" || activeCharts < FREE_ACTIVE_CHARTS;
+/** App Pricing's plan page, opened with `target="_top"` (it's outside the app's iframe). */
+// ponytail: assumes the store handle is the myshopify subdomain and the app handle is "fitted"; #49 confirms the handle.
+export const plansUrl = (shop: string) =>
+  `https://admin.shopify.com/store/${shop.replace(/\.myshopify\.com$/, "")}/charges/fitted/pricing_plans`;
 const FREE_RULE_FIELDS = ["all", "product", "collection"];
 /** `field`: a display rule condition's field (§6). */
 export const canUseRuleField = (plan: Plan, field: string) =>

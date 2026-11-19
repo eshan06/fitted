@@ -1,0 +1,159 @@
+/* The Editor board's look (Fitted canvas). Sizes in rem so large text grows. */
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  color: #202223;
+  font-size: 0.875rem;
+}
+.editor a {
+  color: #2448a8;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+.editor h1 {
+  margin: 0;
+  font-size: 1.5rem;
+}
+.editor h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+.editor .row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+.editor .start {
+  justify-content: flex-start;
+}
+.editor .top {
+  align-items: flex-start;
+}
+.editor .grow2 {
+  flex: 2 1 220px;
+}
+.editor .grow1 {
+  flex: 1 1 160px;
+}
+.editor .card {
+  background: #fff;
+  border: 1px solid #e1e3e5;
+  border-radius: 12px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.editor .field {
+  font: inherit;
+  color: inherit;
+  background: #fff;
+  border: 1px solid #c9cccf;
+  border-radius: 8px;
+  min-height: 36px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  width: 100%;
+}
+.editor .auto {
+  width: auto;
+}
+.editor .note {
+  padding: 8px 10px;
+}
+.editor .bad {
+  border-color: #8e1f0b;
+  box-shadow: inset 0 0 0 1px #8e1f0b;
+  background: #fee9e8;
+}
+.editor .lbl {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.editor .help {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: #5c5f62;
+  line-height: 1.5;
+}
+.editor .err {
+  margin: 0;
+  color: #8e1f0b;
+}
+.editor .list {
+  margin: 4px 0 0;
+  padding-left: 20px;
+}
+.editor .segs {
+  display: inline-flex;
+  padding: 3px;
+  background: #ecedee;
+  border-radius: 8px;
+}
+.editor .seg {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #45484b;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.editor .seg[aria-pressed="true"] {
+  background: #fff;
+  color: #202223;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+.editor .sheet {
+  border-collapse: collapse;
+  width: 100%;
+  min-width: 520px;
+}
+.editor .sheet th,
+.editor .sheet td {
+  padding: 4px;
+  border: 1px solid #e1e3e5;
+}
+.editor .sheet th {
+  background: #f7f7f8;
+}
+.editor .sheet th .cell,
+.editor .sheet td:first-child .cell {
+  font-weight: 600;
+}
+.editor .cell:not(.bad) {
+  border-color: transparent;
+}
+.editor .cell {
+  min-width: 72px;
+}
+.editor .blank {
+  border: 1px dashed #b5b8bb;
+  border-radius: 10px;
+  padding: 40px 20px;
+  text-align: center;
+}
+.editor .sk {
+  display: block;
+  height: 12px;
+  background: #e4e5e7;
+  border-radius: 6px;
+}
+.editor .short {
+  width: 40%;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
