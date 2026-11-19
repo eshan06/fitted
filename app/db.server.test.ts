@@ -2,8 +2,12 @@ import "@shopify/shopify-app-react-router/adapters/node";
 import { randomUUID } from "node:crypto";
 import { Session } from "@shopify/shopify-app-react-router/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import prisma from "./db.server";
+import { resetCachedPlan } from "./models/billing.server";
+
+// billing.server.ts imports it for plan checks, which nothing here runs.
+vi.mock("./shopify.server", () => ({}));
 
 // Runs against a real, migrated Postgres: CI's service container, or the docker
 // compose one when DATABASE_URL is set (docs/GOTCHAS.md). CI never skips it.
@@ -111,7 +115,7 @@ describe.runIf(hasDatabase)("the app database on Postgres", () => {
     expect(await storage.loadSession(`offline_${otherShop}`)).toBeDefined();
   });
 
-  it("keeps one plan cache row per shop, and app/uninstalled clears only that shop's", async () => {
+  it("keeps one plan cache row per shop, and app/uninstalled resets only that shop's to Free", async () => {
     const shop = newShop();
     const otherShop = newShop();
     const checkedAt = new Date("2026-11-19T03:00:00.123Z");
@@ -129,15 +133,11 @@ describe.runIf(hasDatabase)("the app database on Postgres", () => {
       });
     }
 
-    // The query app/uninstalled runs.
-    await prisma.shop.updateMany({
-      where: { shop },
-      data: { planOnStore: null, planCheckedAt: null },
-    });
+    await resetCachedPlan(shop); // what app/uninstalled runs
 
     expect(await prisma.shop.findUnique({ where: { shop } })).toEqual({
       shop,
-      plan: "pro",
+      plan: "free",
       planCheckedAt: null,
       planOnStore: null,
       resolvedAt: null,

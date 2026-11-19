@@ -175,7 +175,7 @@ Fitted bills through Shopify App Pricing: plans are set up in the Partner Dashbo
 - Every check, failed or not, keeps at least 10 seconds from the shop's last one, and a 429 from the Partner API backs off; the Partner API's rate limit is shared across every shop. A welcome-link check inside the gap is delayed, never dropped.
 - If a plan check fails, it keeps the last confirmed plan (Free if none) and shows a banner saying the plan couldn't be checked, with Try again. A failed check never changes the storefront: `$app.plan` changes only on a confirmed read.
 - A missing subscription or an unknown handle is Free.
-- After a confirmed read, it writes `$app.plan` with the offline session (a staff member's own access may not allow it) when the plan differs from `Shop.planOnStore`. `app/uninstalled` clears `planOnStore` and `planCheckedAt`, so a reinstall always checks and writes again.
+- After a confirmed read, it writes `$app.plan` with the offline session (a staff member's own access may not allow it) when the plan differs from `Shop.planOnStore`. `app/uninstalled` resets the cached plan to Free and clears `planOnStore` and `planCheckedAt`, so a reinstall always checks and writes again, and reads as Free, not the plan from before, if that check fails.
 - A cancellation that happens outside the app is seen on the next admin load (Shopify gives no webhook); until then the storefront keeps the last plan.
 
 | Gate                                              | Free                     | Standard  | Pro       |

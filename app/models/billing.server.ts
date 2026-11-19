@@ -86,6 +86,18 @@ export async function getPlan(
   return next.result;
 }
 
+/**
+ * For app/uninstalled: the shop starts over on Free, unconfirmed and not on the
+ * store, so a reinstall checks at once and writes `$app.plan` again, and reads
+ * as Free, not the plan from before the uninstall, if that check fails.
+ */
+export async function resetCachedPlan(shop: string) {
+  await db.shop.updateMany({
+    where: { shop },
+    data: { plan: "free", planCheckedAt: null, planOnStore: null },
+  });
+}
+
 async function check(shop: string): Promise<PlanState> {
   let row: Shop | null = null;
   try {

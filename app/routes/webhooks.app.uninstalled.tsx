@@ -1,22 +1,24 @@
 import type { ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
+import { resetCachedPlan } from "../models/billing.server";
 
+// Deletes the sessions on every delivery that gets here, retries included,
+// session or not: after an uninstall Shopify refuses to refresh an expired token,
+// so the library returns no session though its row is still there (§14). Any
+// other refresh failure answers 500 before this runs, and Shopify retries. The
+// plan starts over on Free (§8).
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { shop, session, topic } = await authenticate.webhook(request);
-
-  console.log(`Received ${topic} webhook for ${shop}`);
-
-  // Webhook requests can trigger multiple times and after an app has already been uninstalled.
-  // If this webhook already ran, the session may have been deleted previously.
-  if (session) {
-    await db.session.deleteMany({ where: { shop } });
-  }
-  // Every delivery, retries included: a reinstall then checks the plan and writes it to the store again (§8).
-  await db.shop.updateMany({
-    where: { shop },
-    data: { planOnStore: null, planCheckedAt: null },
-  });
-
+  const { shop } = await authenticate.webhook(request);
+  await db.session.deleteMany({ where: { shop } });
+  await resetCachedPlan(shop);
+  console.log(
+    JSON.stringify({
+      level: "info",
+      msg: "App uninstalled: sessions deleted, plan reset to Free",
+      shop,
+      route: "webhooks/app/uninstalled",
+    }),
+  );
   return new Response();
 };
