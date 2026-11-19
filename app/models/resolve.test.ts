@@ -5,13 +5,28 @@ import type { Admin } from "./admin.server";
 // bulk queries and bulk mutations the way Shopify does: a query's result file
 // lists each product with the fields the query names, then each of its
 // collections as its own line, and a mutation runs each line of the staged
-// file as one atomic metafieldsSet. The job's two tables are kept in memory.
+// file as one atomic metafieldsSet. The same store answers the one-product
+// reads and writes of the product and collection webhooks. The job's two
+// tables are kept in memory.
 const h = vi.hoisted(() => {
   type Row = Record<string, unknown>;
   const jobs: Row[] = [];
   const shops = new Map<string, Row>();
   const db = {
+    // The job checks' own queries run on Postgres (db.server.test.ts).
+    $queryRaw: vi.fn(async () => []),
+    $executeRaw: vi.fn(async () => 0),
     job: {
+      updateMany: vi.fn(async () => ({ count: 0 })),
+      // The newest job of a shop and kind, as resolveIfStale reads it.
+      findFirst: vi.fn(
+        async ({ where }: { where: Row }) =>
+          jobs
+            .filter((j) => j.shop === where.shop && j.kind === where.kind)
+            .sort(
+              (a, b) => +(b.createdAt as Date) - +(a.createdAt as Date),
+            )[0] ?? null,
+      ),
       create: vi.fn(async ({ data }: { data: Row }) => {
         const now = new Date();
         const row = {
@@ -42,13 +57,25 @@ const h = vi.hoisted(() => {
           return shops.get(q.where.shop);
         },
       ),
+      findUnique: vi.fn(
+        async (q: { where: { shop: string } }) =>
+          shops.get(q.where.shop) ?? null,
+      ),
     },
   };
   return { jobs, shops, db, admin: vi.fn() };
 });
 vi.mock("../db.server", () => ({ default: h.db }));
 vi.mock("../shopify.server", () => ({ unauthenticated: { admin: h.admin } }));
-import { type Rules, saveRules, startResolve } from "./rules.server";
+import {
+  type Rules,
+  collectionChanged,
+  productChanged,
+  resolveIfStale,
+  saveRules,
+  startJobChecks,
+  startResolve,
+} from "./rules.server";
 
 const SHOP = "fitted-dev.myshopify.com";
 const TYPE = "app--5512--chart";
@@ -172,11 +199,22 @@ function fakeStore(shop = SHOP) {
     unnumbered?: boolean;
     // After each page of the chart list, numbered across the job.
     afterChartPage?: (page: number) => void;
+    // After each bulk mutation applies its file, numbered across the job,
+    // with the products its lines name.
+    afterWrite?: (write: number, owners: string[]) => void;
+    // A webhook's write of one product's chart is refused.
+    refuseOne?: boolean;
+    // A ranked id that is an Active metaobject of another type.
+    otherType?: string;
   } = {};
   let reads = 0;
   let writes = 0;
   const pending = new Map<string, number>();
-  const calls: { name: string; variables: Record<string, unknown> }[] = [];
+  const calls: {
+    name: string;
+    query: string;
+    variables: Record<string, unknown>;
+  }[] = [];
 
   const finish = (
     url: string | null,
@@ -194,31 +232,36 @@ function fakeStore(shop = SHOP) {
     files.set(url, lines.map((l) => JSON.stringify(l)).join("\n"));
     return url;
   };
+  // A product with the facts a query names after `{ id tags ...`: its
+  // compared metafields come back under their aliases.
+  const facts = (query: string, id: string, p: Fake) => {
+    const line: Record<string, unknown> = {
+      id,
+      tags: p.tags ?? [],
+      productType: p.productType ?? "",
+      vendor: p.vendor ?? "",
+      chart: p.chart ? { value: p.chart } : null,
+    };
+    for (const [, alias, ns, key] of query.matchAll(
+      /(m\d+): metafield\(namespace: "([\w-]+)", key: "([\w-]+)"\) \{ type value \}/g,
+    ))
+      line[alias] = p.metafields?.[`${ns}.${key}`] ?? null;
+    return line;
+  };
+  const FACTS =
+    'id tags productType vendor chart: metafield(namespace: "$app", key: "chart") { value }';
   // Reads every product with the fields the bulk query names.
   const read = (query: string) => {
-    expect(query).toMatch(
-      /^\{ products \{ edges \{ node \{ id tags productType vendor chart: metafield\(namespace: "\$app", key: "chart"\) \{ value \} /,
-    );
-    const aliases = [
-      ...query.matchAll(
-        /(m\d+): metafield\(namespace: "([\w-]+)", key: "([\w-]+)"\) \{ type value \}/g,
-      ),
-    ];
+    expect(query.startsWith(`{ products { edges { node { ${FACTS}`)).toBe(true);
     const withCollections = query.includes(
       "collections { edges { node { id } } }",
     );
     return [...products].flatMap(([id, p]) => {
-      const line: Record<string, unknown> = {
-        id,
-        tags: p.tags ?? [],
-        productType: p.productType ?? "",
-        vendor: p.vendor ?? "",
-        chart: p.chart ? { value: p.chart } : null,
-      };
-      for (const [, alias, ns, key] of aliases)
-        line[alias] = p.metafields?.[`${ns}.${key}`] ?? null;
       const children = withCollections ? (p.collections ?? []) : [];
-      return [line, ...children.map((c) => ({ id: c, __parentId: id }))];
+      return [
+        facts(query, id, p),
+        ...children.map((c) => ({ id: c, __parentId: id })),
+      ];
     });
   };
   // Runs each staged line as one metafieldsSet, all or nothing. The answers
@@ -258,7 +301,7 @@ function fakeStore(shop = SHOP) {
     async (query: string, opts?: { variables?: Record<string, unknown> }) => {
       const v = (opts?.variables ?? {}) as Record<string, never>;
       const name = /(?:query|mutation) (\w+)/.exec(query)?.[1] ?? "";
-      calls.push({ name, variables: v });
+      calls.push({ name, query, variables: v });
       switch (name) {
         case "FittedRules":
           return json({
@@ -359,6 +402,14 @@ function fakeStore(shop = SHOP) {
           const text = files.get(v.path);
           expect(text).toBeDefined();
           const id = finish(file(write(v.mutation, text!)));
+          const owners = text!
+            .split("\n")
+            .flatMap((l) =>
+              (JSON.parse(l).metafields as { ownerId: string }[]).map(
+                (m) => m.ownerId,
+              ),
+            );
+          hooks.afterWrite?.(writes, owners);
           return json({
             data: {
               bulkOperationRunMutation: {
@@ -380,6 +431,65 @@ function fakeStore(shop = SHOP) {
                   : op,
             },
           });
+        }
+        // One product's facts and the ranked charts' status, as a webhook reads them.
+        case "ResolveOne": {
+          expect(query).toContain(`product(id: $id) { ${FACTS}`);
+          const p = products.get(v.id);
+          const withCollections = query.includes(
+            "collections(first: 250) { nodes { id } }",
+          );
+          const status = (status: string) => ({ publishable: { status } });
+          return json({
+            data: {
+              product: p && {
+                ...facts(query, v.id, p),
+                ...(withCollections && {
+                  collections: {
+                    nodes: (p.collections ?? []).map((id) => ({ id })),
+                  },
+                }),
+              },
+              // null for an id that is gone, like Shopify's nodes.
+              charts: (v.charts as string[]).map((id) =>
+                id === hooks.otherType
+                  ? {
+                      id,
+                      type: "app--5512--other",
+                      capabilities: status("ACTIVE"),
+                    }
+                  : charts.has(id)
+                    ? {
+                        id,
+                        type: TYPE,
+                        capabilities: status(charts.get(id)!.status),
+                      }
+                    : null,
+              ),
+              definition: { type: TYPE },
+            },
+          });
+        }
+        // A webhook's write of one product's chart.
+        case "ResolveSet": {
+          const [m] = v.metafields as Record<string, string>[];
+          expect(m).toMatchObject({
+            namespace: "$app",
+            key: "chart",
+            type: "metaobject_reference",
+          });
+          expect(charts.has(m.value)).toBe(true);
+          const userErrors = hooks.refuseOne
+            ? [
+                {
+                  field: ["metafields"],
+                  message: "Too many requests",
+                  code: "THROTTLED",
+                },
+              ]
+            : [];
+          if (!userErrors.length) products.get(m.ownerId)!.chart = m.value;
+          return json({ data: { metafieldsSet: { userErrors } } });
         }
         case "ResolveRemove": {
           const ids = v.metafields as { ownerId: string; key: string }[];
@@ -446,11 +556,11 @@ const jobs = () =>
     result,
     error,
   }));
-const done = (merchant: boolean, changed: number) => ({
+const done = (merchant: boolean, changed: number, attempt = 1) => ({
   shop: SHOP,
   kind: "resolve",
   status: "done",
-  progress: { merchant, pass: 2 },
+  progress: { merchant, pass: 2, attempt },
   result: { changed },
   error: null,
 });
@@ -940,5 +1050,343 @@ describe("waiting on bulk operations", () => {
       failed(true, "Shopify's bulk operation took too long"),
     ]);
     expect(store.named("ResolveWait").length).toBeGreaterThan(2000);
+  });
+});
+
+const names = (store: ReturnType<typeof fakeStore>) =>
+  store.calls.map((c) => c.name);
+
+describe("a product webhook", () => {
+  it("gives a new or edited product its chart with one rules read and one product read", async () => {
+    const store = fakeStore();
+    store.setRules(rules());
+
+    await productChanged(SHOP, product(1), new Date());
+
+    expect(store.assigned()[product(1)]).toBe(SWIM);
+    expect(names(store)).toEqual(["FittedRules", "ResolveOne", "ResolveSet"]);
+    // Every ranked chart's status, the compared metafield and, since a rule
+    // names one, the product's collections.
+    const [one] = store.named("ResolveOne");
+    expect(one.variables).toEqual({
+      id: product(1),
+      charts: [SWIM, SLIM, BASIC],
+    });
+    expect(one.query).toContain(
+      'm0: metafield(namespace: "custom", key: "fit") { type value }',
+    );
+    expect(one.query).toContain("collections(first: 250) { nodes { id } }");
+    expect(h.admin.mock.calls.every(([s]) => s === SHOP)).toBe(true);
+    expect(JSON.parse(logs.at(-1)!)).toEqual({
+      level: "info",
+      msg: "Product chart set",
+      shop: SHOP,
+      route: "resolve",
+      productId: product(1),
+      chart: SWIM,
+    });
+  });
+
+  it("writes nothing on a repeat, or when Fitted's own write comes back as an update", async () => {
+    const store = fakeStore();
+    store.setRules(rules());
+    await productChanged(SHOP, product(1), new Date());
+
+    await productChanged(SHOP, product(1), new Date());
+
+    expect(names(store)).toEqual([
+      "FittedRules",
+      "ResolveOne",
+      "ResolveSet",
+      "FittedRules",
+      "ResolveOne",
+    ]);
+  });
+
+  it("removes the chart of a product nothing matches any more", async () => {
+    const store = fakeStore();
+    store.setRules(rules());
+    store.products.get(product(5))!.chart = BASIC; // a gift card since
+
+    await productChanged(SHOP, product(5), new Date());
+
+    expect(store.assigned()[product(5)]).toBeUndefined();
+    expect(store.named("ResolveRemove")[0].variables.metafields).toEqual([
+      { ownerId: product(5), namespace: "$app", key: "chart" },
+    ]);
+    expect(JSON.parse(logs.at(-1)!)).toMatchObject({
+      msg: "Product chart removed",
+      productId: product(5),
+    });
+  });
+
+  it("never moves a product onto or off an auto: false chart", async () => {
+    const store = fakeStore();
+    store.setRules(rules());
+    // Product 7 matches the slim chart no more, yet keeps it.
+    store.products.get(product(7))!.chart = SLIM;
+
+    for (const n of [3, 4, 7])
+      await productChanged(SHOP, product(n), new Date());
+
+    // Products 3 and 4 match the slim chart, and get the next one instead.
+    expect(store.assigned()).toMatchObject({
+      [product(3)]: BASIC,
+      [product(4)]: BASIC,
+      [product(7)]: SLIM,
+    });
+    expect(store.named("ResolveSet")).toHaveLength(2);
+  });
+
+  it("treats a Draft chart, a deleted one and another type's metaobject as not Active", async () => {
+    const store = fakeStore();
+    const [GONE, OTHER] = [chart(98), chart(99)];
+    const all = { match: [{ field: "all" as const }], exclude: [], auto: true };
+    store.setRules({
+      v: 1,
+      order: [OTHER, GONE, SWIM, BASIC],
+      charts: { [OTHER]: all, [GONE]: all, [SWIM]: all, [BASIC]: all },
+    });
+    store.charts.set(SWIM, { status: "DRAFT" });
+    store.hooks.otherType = OTHER;
+
+    await productChanged(SHOP, product(1), new Date());
+
+    expect(store.assigned()[product(1)]).toBe(BASIC);
+  });
+
+  it("skips an edit the shop's last clean pass read, with a second's margin for updated_at", async () => {
+    const store = fakeStore();
+    store.setRules(rules());
+    const resolvedAt = new Date("2026-11-19T06:00:00Z");
+    h.shops.set(SHOP, { shop: SHOP, plan: "free", resolvedAt });
+
+    // updated_at has whole seconds, so this edit came before the pass began.
+    await productChanged(SHOP, product(1), new Date(+resolvedAt - 1000));
+    expect(store.calls).toEqual([]);
+    expect(h.db.shop.findUnique).toHaveBeenCalledWith({
+      where: { shop: SHOP },
+      select: { resolvedAt: true },
+    });
+
+    // This one may have come just after it.
+    await productChanged(SHOP, product(1), new Date(+resolvedAt - 999));
+    expect(store.assigned()[product(1)]).toBe(SWIM);
+  });
+
+  it("does nothing for a product deleted since the delivery", async () => {
+    const store = fakeStore();
+    store.setRules(rules());
+
+    await productChanged(SHOP, product(99), new Date());
+
+    expect(names(store)).toEqual(["FittedRules", "ResolveOne"]);
+  });
+
+  it("logs a failure with Shopify's reason and throws it, so the route answers 500", async () => {
+    const store = fakeStore();
+    store.setRules(rules());
+    store.hooks.refuseOne = true;
+
+    await expect(productChanged(SHOP, product(1), new Date())).rejects.toThrow(
+      "Shopify refused the change",
+    );
+
+    expect(store.assigned()[product(1)]).toBeUndefined();
+    expect(JSON.parse(logs.at(-1)!)).toMatchObject({
+      level: "error",
+      msg: "Product chart didn't finish",
+      shop: SHOP,
+      route: "resolve",
+      productId: product(1),
+      detail: expect.stringContaining("THROTTLED"),
+    });
+  });
+
+  it("only logs a warning when the saved rules fail validation, leaving the product alone", async () => {
+    const store = fakeStore();
+    store.setRules({ v: 1, order: [SWIM], charts: {} });
+    store.products.get(product(1))!.chart = SWIM;
+
+    await expect(
+      productChanged(SHOP, product(1), new Date()),
+    ).resolves.toBeUndefined();
+
+    expect(names(store)).toEqual(["FittedRules"]);
+    expect(store.assigned()[product(1)]).toBe(SWIM);
+    expect(JSON.parse(logs.at(-1)!)).toMatchObject({
+      level: "warn",
+      msg: "Product chart: the saved display rules can't be read",
+      productId: product(1),
+    });
+  });
+});
+
+describe("product deliveries while the shop's full resolve runs", () => {
+  it("wait for it: its first pass's echoes cost no reads, and an edit neither pass read still resolves", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const t0 = new Date("2026-11-19T06:00:00Z").getTime();
+    vi.setSystemTime(t0);
+    const store = fakeStore();
+    store.setRules(rules());
+    const answers: Promise<void>[] = [];
+    const deliver = (id: string) =>
+      answers.push(productChanged(SHOP, id, new Date()));
+    store.hooks.afterRead = (read) => {
+      vi.setSystemTime(t0 + read * 10_000);
+      // After the first pass read it, product 5 moves to another vendor.
+      if (read === 1) {
+        store.products.get(product(5))!.vendor = "Acme";
+        deliver(product(5));
+      }
+      // After the second pass read it, product 6 becomes swimwear.
+      if (read === 2) {
+        store.products.get(product(6))!.tags = ["swim"];
+        deliver(product(6));
+      }
+    };
+    // Each chart Fitted writes comes back as an update at the write's time;
+    // the next pass starts 5 seconds after.
+    store.hooks.afterWrite = (_, owners) => {
+      owners.forEach(deliver);
+      vi.setSystemTime(Date.now() + 5000);
+    };
+
+    await startResolve(SHOP, true);
+
+    // 34 echoes of the first pass, then product 5's edit and its echo.
+    expect(answers).toHaveLength(1 + 34 + 1 + 1);
+    await Promise.all(answers);
+    expect(jobs()).toEqual([done(true, 35)]);
+    // Only the deliveries newer than the second pass's start were resolved.
+    expect(store.named("ResolveOne").map((c) => c.variables.id)).toEqual([
+      product(5),
+      product(6),
+    ]);
+    expect(store.assigned()).toEqual({
+      ...expected(),
+      [product(5)]: BASIC,
+      [product(6)]: SWIM,
+    });
+  });
+
+  it("resolve one by one after a resolve that failed, since no pass read them since", async () => {
+    const store = fakeStore();
+    store.setRules(rules());
+    store.hooks.afterRead = (read) => {
+      if (read !== 1) return;
+      store.products.get(product(5))!.vendor = "Acme";
+      void productChanged(SHOP, product(5), new Date());
+      store.hooks.failRead = "INTERNAL_SERVER_ERROR"; // the second pass's read
+    };
+
+    await startResolve(SHOP, true);
+
+    expect(jobs()).toEqual([
+      failed(true, "Shopify's bulk operation didn't finish"),
+    ]);
+    expect(store.named("ResolveOne").map((c) => c.variables.id)).toEqual([
+      product(5),
+    ]);
+    expect(store.assigned()[product(5)]).toBe(BASIC);
+  });
+});
+
+describe("a collection webhook", () => {
+  it("starts a resolve, not the merchant's, when a rule names the collection, and only reads the rules otherwise", async () => {
+    const store = fakeStore();
+    store.setRules(rules());
+
+    await collectionChanged(SHOP, "gid://shopify/Collection/99");
+    expect(names(store)).toEqual(["FittedRules"]);
+    expect(h.jobs).toEqual([]);
+
+    await collectionChanged(SHOP, COL);
+    await vi.waitFor(() => expect(jobs()).toEqual([done(false, 34)]));
+    // Product 3 is in the collection; the slim chart stays the merchant's to apply.
+    expect(store.assigned()[product(3)]).toBe(BASIC);
+  });
+
+  it("logs and throws when the rules can't be read, so the route answers 500", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    fakeStore().setRules(rules());
+    // Shopify can't be reached on the first try or either retry.
+    h.admin.mockRejectedValue(new TypeError("fetch failed"));
+
+    const thrown = collectionChanged(SHOP, COL).catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(await thrown).toMatchObject({ message: "Shopify request failed" });
+    expect(h.admin).toHaveBeenCalledTimes(3);
+    expect(JSON.parse(logs.at(-1)!)).toMatchObject({
+      level: "error",
+      msg: "Collection check didn't finish",
+      collectionId: COL,
+      detail: "TypeError: fetch failed",
+    });
+    expect(h.jobs).toEqual([]);
+  });
+});
+
+describe("the daily reconcile", () => {
+  it("starts a resolve, not the merchant's, when the shop's newest started over a day ago or none ran", async () => {
+    const store = fakeStore();
+    store.setRules(rules());
+    const day = 24 * 60 * 60_000;
+
+    await resolveIfStale(SHOP);
+    await vi.waitFor(() => expect(jobs()).toEqual([done(false, 34)]));
+
+    h.jobs[0].createdAt = new Date(Date.now() - day + 60_000);
+    await resolveIfStale(SHOP);
+    expect(h.jobs).toHaveLength(1);
+
+    h.jobs[0].createdAt = new Date(Date.now() - day - 1000);
+    await resolveIfStale(SHOP);
+    await vi.waitFor(() =>
+      expect(jobs()).toEqual([done(false, 34), done(false, 0)]),
+    );
+  });
+
+  it("never throws, logging a database failure", async () => {
+    h.db.job.findFirst.mockRejectedValueOnce(new Error("database unavailable"));
+
+    await expect(resolveIfStale(SHOP)).resolves.toBeUndefined();
+
+    expect(JSON.parse(logs.at(-1)!)).toMatchObject({
+      level: "error",
+      msg: "Display rules check didn't start",
+      shop: SHOP,
+      error: expect.stringContaining("database unavailable"),
+    });
+    expect(h.jobs).toEqual([]);
+  });
+});
+
+describe("the job checks' timer", () => {
+  it("runs at once and every minute, starts once per process, and logs a check that fails", async () => {
+    vi.useFakeTimers();
+    h.db.job.updateMany.mockRejectedValueOnce(
+      new Error("database unavailable"),
+    );
+
+    startJobChecks();
+    startJobChecks(); // a dev reload of the module
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(h.db.job.updateMany).toHaveBeenCalledOnce();
+    expect(JSON.parse(logs.at(-1)!)).toMatchObject({
+      level: "error",
+      msg: "Job checks didn't run",
+      route: "jobs",
+      error: expect.stringContaining("database unavailable"),
+    });
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(h.db.job.updateMany).toHaveBeenCalledTimes(2);
+    expect(h.db.$executeRaw).toHaveBeenCalledOnce();
+    expect(h.db.$queryRaw).toHaveBeenCalledOnce();
+    clearInterval(globalThis.fittedJobChecks);
+    globalThis.fittedJobChecks = undefined;
   });
 });

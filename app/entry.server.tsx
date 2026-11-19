@@ -5,8 +5,13 @@ import { createReadableStreamFromReadable } from "@react-router/node";
 import { type EntryContext } from "react-router";
 import { isbot } from "isbot";
 import { addDocumentResponseHeaders } from "./shopify.server";
+import { startJobChecks } from "./models/rules.server";
 
 export const streamTimeout = 5000;
+
+// At server start and every minute: stalled jobs fail, failed resolves go
+// again, old jobs go (ARCHITECTURE §13).
+startJobChecks();
 
 export default async function handleRequest(
   request: Request,
