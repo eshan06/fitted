@@ -124,6 +124,8 @@ export function validateChart(input: unknown): ChartInput {
   const name = typeof input.name === "string" ? input.name.trim() : "";
   if (!name || name.length > 100 || /[\r\n]/.test(name))
     fail("name", "Give the chart a one-line name of at most 100 characters");
+  // NUL never round-trips: CSV import refuses it and Postgres json can't hold it.
+  if (name.includes("\0")) fail("name", "Remove the hidden NUL character");
   if (!oneOf(input.template, TEMPLATES)) fail("template", "Pick a template");
   if (
     input.measureImage !== undefined &&
@@ -134,7 +136,7 @@ export function validateChart(input: unknown): ChartInput {
     input.importNote !== undefined &&
     (typeof input.importNote !== "string" ||
       input.importNote.length > 255 ||
-      /[\r\n]/.test(input.importNote))
+      /[\r\n\0]/.test(input.importNote))
   )
     fail("importNote", "Must be one line of at most 255 characters");
 
@@ -282,6 +284,7 @@ export function validateChart(input: unknown): ChartInput {
     }
     if (
       typeof c.videoUrl !== "string" ||
+      c.videoUrl.includes("\0") ||
       url?.protocol !== "https:" ||
       !VIDEO_HOST.test(url.hostname)
     )
@@ -351,6 +354,8 @@ export function validateChart(input: unknown): ChartInput {
         fail(`content.words.${k}`, "Not a word this chart uses");
       else if (typeof w !== "string" || w.length > max)
         fail(`content.words.${k}`, `Must be text of at most ${max} characters`);
+      else if (w.includes("\0"))
+        fail(`content.words.${k}`, "Remove the hidden NUL character");
     }
 
   if (Object.keys(errs).length) throw new ChartValidationError(errs);
