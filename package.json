@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "build": "react-router build",
-    "build:guide": "esbuild app/lib/guide-entry.ts --bundle --minify --target=es2020 --format=iife --outfile=extensions/size-guide/assets/loader.js && esbuild app/lib/guide.ts --bundle --minify --target=es2020 --format=esm --outfile=extensions/size-guide/assets/guide.js",
+    "build:guide": "esbuild app/lib/guide-entry.ts --bundle --minify --target=es2020 --banner:js='/* eslint-disable */' --format=iife --outfile=extensions/size-guide/assets/loader.js && esbuild app/lib/guide.ts --bundle --minify --target=es2020 --banner:js='/* eslint-disable */' --format=esm --outfile=extensions/size-guide/assets/guide.js",
     "dev": "shopify app dev",
     "config:link": "shopify app config link",
     "generate": "shopify app generate",

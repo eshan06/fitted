@@ -40,7 +40,8 @@ function setup(block: HTMLElement, load: Load) {
     show("loading");
     // A failed import() stays failed for its URL, so a retry asks for a new one.
     const url = new URL(block.dataset.url ?? "", location.href);
-    if (tries++) url.searchParams.set("retry", `${tries}`);
+    if (tries) url.searchParams.set("retry", `${tries}`);
+    tries++;
     load(url.href)
       .then((guide) => {
         body.replaceChildren();

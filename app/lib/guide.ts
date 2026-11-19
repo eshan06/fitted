@@ -50,7 +50,7 @@ const isTable = (t: unknown): t is Table =>
   t.columns.every(isColumn) &&
   list(t.rows, 60) &&
   t.rows.every(isRow);
-// Only text values: translations can come from any app (§11).
+// Only text values: other words are dropped, as translations can come from any app (§11).
 const texts = (v: unknown) =>
   Object.fromEntries(
     Object.entries(isObj(v) ? v : {}).filter(([, w]) => isStr(w)),
@@ -72,8 +72,7 @@ export function parseGuide(json: string | null | undefined): Guide | null {
     (roundTo !== 0.25 && roundTo !== 0.5 && roundTo !== 1) ||
     !list(tables, 4) ||
     !tables.every(isTable) ||
-    !isObj(words) ||
-    !Object.values(words).every(isStr)
+    !isObj(words)
   )
     return null;
   const units = isObj(d.units) ? d.units : {};
@@ -140,12 +139,8 @@ export function render(root: HTMLElement, g: Guide) {
           if (c.kind !== "measure") return h("td", {}, text);
           const from = c.unit ?? g.unit;
           const to = shown(from, c.convert, g.sys);
-          const cell = row.cells[c.id];
-          return h(
-            "td",
-            {},
-            cell && cell.map((n) => number(n, from, to)).join("–"),
-          );
+          const cell = row.cells[c.id]?.map((n) => number(n, from, to));
+          return h("td", {}, cell?.join("–"));
         }),
       ),
     );
