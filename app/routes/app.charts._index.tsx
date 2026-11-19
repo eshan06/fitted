@@ -183,12 +183,23 @@ function LoadError() {
 }
 
 // The canvas's status mark: a solid line for Active, dashed for Draft.
-const STATUS_CSS = `.fitted-status{display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:600;white-space:nowrap;color:#3D4043}.fitted-status::before{content:"";width:16px;height:2px;background:repeating-linear-gradient(90deg,#5C5F62 0 4px,transparent 4px 7px)}.fitted-status.ACTIVE{color:#2448A8}.fitted-status.ACTIVE::before{background:currentColor}`;
-const Status = ({ status }: { status: ChartStatus }) => (
-  <span className={`fitted-status ${status}`}>
-    {status === "ACTIVE" ? "Active" : "Draft"}
-  </span>
-);
+const Status = ({ status }: { status: ChartStatus }) => {
+  const on = status === "ACTIVE";
+  const color = on ? "#2448A8" : "#3D4043";
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
+      <svg width="16" height="2" aria-hidden="true">
+        <path
+          d="M0 1h16"
+          stroke={color}
+          strokeWidth="2"
+          strokeDasharray={on ? "" : "4 3"}
+        />
+      </svg>
+      <span style={{ color, fontWeight: 600 }}>{on ? "Active" : "Draft"}</span>
+    </span>
+  );
+};
 
 export function Charts({ rows, limit }: Extract<ChartList, { rows: unknown }>) {
   const [q, setQ] = useState("");
@@ -226,12 +237,12 @@ export function Charts({ rows, limit }: Extract<ChartList, { rows: unknown }>) {
             today, free on every plan. Starting fresh? Pick a template and fill
             in your numbers.
           </s-paragraph>
-          <s-button-group>
+          <s-stack direction="inline" gap="small" justifyContent="center">
             <s-button variant="primary" href="/app/import">
               Import from Kiwi
             </s-button>
             <s-button href="/app/charts/new">New chart</s-button>
-          </s-button-group>
+          </s-stack>
           <s-paragraph color="subdued">
             <em>Measure twice, publish once.</em>
           </s-paragraph>
@@ -242,20 +253,21 @@ export function Charts({ rows, limit }: Extract<ChartList, { rows: unknown }>) {
   const shown = filterRows(rows, q, status);
   return (
     <>
-      <style>{STATUS_CSS}</style>
       {limit && (
         <s-banner
           tone="info"
           heading={`Free plan: ${limit.active} of ${FREE_ACTIVE_CHARTS} Active charts`}
         >
-          <s-paragraph>
-            {
-              "Drafts don't count. To make a 4th Active, set one to Draft or move to Standard, $9 a month."
-            }
-          </s-paragraph>
-          <s-link href={limit.plansUrl} target="_top">
-            Change plan
-          </s-link>
+          <s-stack gap="small-200">
+            <s-paragraph>
+              {
+                "Drafts don't count. To make a 4th Active, set one to Draft or move to Standard, $9 a month."
+              }
+            </s-paragraph>
+            <s-link href={limit.plansUrl} target="_top">
+              Change plan
+            </s-link>
+          </s-stack>
         </s-banner>
       )}
       <s-section padding="none" accessibilityLabel="Your size charts">
