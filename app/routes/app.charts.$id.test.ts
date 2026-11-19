@@ -1,0 +1,356 @@
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AdminApiError } from "../models/admin.server";
+import {
+  ChartConflictError,
+  ChartNotFoundError,
+  type ChartInput,
+} from "../models/chart.server";
+
+const m = vi.hoisted(() => ({
+  authenticate: vi.fn(),
+  getPlan: vi.fn(),
+  getChart: vi.fn(),
+  createChart: vi.fn(),
+  updateChart: vi.fn(),
+  publishChart: vi.fn(),
+  unpublishChart: vi.fn(),
+  countActiveCharts: vi.fn(),
+}));
+vi.mock("../shopify.server", () => ({
+  authenticate: { admin: m.authenticate },
+}));
+vi.mock("../models/billing.server", async (orig) => ({
+  ...(await orig<typeof import("../models/billing.server")>()),
+  getPlan: m.getPlan,
+}));
+// The real validator and errors; only the Shopify calls are stubbed.
+vi.mock("../models/chart.server", async (orig) => ({
+  ...(await orig<typeof import("../models/chart.server")>()),
+  getChart: m.getChart,
+  createChart: m.createChart,
+  updateChart: m.updateChart,
+  publishChart: m.publishChart,
+  unpublishChart: m.unpublishChart,
+  countActiveCharts: m.countActiveCharts,
+}));
+const { action, loader } = await import("./app.charts.$id");
+
+const SHOP = "fitted-dev.myshopify.com";
+const ID = "gid://shopify/Metaobject/42";
+const admin = { graphql: vi.fn() };
+const redirect = vi.fn(
+  (url: string) =>
+    new Response(null, { status: 302, headers: { Location: url } }),
+);
+const chart = (): ChartInput => ({
+  name: "Women's tops",
+  template: "tops",
+  content: {
+    v: 1,
+    unit: "in",
+    roundTo: 0.5,
+    tables: [
+      {
+        id: "t1",
+        columns: [
+          { id: "size", kind: "size" },
+          { id: "bust", kind: "measure", convert: true },
+        ],
+        rows: [{ id: "s", cells: { bust: [33, 34] } }],
+      },
+    ],
+    measure: { steps: [] },
+    words: { "t1.size": "Size", "t1.bust": "Bust", "t1.s.size": "S" },
+  },
+});
+const stored = (status: "ACTIVE" | "DRAFT") => ({
+  id: ID,
+  handle: "c-abc123def4",
+  status,
+  updatedAt: "2026-11-19T00:00:05Z",
+  name: "Women's tops",
+  chart: chart(),
+});
+
+const load = (id: string) =>
+  loader({
+    request: new Request(`https://fitted.test/app/charts/${id}`),
+    params: { id },
+  } as unknown as LoaderFunctionArgs);
+const post = (id: string, body: unknown) =>
+  action({
+    request: new Request(`https://fitted.test/app/charts/${id}`, {
+      method: "POST",
+      body: typeof body === "string" ? body : JSON.stringify(body),
+    }),
+    params: { id },
+  } as unknown as ActionFunctionArgs);
+const save = (status: string, extra: object = {}) =>
+  post("42", {
+    chart: chart(),
+    status,
+    updatedAt: "2026-11-19T00:00:05Z",
+    ...extra,
+  });
+// data() results carry their status in `init`; plain objects are a 200.
+const result = async (p: Promise<unknown>) => {
+  const r = (await p) as { type?: string; data?: unknown; init?: ResponseInit };
+  return r?.type === "DataWithResponseInit"
+    ? { status: r.init?.status, body: r.data }
+    : { status: 200, body: r };
+};
+
+let logs: string[];
+beforeEach(() => {
+  vi.resetAllMocks();
+  logs = [];
+  vi.spyOn(console, "log").mockImplementation((line) => logs.push(line));
+  m.authenticate.mockResolvedValue({
+    admin,
+    session: { shop: SHOP },
+    redirect,
+  });
+  m.getPlan.mockResolvedValue({ plan: "free", checkFailed: false });
+  m.countActiveCharts.mockResolvedValue(2);
+  m.getChart.mockResolvedValue(stored("DRAFT"));
+  m.updateChart.mockResolvedValue(stored("DRAFT"));
+  redirect.mockImplementation(
+    (url) => new Response(null, { status: 302, headers: { Location: url } }),
+  );
+});
+afterEach(() => vi.restoreAllMocks());
+
+describe("loading the editor", () => {
+  it("loads the chart by its numeric id", async () => {
+    m.getChart.mockResolvedValue(stored("ACTIVE"));
+    expect(await load("42")).toEqual({
+      mode: "edit",
+      stored: stored("ACTIVE"),
+    });
+    expect(m.getChart).toHaveBeenCalledWith(admin, ID);
+  });
+
+  it("mints a fresh handle for a new chart", async () => {
+    const a = (await load("new")) as { mode: string; handle: string };
+    const b = (await load("new")) as { handle: string };
+    expect(a.mode).toBe("new");
+    expect(a.handle).toMatch(/^c-[a-z0-9]{10}$/);
+    expect(b.handle).not.toBe(a.handle);
+    expect(m.getChart).not.toHaveBeenCalled();
+  });
+
+  it("answers 404 for a malformed id or a chart that's gone", async () => {
+    for (const id of ["abc", "gid://shopify/Metaobject/1", "1.5"]) {
+      const err = await load(id).catch((e) => e);
+      expect(err).toBeInstanceOf(Response);
+      expect(err.status).toBe(404);
+    }
+    m.getChart.mockRejectedValue(new ChartNotFoundError());
+    expect((await load("42").catch((e) => e)).status).toBe(404);
+  });
+
+  it("answers 502 when Shopify fails, logging the detail but not returning it", async () => {
+    m.getChart.mockRejectedValue(
+      new AdminApiError("Shopify request failed", "secret detail"),
+    );
+    const r = await result(load("42"));
+    expect(r).toEqual({
+      status: 502,
+      body: {
+        mode: "error",
+        error: {
+          code: "shopify",
+          message:
+            "Fitted couldn't reach your store just now. Nothing about the chart has changed, and shoppers still see it as before.",
+        },
+      },
+    });
+    expect(JSON.parse(logs[0])).toMatchObject({
+      level: "error",
+      shop: SHOP,
+      route: "app.charts.$id",
+      detail: "secret detail",
+    });
+  });
+
+  it("passes the login redirect on when there's no session", async () => {
+    const login = new Response(null, { status: 302 });
+    m.authenticate.mockRejectedValue(login);
+    await expect(load("42")).rejects.toBe(login);
+    await expect(save("DRAFT")).rejects.toBe(login);
+    expect(m.getChart).not.toHaveBeenCalled();
+    expect(m.updateChart).not.toHaveBeenCalled();
+  });
+});
+
+describe("creating a chart", () => {
+  it("creates by the minted handle and opens the new chart", async () => {
+    m.createChart.mockResolvedValue(stored("DRAFT"));
+    const res = (await post("new", {
+      handle: "c-abc123def4",
+      chart: chart(),
+    })) as Response;
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("/app/charts/42");
+    expect(m.createChart).toHaveBeenCalledWith(admin, "c-abc123def4", chart());
+  });
+
+  it("sends a replayed create to the same chart", async () => {
+    // createChart answers a repeat of its handle with the chart it made (chart.test.ts).
+    m.createChart.mockResolvedValue(stored("DRAFT"));
+    const body = { handle: "c-abc123def4", chart: chart() };
+    const first = (await post("new", body)) as Response;
+    const again = (await post("new", body)) as Response;
+    expect(again.headers.get("Location")).toBe(first.headers.get("Location"));
+    expect(m.createChart.mock.calls[1]).toEqual(m.createChart.mock.calls[0]);
+  });
+
+  it("refuses an invalid chart or body before calling Shopify (422)", async () => {
+    const bad = { ...chart(), name: "" };
+    expect(
+      await result(post("new", { handle: "c-abc123def4", chart: bad })),
+    ).toEqual({
+      status: 422,
+      body: {
+        fieldErrors: expect.objectContaining({ name: expect.any(String) }),
+      },
+    });
+    expect((await result(post("new", "not json"))).status).toBe(422);
+    expect((await result(post("new", [1]))).status).toBe(422);
+    expect(m.createChart).not.toHaveBeenCalled();
+  });
+});
+
+describe("saving a chart", () => {
+  it("saves with the updatedAt the editor loaded", async () => {
+    expect(await save("DRAFT")).toEqual({ ok: true });
+    expect(m.updateChart).toHaveBeenCalledWith(
+      admin,
+      ID,
+      chart(),
+      "2026-11-19T00:00:05Z",
+    );
+    expect(m.publishChart).not.toHaveBeenCalled();
+    expect(m.unpublishChart).not.toHaveBeenCalled();
+  });
+
+  it("publishes after saving when the plan allows another Active chart", async () => {
+    expect(await save("ACTIVE")).toEqual({ ok: true });
+    expect(m.getPlan).toHaveBeenCalledWith(SHOP);
+    expect(m.publishChart).toHaveBeenCalledWith(admin, ID);
+  });
+
+  it("refuses Free's fourth Active chart before writing anything (403)", async () => {
+    m.countActiveCharts.mockResolvedValue(3);
+    const r = await result(save("ACTIVE", { shop: "other.myshopify.com" }));
+    expect(r.status).toBe(403);
+    expect(r.body).toMatchObject({ error: { code: "plan_limit" } });
+    // The plan is the session's shop's, never one the browser sent.
+    expect(m.getPlan).toHaveBeenCalledWith(SHOP);
+    expect(m.updateChart).not.toHaveBeenCalled();
+    expect(m.publishChart).not.toHaveBeenCalled();
+  });
+
+  it("lets paid plans past three, and never counts an already Active chart", async () => {
+    m.countActiveCharts.mockResolvedValue(10);
+    m.getPlan.mockResolvedValue({ plan: "standard", checkFailed: false });
+    expect(await save("ACTIVE")).toEqual({ ok: true });
+    m.getPlan.mockResolvedValue({ plan: "free", checkFailed: false });
+    m.getChart.mockResolvedValue(stored("ACTIVE"));
+    m.updateChart.mockResolvedValue(stored("ACTIVE"));
+    m.publishChart.mockClear();
+    expect(await save("ACTIVE")).toEqual({ ok: true });
+    expect(m.publishChart).not.toHaveBeenCalled();
+  });
+
+  it("unpublishes when set to Draft", async () => {
+    m.updateChart.mockResolvedValue(stored("ACTIVE"));
+    expect(await save("DRAFT")).toEqual({ ok: true });
+    expect(m.unpublishChart).toHaveBeenCalledWith(admin, ID);
+    expect(m.getPlan).not.toHaveBeenCalled();
+  });
+
+  it("says so when the edits saved but the status didn't change (502)", async () => {
+    m.publishChart.mockRejectedValue(new AdminApiError("x", "raw detail"));
+    m.updateChart.mockResolvedValue({
+      ...stored("DRAFT"),
+      updatedAt: "2026-11-19T00:00:09Z",
+    });
+    const r = await result(save("ACTIVE"));
+    expect(r.status).toBe(502);
+    expect(r.body).toEqual({
+      error: {
+        code: "status",
+        message:
+          "Your edits were saved, but the chart is still a Draft. Change its status and save again.",
+      },
+      // A failed action doesn't reload the chart, so the next save needs this.
+      updatedAt: "2026-11-19T00:00:09Z",
+    });
+    expect(JSON.stringify(r.body)).not.toContain("raw detail");
+    expect(JSON.parse(logs[0]).detail).toBe("raw detail");
+  });
+
+  it("says a failed unpublish leaves the chart Published", async () => {
+    m.updateChart.mockResolvedValue(stored("ACTIVE"));
+    m.unpublishChart.mockRejectedValue(new AdminApiError("x", "y"));
+    const r = await result(save("DRAFT"));
+    expect(r.body).toMatchObject({
+      error: { message: expect.stringContaining("still Published") },
+    });
+  });
+
+  it("says when Free's limit comes from a plan it couldn't check", async () => {
+    m.countActiveCharts.mockResolvedValue(3);
+    m.getPlan.mockResolvedValue({ plan: "free", checkFailed: true });
+    const r = await result(save("ACTIVE"));
+    expect(r.status).toBe(403);
+    expect(r.body).toMatchObject({
+      error: {
+        message: expect.stringMatching(/^Fitted couldn't check your plan/),
+      },
+    });
+  });
+
+  it("maps each failure to its status (§15)", async () => {
+    m.updateChart.mockRejectedValueOnce(
+      new ChartConflictError("This chart changed since you opened it"),
+    );
+    expect(await result(save("DRAFT"))).toEqual({
+      status: 409,
+      body: {
+        error: {
+          code: "conflict",
+          message: "This chart changed since you opened it",
+        },
+      },
+    });
+    m.updateChart.mockRejectedValueOnce(new AdminApiError("x", "raw detail"));
+    const r = await result(save("DRAFT"));
+    expect(r.status).toBe(502);
+    expect(r.body).toMatchObject({ error: { code: "shopify" } });
+    expect(JSON.stringify(r.body)).not.toContain("raw detail");
+    m.updateChart.mockRejectedValueOnce(new ChartNotFoundError());
+    expect((await save("DRAFT").catch((e) => e)).status).toBe(404);
+    m.updateChart.mockRejectedValueOnce(new Error("boom"));
+    await expect(save("DRAFT")).rejects.toThrow("boom");
+  });
+
+  it("refuses an invalid chart or status before calling Shopify (422)", async () => {
+    expect(await result(save("LIVE"))).toEqual({
+      status: 422,
+      body: { fieldErrors: { status: "Pick Published or Draft" } },
+    });
+    const r = await result(
+      post("42", { chart: { ...chart(), template: "capes" }, status: "DRAFT" }),
+    );
+    expect(r.body).toEqual({ fieldErrors: { template: "Pick a template" } });
+    expect(m.getChart).not.toHaveBeenCalled();
+    expect(m.updateChart).not.toHaveBeenCalled();
+  });
+
+  it("answers 404 for a malformed id before reading the body", async () => {
+    expect((await post("x1", {}).catch((e) => e)).status).toBe(404);
+  });
+});

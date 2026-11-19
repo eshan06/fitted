@@ -506,6 +506,19 @@ export async function listCharts(admin: Admin, after?: string) {
   };
 }
 
+// For Free's limit of Active charts (§8).
+// ponytail: pages through every chart; filter by status in the query if stores keep hundreds of drafts.
+export async function countActiveCharts(admin: Admin) {
+  let count = 0;
+  let after: string | undefined;
+  do {
+    const page = await listCharts(admin, after);
+    count += page.charts.filter((c) => c.status === "ACTIVE").length;
+    after = page.next ?? undefined;
+  } while (after);
+  return count;
+}
+
 // The id comes from a browser: it must be a metaobject of this app's chart
 // type, or it is not found.
 export async function getChart(admin: Admin, id: unknown) {

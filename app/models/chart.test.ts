@@ -4,6 +4,7 @@ import {
   ChartConflictError,
   ChartNotFoundError,
   ChartValidationError,
+  countActiveCharts,
   createChart,
   deleteChart,
   getChart,
@@ -686,6 +687,39 @@ describe("chart reads and writes", () => {
     expect(charts[0].chart).toBeUndefined();
     expect(charts[0].fieldErrors).toHaveProperty(["content.v"]);
     expect(charts[1].chart).toBeDefined();
+  });
+
+  it("counts Active charts across every page of the list", async () => {
+    const node = (n: number, status: string) => ({
+      id: `gid://shopify/Metaobject/${n}`,
+      handle: `c-${n}`,
+      type: CHART,
+      updatedAt: "2026-11-19T00:00:00Z",
+      capabilities: { publishable: { status } },
+      name: { value: "x" },
+      template: null,
+      content: null,
+      measureImage: null,
+      importNote: null,
+    });
+    const pages = [
+      { nodes: [node(1, "ACTIVE"), node(2, "DRAFT")], next: "p2" },
+      { nodes: [node(3, "ACTIVE"), node(4, "ACTIVE")], next: null },
+    ];
+    const graphql = vi.fn(async (_q: string, { variables }) => {
+      const page = pages[variables.after === "p2" ? 1 : 0];
+      return Response.json({
+        data: {
+          metaobjects: {
+            nodes: page.nodes,
+            pageInfo: { hasNextPage: !!page.next, endCursor: page.next },
+          },
+        },
+      });
+    });
+    const admin = { graphql } as unknown as Admin;
+    expect(await countActiveCharts(admin)).toBe(3);
+    expect(graphql).toHaveBeenCalledTimes(2);
   });
 
   it("passes the list cursor through and reports the next one", async () => {
