@@ -176,6 +176,12 @@ describe("ease and stretch", () => {
     expect(run({ q1: bust(44) }, { stretch: "high" }).row).toBe("xl");
   });
 
+  it("prefers the size whose own range holds the value over a stretched smaller one", () => {
+    // XS stretched high reaches 33.92, but 33.5 is inside S itself.
+    expect(run({ q1: bust(33.5) }, { stretch: "high" }).row).toBe("s");
+    expect(run({ q1: bust(32.5) }, { stretch: "high" }).row).toBe("xs");
+  });
+
   it("doesn't stretch weight", () => {
     const w = {
       stretch: "high" as const,

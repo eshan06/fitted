@@ -59,14 +59,19 @@ type Measure = {
   value: number;
   unit: Unit;
   t: number; // the shopper's value in the column's unit, plus ease
-  ranges: Range[]; // one per candidate row, stretch applied
+  own: Range[]; // one per candidate row, as the chart has it
+  ranges: Range[]; // the same with stretch applied
 };
 type Placed =
   | { at: "in" | "small" | "large"; i: number } // off the chart, i is the nearest row
   | { at: "between"; lo: number; hi: number };
 
-function place(ranges: Range[], t: number): Placed {
-  const i = ranges.findIndex((r) => r !== null && r[0] <= t && t <= r[1]);
+const holds = (t: number) => (r: Range) => r !== null && r[0] <= t && t <= r[1];
+
+// A row's own range wins over a smaller row that only reaches by stretching.
+function place({ own, ranges, t }: Measure): Placed {
+  const exact = own.findIndex(holds(t));
+  const i = exact >= 0 ? exact : ranges.findIndex(holds(t));
   if (i >= 0) return { at: "in", i };
   let lo = -1;
   let hi = -1;
@@ -144,13 +149,21 @@ export function findSize(chart: Chart, answers: Answers): FitResult {
     if (v === null) continue;
     const ease = fit.ease[col.id];
     const give = isLength(col.unit ?? chart.unit) ? 1 + stretch : 1; // fabric stretches, weight doesn't
-    const ranges: Range[] = rows.map((r) => {
+    const own: Range[] = rows.map((r) => {
       const c = r.cells[col.id];
-      return c ? [c[0], (c[1] ?? c[0]) * give] : null;
+      return c ? [c[0], c[1] ?? c[0]] : null;
     });
-    if (!ranges.some(Boolean)) continue;
+    if (!own.some(Boolean)) continue;
+    const ranges = own.map((r): Range => r && [r[0], r[1] * give]);
     const t = v + (Number.isFinite(ease) ? ease : 0);
-    measures.push({ col: col.id, value: a.value, unit: a.unit, t, ranges });
+    measures.push({
+      col: col.id,
+      value: a.value,
+      unit: a.unit,
+      t,
+      own,
+      ranges,
+    });
   }
 
   const bars = fitBars(rows, measures);
@@ -182,7 +195,7 @@ export function findSize(chart: Chart, answers: Answers): FitResult {
   };
 
   if (measures.length) {
-    const placed = measures.map((m) => ({ m, p: place(m.ranges, m.t) }));
+    const placed = measures.map((m) => ({ m, p: place(m) }));
     const said = (m: Measure) => ({ col: m.col, value: m.value, unit: m.unit });
     // A garment has to fit the largest measurement, so any measurement past
     // the largest size means nothing on this chart fits.
