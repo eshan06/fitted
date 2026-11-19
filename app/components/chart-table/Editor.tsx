@@ -70,7 +70,7 @@ export function Editor(props: {
     const r = model.toInput(draft);
     if ("fieldErrors" in r) return setLocal(r);
     setLocal(null);
-    sent.current = draft;
+    sent.current = model.toDraft(r.input, draft.status);
     const body = handle
       ? { handle, chart: r.input }
       : { chart: r.input, status: draft.status, updatedAt: base.updatedAt };
