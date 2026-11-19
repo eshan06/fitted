@@ -78,7 +78,7 @@ async function mount(json = valid) {
     body: root.querySelector<HTMLElement>(".fitted-body")!,
   };
 }
-// The link is hidden by an inline style, which no theme rule can override.
+// The link is hidden by an inline !important style, which no theme rule beats.
 const shown = (link: HTMLElement) => link.style.display !== "none";
 const press = (down: Element, up: Element, detail = 1) => {
   down.dispatchEvent(new Event("pointerdown", { bubbles: true }));
@@ -159,7 +159,9 @@ describe("loader", () => {
     expect(dialog.getAttribute("aria-busy")).toBe("true");
     expect(body.querySelector('[role="status"]')?.textContent).toBe(en.loading);
     expect(body.querySelectorAll(".fitted-skrow")).toHaveLength(6);
-    expect(load).toHaveBeenCalledWith("https://cdn.example/assets/guide.js");
+    expect(load).toHaveBeenCalledWith(
+      "https://cdn.example/assets/guide.js?try=1",
+    );
     finish();
     await tick();
     expect(dialog.hasAttribute("aria-busy")).toBe(false);
@@ -219,7 +221,7 @@ describe("loader", () => {
     expect(body.querySelector('[role="status"]')).not.toBeNull();
     // A failed import() is cached for its URL, so the retry's URL differs.
     expect(load).toHaveBeenLastCalledWith(
-      "https://cdn.example/assets/guide.js?retry=1",
+      "https://cdn.example/assets/guide.js?try=2",
     );
     await tick();
     expect(body.querySelector("table")).not.toBeNull();
@@ -253,6 +255,15 @@ describe("loader", () => {
     expect(dialog.open).toBe(true);
     press(dialog, dialog);
     expect(dialog.open).toBe(false);
+  });
+
+  it("leaves a press inside the guide alone, so text selection and focus work", async () => {
+    const { link, body } = await mount();
+    link.click();
+    await tick();
+    const down = new Event("pointerdown", { bubbles: true, cancelable: true });
+    body.querySelector("td")!.dispatchEvent(down);
+    expect(down.defaultPrevented).toBe(false);
   });
 
   it("ignores close hooks in the theme's markup around the block", async () => {

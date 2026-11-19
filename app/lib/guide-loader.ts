@@ -12,7 +12,7 @@ function setup(block: HTMLElement, load: Load) {
   const link = block.querySelector<HTMLButtonElement>(".fitted-link");
   const dialog = block.querySelector("dialog");
   const body = dialog?.querySelector<HTMLElement>(".fitted-body");
-  if (!g || !link || !dialog?.showModal || !body) return;
+  if (!g || !link || !dialog?.showModal || !body?.replaceChildren) return;
   if (!document.getElementById("fitted-css"))
     document.head.append(h("style", { id: "fitted-css" }, css));
   const title = g.tables.length === 1 && g.words[`${g.tables[0].id}.title`];
@@ -33,10 +33,9 @@ function setup(block: HTMLElement, load: Load) {
       dialog.querySelector<HTMLElement>("[data-fitted-close]")?.focus();
     dialog.setAttribute("aria-busy", "true");
     show("loading");
-    // A failed import() stays failed for its URL, so a retry asks for a new one.
+    // A failed import() stays failed for its URL, so each try asks for its own.
     const url = new URL(block.dataset.url ?? "", location.href);
-    if (tries) url.searchParams.set("retry", `${tries}`);
-    tries++;
+    url.searchParams.set("try", `${++tries}`);
     load(url.href)
       .then((guide) => {
         body.replaceChildren();
@@ -52,7 +51,9 @@ function setup(block: HTMLElement, load: Load) {
   // The backdrop closes the guide only when the press starts there: not a
   // drag out of the table, nor a double click's second click on the link.
   let fromBackdrop = false;
-  dialog.onpointerdown = (e) => (fromBackdrop = e.target === dialog);
+  dialog.addEventListener("pointerdown", (e) => {
+    fromBackdrop = e.target === dialog;
+  });
   dialog.addEventListener("click", (e) => {
     const el = e.target as Element;
     const backdrop = el === dialog && fromBackdrop && e.detail < 2;
@@ -74,10 +75,8 @@ export function start(load: Load) {
       .forEach((block) => setup(block, load));
   const go = () => {
     scan();
-    new MutationObserver(scan).observe(document.body, {
-      childList: true,
-      subtree: true,
-    });
+    const changes = { childList: true, subtree: true };
+    new MutationObserver(scan).observe(document.body, changes);
   };
   if (document.readyState === "loading")
     document.addEventListener("DOMContentLoaded", go);
