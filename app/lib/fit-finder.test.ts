@@ -175,6 +175,19 @@ describe("ease and stretch", () => {
     expect(run({ q1: bust(44) }, { stretch: "some" }).row).toBe(null);
     expect(run({ q1: bust(44) }, { stretch: "high" }).row).toBe("xl");
   });
+
+  it("doesn't stretch weight", () => {
+    const w = {
+      stretch: "high" as const,
+      questions: [
+        { id: "w", kind: "measure" as const, col: "wt", optional: false },
+      ],
+    };
+    expect(run({ w: { value: 150, unit: "lb" } }, w)).toMatchObject({
+      row: null,
+      reason: { key: "fit.reason.large" },
+    });
+  });
 });
 
 describe("several measurements", () => {
@@ -197,6 +210,23 @@ describe("several measurements", () => {
       row: null,
       reason: { key: "fit.reason.large", values: { col: "waist" } },
     });
+  });
+
+  it("doesn't move a tie past a measurement that is between sizes", () => {
+    const waistFirst = { questions: [two.questions[3], ...fit.questions] };
+    for (const order of [two, waistFirst]) {
+      // Bust in m, waist between m and l: snug stays m (s can't take the waist).
+      expect(
+        run({ q1: bust(35.5), q4: bust(29.5), q3: "snug" }, order),
+      ).toMatchObject({
+        row: "m",
+        reason: { key: "fit.reason.between", values: { col: "waist" } },
+      });
+      // Bust in l, waist between m and l: relaxed stays l.
+      expect(
+        run({ q1: bust(38), q4: bust(30), q3: "relaxed" }, order).row,
+      ).toBe("l");
+    }
   });
 
   it("ignores one below the smallest size when another is on the chart", () => {
@@ -257,9 +287,10 @@ describe("no measurement", () => {
 
   it("recommends nothing with no answers, or an unknown usual size", () => {
     for (const answers of [{}, { q3: "relaxed" }, { q2: "xxl" }]) {
-      expect(run(answers)).toMatchObject({
-        row: null,
-        reason: { key: "fit.reason.none", values: {} },
+      expect(run(answers)).toMatchObject({ row: null });
+      expect(run(answers).reason).toEqual({
+        key: "fit.reason.none",
+        values: {},
       });
     }
   });
@@ -331,6 +362,13 @@ describe("choice questions", () => {
       "s",
     );
     expect(run({ q2: "s", q3: "relaxed", q5: "petite" }, cut).row).toBe("s");
+  });
+
+  it("recommends the one size left even when the usual size was ruled out", () => {
+    expect(run({ q5: "one", q2: "s" }, cut)).toMatchObject({
+      row: "m",
+      reason: { key: "fit.reason.choice" },
+    });
   });
 
   it("recommends the one size left", () => {

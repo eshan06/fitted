@@ -143,9 +143,10 @@ export function findSize(chart: Chart, answers: Answers): FitResult {
     const v = convert(a.value, a.unit, col.unit ?? chart.unit);
     if (v === null) continue;
     const ease = fit.ease[col.id];
+    const give = isLength(col.unit ?? chart.unit) ? 1 + stretch : 1; // fabric stretches, weight doesn't
     const ranges: Range[] = rows.map((r) => {
       const c = r.cells[col.id];
-      return c ? [c[0], (c[1] ?? c[0]) * (1 + stretch)] : null;
+      return c ? [c[0], (c[1] ?? c[0]) * give] : null;
     });
     if (!ranges.some(Boolean)) continue;
     const t = v + (Number.isFinite(ease) ? ease : 0);
@@ -196,7 +197,12 @@ export function findSize(chart: Chart, answers: Answers): FitResult {
       const { m, p } = placed[0];
       return result(null, "small", { ...said(m), size: id(pick(p)) });
     }
-    const { m, p } = onChart.reduce((x, y) => (pick(y.p) > pick(x.p) ? y : x));
+    // On a tie a between pick wins, so the fit move never leaves that measurement's sizes.
+    const { m, p } = onChart.reduce((x, y) =>
+      pick(y.p) > pick(x.p) || (pick(y.p) === pick(x.p) && y.p.at === "between")
+        ? y
+        : x,
+    );
     if (p.at !== "between") return shifted("in", p.i, said(m));
     const at = pick(p);
     return result(at, "between", {
@@ -207,10 +213,8 @@ export function findSize(chart: Chart, answers: Answers): FitResult {
     });
   }
 
-  if (usual !== undefined) {
-    const at = rows.findIndex((r) => r.id === usual);
-    return at < 0 ? none(bars) : shifted("usual", at, {});
-  }
+  const at = rows.findIndex((r) => r.id === usual);
+  if (at >= 0) return shifted("usual", at, {});
   if (narrowed && rows.length === 1)
     return result(0, "choice", { size: id(0) });
   return none(bars);
