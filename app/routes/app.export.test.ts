@@ -1,6 +1,7 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { importCsv } from "../models/csv-import.server";
+import { validateChart } from "../models/chart.server";
+import { exportCsv } from "../models/csv-import.server";
 import { loader } from "./app.export";
 
 const { admin } = vi.hoisted(() => ({ admin: vi.fn() }));
@@ -85,16 +86,23 @@ describe("CSV export", () => {
       /^attachment; filename="fitted-charts-\d{4}-\d{2}-\d{2}\.csv"$/,
     );
     expect(response.headers.get("Cache-Control")).toBe("no-store");
-    const charts = await importCsv(response.body);
-    expect(charts.map((c) => [c.name, c.status])).toEqual([
-      ["Women's tops", "ready"],
-      ["Men's shirts", "ready"],
-      // A chart that fails validation is named, never dropped (§5).
-      ["Broken", "unreadable"],
-    ]);
-    expect(charts[1].status === "ready" && charts[1].content).toEqual(
-      content("M"),
+    // text() would drop the BOM that tells Excel the file is UTF-8.
+    const body = new TextDecoder("utf-8", { ignoreBOM: true }).decode(
+      await response.arrayBuffer(),
     );
+    const chart = (name: string, size: string) => ({
+      name,
+      chart: validateChart({ name, template: "tops", content: content(size) }),
+    });
+    expect(body).toBe(
+      exportCsv([
+        chart("Women's tops", "S"),
+        chart("Men's shirts", "M"),
+        // A chart that fails validation is named, never dropped (§5).
+        { name: "Broken" },
+      ]),
+    );
+    expect(body).toContain("\r\nChart,Broken\r\nError,");
   });
 
   it("passes the library's login redirect on without calling Shopify", async () => {
