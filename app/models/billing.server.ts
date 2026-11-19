@@ -26,10 +26,18 @@ export const canShowFitFinderStats = (plan: Plan) => plan === "pro";
 
 const FRESH_MS = 5 * 60_000; // a confirmed plan is re-checked after this
 const GAP_MS = 10_000; // between the starts of one shop's checks, failed or not
-const BACKOFF_MS = 2_000; // every shop waits this long after a 429: the Partner API's limit is shared
+// Every shop waits this long after a 429: the Partner API's limit is shared.
+// ponytail: a fixed pause with no jitter; spread the retries if many shops 429 together.
+const BACKOFF_MS = 2_000;
+const TIMEOUT_MS = 5_000; // per call to Shopify; a check joined by every load must not hang
 const PARTNER_API_VERSION = "2026-07";
 
-type Check = { startedAt: number; done: boolean; result: Promise<PlanState> };
+type Check = {
+  startedAt: number;
+  done: boolean;
+  failed: boolean;
+  result: Promise<PlanState>;
+};
 // One app instance (§17), so the throttle lives in memory.
 // ponytail: one entry per shop that ever opened Fitted; prune old entries if that reaches the millions.
 const lastCheck = new Map<string, Check>();
@@ -50,20 +58,26 @@ export async function getPlan(
   // Join a check in flight. A re-check joins only one that hasn't started, so its read comes after the request.
   if (last && !last.done && (!recheck || last.startedAt === Infinity))
     return last.result;
-  if (row?.planCheckedAt && Date.now() - row.planCheckedAt.getTime() < FRESH_MS)
+  // A failed check, such as a welcome link's, leaves the cached plan in doubt until one succeeds.
+  const fresh =
+    row?.planCheckedAt && Date.now() - row.planCheckedAt.getTime() < FRESH_MS;
+  if (fresh && !last?.failed)
     return { plan: toPlan(row.plan), checkFailed: false };
   if (!recheck && last && Date.now() - last.startedAt < GAP_MS)
     return last.result;
 
-  const next = { startedAt: Infinity, done: false } as Check;
+  const next = { startedAt: Infinity, done: false, failed: false } as Check;
   next.result = (async () => {
-    if (last) await last.result; // one check per shop at a time, so an older read never lands last
-    const wait = () =>
-      Math.max((last?.startedAt ?? 0) + GAP_MS, backoffUntil) - Date.now();
-    while (wait() > 0) await sleep(wait()); // a 429 can land while this waits
+    if (last) {
+      await last.result; // one check per shop at a time, so an older read never lands last
+      const gap = last.startedAt + GAP_MS - Date.now();
+      if (gap > 0) await sleep(gap);
+    }
     next.startedAt = Date.now();
     try {
-      return await check(shop);
+      const state = await check(shop);
+      next.failed = state.checkFailed;
+      return state;
     } finally {
       next.done = true;
     }
@@ -89,7 +103,8 @@ async function check(shop: string): Promise<PlanState> {
     });
     return { plan, checkFailed: false };
   } catch (error) {
-    // A failed check changes nothing, in the app or on the storefront.
+    // The last confirmed plan stands. The store only ever gets a confirmed plan,
+    // and the next check repeats a write this one didn't record.
     console.log(
       JSON.stringify({
         level: "error",
@@ -106,12 +121,15 @@ async function check(shop: string): Promise<PlanState> {
 type Admin = Awaited<ReturnType<typeof unauthenticated.admin>>["admin"];
 
 async function readShopId(admin: Admin): Promise<string> {
-  const response = await admin.graphql(`#graphql
+  const response = await admin.graphql(
+    `#graphql
     query ShopId {
       shop {
         id
       }
-    }`);
+    }`,
+    { signal: AbortSignal.timeout(TIMEOUT_MS) },
+  );
   const body = await response.json();
   const id = body.data?.shop?.id;
   if (typeof id !== "string") throw new Error("Admin API returned no shop id");
@@ -132,6 +150,8 @@ async function fetchPlan(shopId: string): Promise<Plan> {
   const appId = process.env.SHOPIFY_APP_GID;
   if (!org || !token || !appId)
     throw new Error("The Partner API env vars aren't set");
+  // Every check waits out a 429's pause, even one that started before the 429.
+  while (Date.now() < backoffUntil) await sleep(backoffUntil - Date.now());
   const response = await fetch(
     `https://partners.shopify.com/${org}/api/${PARTNER_API_VERSION}/graphql.json`,
     {
@@ -144,9 +164,14 @@ async function fetchPlan(shopId: string): Promise<Plan> {
         query: ACTIVE_SUBSCRIPTION,
         variables: { appId, shopId },
       }),
-      signal: AbortSignal.timeout(5_000),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
     },
-  );
+  ).catch((error) => {
+    // Never log its message: it can quote a header value, and the token is one.
+    throw new Error(
+      `Partner API request failed: ${error?.cause?.code ?? error?.name}`,
+    );
+  });
   const body = await response.json().catch(() => null);
   const errors = body?.errors;
   if (
@@ -200,6 +225,7 @@ async function writeStorePlan(admin: Admin, shopId: string, plan: Plan) {
           },
         ],
       },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
     },
   );
   const body = await response.json();

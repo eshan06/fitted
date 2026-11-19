@@ -51,7 +51,8 @@ const failed = (plan: string) => ({ plan, checkFailed: true });
 beforeEach(async () => {
   vi.resetAllMocks();
   vi.useFakeTimers({ now });
-  vi.stubGlobal("fetch", fetchMock);
+  // Like the real fetch, always a promise, whatever a test's mock returns.
+  vi.stubGlobal("fetch", async (...args: unknown[]) => fetchMock(...args));
   vi.stubEnv("SHOPIFY_PARTNER_ORG_ID", "4321");
   vi.stubEnv("SHOPIFY_PARTNER_API_ACCESS_TOKEN", token);
   vi.stubEnv("SHOPIFY_APP_GID", appId);
@@ -217,6 +218,15 @@ describe("getPlan", () => {
     ],
     ["the response isn't JSON", () => new Response("<html>")],
     ["the request fails", () => Promise.reject(new TypeError("fetch failed"))],
+    [
+      "the request fails quoting a header value",
+      () =>
+        Promise.reject(
+          new TypeError(
+            `Headers.append: "${token}" is an invalid header value.`,
+          ),
+        ),
+    ],
   ])(
     "keeps the last confirmed plan and the store as they were when %s",
     async (_, respond) => {
@@ -291,7 +301,58 @@ describe("getPlan", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("joins a check in flight instead of starting another", async () => {
+  it("fails the check without calling the Partner API when the Admin API returns no shop id", async () => {
+    findUnique.mockResolvedValue(row("standard", 6));
+    adminGraphql.mockResolvedValue(json({ data: { shop: null } }));
+
+    await expect(billing.getPlan(shop)).resolves.toEqual(failed("standard"));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("fails the check when the store write returns no userErrors list", async () => {
+    findUnique.mockResolvedValue(row("free", 6));
+    fetchMock.mockResolvedValue(subscription("pro"));
+    adminGraphql.mockImplementation(async (query: string) =>
+      query.includes("ShopId")
+        ? shopifyAdmin(query)
+        : json({ data: { metafieldsSet: null } }),
+    );
+
+    await expect(billing.getPlan(shop)).resolves.toEqual(failed("free"));
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it("repeats the store write when the cache write failed after it", async () => {
+    findUnique.mockResolvedValue(row("free", 6));
+    fetchMock.mockImplementation(() => subscription("pro"));
+    upsert.mockRejectedValueOnce(new Error("database unavailable"));
+
+    await expect(billing.getPlan(shop)).resolves.toEqual(failed("free"));
+    await vi.advanceTimersByTimeAsync(10_000);
+    await expect(billing.getPlan(shop)).resolves.toEqual(confirmed("pro"));
+    expect(storeWrites()).toMatchObject([
+      [{ value: "pro" }],
+      [{ value: "pro" }],
+    ]);
+    expect(upsert).toHaveBeenCalledTimes(2);
+  });
+
+  it("gives each call to Shopify 5 seconds, so a hung call can't hold every load", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    findUnique.mockResolvedValue(null);
+    fetchMock.mockResolvedValue(subscription("pro"));
+
+    await billing.getPlan(shop);
+
+    expect(timeout.mock.calls).toEqual([[5_000], [5_000], [5_000]]);
+    const [shopIdCall, writeCall] = adminGraphql.mock.calls;
+    const signals = timeout.mock.results.map(({ value }) => value);
+    expect(signals).toContain(shopIdCall[1].signal);
+    expect(signals).toContain(fetchMock.mock.calls[0][1].signal);
+    expect(signals).toContain(writeCall[1].signal);
+  });
+
+  it("shares one check between two loads at once", async () => {
     findUnique.mockResolvedValue(null);
     fetchMock.mockResolvedValue(subscription("pro"));
 
@@ -301,6 +362,48 @@ describe("getPlan", () => {
     ]);
     expect(results).toEqual([confirmed("pro"), confirmed("pro")]);
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("joins a check that's still running past the 10-second gap", async () => {
+    findUnique.mockResolvedValue(row("free", 6));
+    fetchMock.mockResolvedValue(subscription("pro"));
+    let finishWrite = () => {};
+    adminGraphql.mockImplementation((query: string) =>
+      query.includes("ShopId")
+        ? shopifyAdmin(query)
+        : new Promise<Response>((resolve) => {
+            finishWrite = () => resolve(shopifyAdmin(query));
+          }),
+    );
+    const slow = billing.getPlan(shop);
+
+    await vi.advanceTimersByTimeAsync(12_000);
+    const load = billing.getPlan(shop);
+    finishWrite();
+
+    await expect(Promise.all([slow, load])).resolves.toEqual([
+      confirmed("pro"),
+      confirmed("pro"),
+    ]);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("doubts a fresh cached plan after a re-check fails, until a check succeeds", async () => {
+    findUnique.mockResolvedValue(row("free", 1));
+    fetchMock
+      .mockResolvedValueOnce(json({}, 500))
+      .mockResolvedValueOnce(subscription("pro"));
+    await expect(billing.getPlan(shop, { recheck: true })).resolves.toEqual(
+      failed("free"),
+    );
+
+    await vi.advanceTimersByTimeAsync(3_000);
+    await expect(billing.getPlan(shop)).resolves.toEqual(failed("free"));
+    expect(fetchMock).toHaveBeenCalledOnce();
+
+    await vi.advanceTimersByTimeAsync(7_000);
+    await expect(billing.getPlan(shop)).resolves.toEqual(confirmed("pro"));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   describe("welcome link re-check", () => {
@@ -444,7 +547,52 @@ describe("getPlan", () => {
     },
   );
 
-  it("keeps a waiting re-check waiting when a 429 lands meanwhile", async () => {
+  it("holds a check that started before a 429, and again when another 429 lands while it waits", async () => {
+    const tooMany = () =>
+      json({ errors: [{ message: "Too many requests" }] }, 429);
+    const respond: ((response: Response) => void)[] = [];
+    const pending = () =>
+      new Promise<Response>((resolve) => respond.push(resolve));
+    findUnique.mockResolvedValue(null);
+    fetchMock
+      .mockImplementationOnce(pending)
+      .mockImplementationOnce(pending)
+      .mockResolvedValueOnce(subscription("pro"));
+    // This shop's check is still reading its shop id when the 429s land.
+    let releaseShopId = () => {};
+    unauthenticatedAdmin.mockImplementation(async (forShop: string) => ({
+      admin: {
+        graphql:
+          forShop === shop
+            ? (query: string) =>
+                query.includes("ShopId")
+                  ? new Promise<Response>((resolve) => {
+                      releaseShopId = () => resolve(shopifyAdmin(query));
+                    })
+                  : shopifyAdmin(query)
+            : adminGraphql,
+      },
+    }));
+    const held = billing.getPlan(shop);
+    void billing.getPlan("b-test.myshopify.com");
+    void billing.getPlan("c-test.myshopify.com");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    respond[0](tooMany()); // every check now waits until 2s
+    await vi.advanceTimersByTimeAsync(0);
+    releaseShopId();
+    await vi.advanceTimersByTimeAsync(1_000);
+    respond[1](tooMany()); // and now until 3s
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(500);
+    await expect(held).resolves.toEqual(confirmed("pro"));
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("holds a re-check waiting for the gap when a 429 lands meanwhile", async () => {
     findUnique.mockResolvedValue(null);
     fetchMock
       .mockResolvedValueOnce(subscription("standard"))
