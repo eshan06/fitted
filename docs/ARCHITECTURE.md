@@ -27,7 +27,7 @@ Scaffolded from Shopify's React Router template (commit 9597d08): React Router 7
 
 ## 2. Admin app
 
-`app/routes/app.tsx` authenticates every admin request (`authenticate.admin`) and renders the App Bridge shell with Fitted's navigation, in this order: Home (`app._index.tsx`), Size charts (`app.charts._index.tsx`, with `app.charts.new.tsx` for the template picker and `app.charts.$id.tsx` for the editor), Import (`app.import.tsx`), Display rules (`app.rules.tsx`), Fit finder (`app.fit-finder.tsx`), Appearance & languages (`app.appearance.tsx`). CSV export is `app.export.tsx`.
+`app/routes/app.tsx` authenticates every admin request (`authenticate.admin`) and renders the App Bridge shell with Fitted's navigation, in this order: Home (`app._index.tsx`), Size charts (`app.charts._index.tsx`, with `app.charts.new.tsx` for the template picker and `app.charts.$id.tsx` for the editor), Import (`app.import.tsx`), Display rules (`app.rules.tsx`), Fit finder (`app.fit-finder.tsx`), Appearance & languages (`app.appearance.tsx`). CSV export is `app.export.tsx`. Outside the admin, `privacy.tsx` and `support.tsx` are public pages (`/privacy`, `/support`) with no loader, so they never read a shop's data; the privacy policy describes §4, §10, §12, §13 and §14, so a change to what Fitted stores, sends or keeps updates it in the same PR.
 
 Screens read and write through `app/models/*.server.ts` (charts, rules, settings, billing, stats, imports), never with GraphQL inline in a route. Whether the size guide's app embed is on (Home's setup guide) comes from App Bridge `shopify.app.extensions()` in the browser, which needs no extra scope.
 
