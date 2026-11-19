@@ -1,5 +1,5 @@
 import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { Outlet, useLoaderData, useRouteError } from "react-router";
+import { Outlet, href, useLoaderData, useRouteError } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 
@@ -17,9 +17,14 @@ export default function App() {
 
   return (
     <AppProvider apiKey={apiKey}>
+      {/* href() fails the typecheck when a link names a route that doesn't exist. */}
       <s-app-nav>
-        <s-link href="/app">Home</s-link>
-        <s-link href="/app/additional">Additional page</s-link>
+        <s-link href={href("/app")}>Home</s-link>
+        <s-link href={href("/app/charts")}>Size charts</s-link>
+        <s-link href={href("/app/import")}>Import</s-link>
+        <s-link href={href("/app/rules")}>Display rules</s-link>
+        <s-link href={href("/app/fit-finder")}>Fit finder</s-link>
+        <s-link href={href("/app/appearance")}>Appearance & languages</s-link>
       </s-app-nav>
       <Outlet />
     </AppProvider>
