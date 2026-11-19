@@ -5,7 +5,9 @@ import {
   addSize,
   blankDraft,
   formatCell,
+  cellProblem,
   parseCell,
+  problems,
   setCell,
   setUnit,
   setWord,
@@ -183,10 +185,87 @@ describe("the editor draft", () => {
         "content.words.t1.c2": "Name this measurement",
         "content.words.t1.r2.size": "Name this size",
         "content.tables.0.rows.0.cells.bust":
-          "Type a number, or a range like 31–32",
+          "Put the smaller number first, like 31–32.",
         "content.tables.0.rows.1.cells.bust":
-          "Type a number, or a range like 31–32",
+          "Type a number, or a range like 31–32.",
       },
     });
+  });
+});
+
+describe("cell problems, in the Editor board's words", () => {
+  it.each([
+    [
+      "35–",
+      "is missing the second number",
+      "Add the second number, like 35–36, or delete the dash.",
+    ],
+    [
+      "37.5 -",
+      "is missing the second number",
+      "Add the second number, like 37.5–38.5, or delete the dash.",
+    ],
+    [
+      "42–40.5",
+      "runs from high to low",
+      "Put the smaller number first, like 40.5–42.",
+    ],
+    ["0", "is 0", "Use a number above 0, or clear the cell."],
+    ["0–2", "is 0", "Use a number above 0, or clear the cell."],
+    [
+      "10000",
+      "is 10,000 or more",
+      "Use a number below 10,000, or clear the cell.",
+    ],
+    ["big", "isn't a number", "Type a number, or a range like 31–32."],
+  ])("%j %s", (text, short, long) =>
+    expect(cellProblem(text)).toEqual({ short, long }),
+  );
+
+  it("finds nothing wrong with a blank cell, a number or a range", () => {
+    for (const t of ["", " ", "31", "31,5", "31–32", "32–32"])
+      expect(cellProblem(t)).toBeNull();
+  });
+
+  it("names each problem by size and column, with the input it links to", () => {
+    let d = addMeasurement(addSize(toDraft(chart(), "ACTIVE")));
+    d = setCell(d, "xs", "bust", "32-31");
+    const r = toInput({ ...d, name: "" });
+    if (!("fieldErrors" in r)) throw new Error("expected errors");
+    expect(problems(d, r.fieldErrors)).toEqual([
+      { id: "name", where: "Chart name", long: "Give the chart a name" },
+      {
+        id: "cell-h-c2",
+        where: "Column 4 name",
+        long: "Name this measurement",
+      },
+      {
+        id: "cell-xs-bust",
+        where: "XS, Bust",
+        short: "runs from high to low",
+        long: "Put the smaller number first, like 31–32.",
+      },
+      { id: "cell-r2-size", where: "Size 3", long: "Name this size" },
+    ]);
+  });
+
+  it("names the server's own problems too, and anything else by its message", () => {
+    const d = toDraft(chart(), "ACTIVE");
+    expect(
+      problems(d, {
+        "content.words.t1.xs.us": "Too long",
+        "content.tables.0.rows.1.cells.bust": "Use a number above 0",
+        "content.tables.1.rows.0.cells.len": "Use a number above 0",
+      }),
+    ).toEqual([
+      { id: "cell-xs-us", where: "XS, US size", long: "Too long" },
+      {
+        id: "cell-s-bust",
+        where: "S, Bust",
+        short: undefined,
+        long: "Use a number above 0",
+      },
+      { where: "", long: "Use a number above 0" },
+    ]);
   });
 });

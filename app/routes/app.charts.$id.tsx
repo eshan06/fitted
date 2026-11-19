@@ -2,7 +2,7 @@
 // or mint a new chart's handle, then create, update, publish or unpublish it.
 import { randomInt } from "node:crypto";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
-import { data } from "react-router";
+import { Link, data, useLoaderData, useRevalidator } from "react-router";
 import { authenticate } from "../shopify.server";
 import { AdminApiError, canReadProducts } from "../models/admin.server";
 import {
@@ -19,6 +19,8 @@ import {
 } from "../models/chart.server";
 import { canPublishChart, getPlan } from "../models/billing.server";
 import { startResolve } from "../models/rules.server";
+import { Editor } from "../components/chart-table/Editor";
+import { blankDraft, toDraft } from "../components/chart-table/model";
 
 const ROUTE = "app.charts.$id";
 // Thrown as a Response (§15); the app's error boundary prints its text.
@@ -150,8 +152,60 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   }
 };
 
-// Placeholder until the editor screen step builds the Editor board on this
-// loader and action.
+// The Editor board's states: the editor itself, loading, couldn't load, and a
+// stored chart that fails the checks.
 export default function ChartEditor() {
-  return <s-page heading="Chart editor"></s-page>;
+  const loaded = useLoaderData<typeof loader>();
+  const revalidator = useRevalidator();
+  if (loaded.mode === "new")
+    return <Editor key="new" initial={blankDraft()} handle={loaded.handle} />;
+  if (loaded.mode === "edit" && loaded.stored.chart)
+    return (
+      <Editor
+        key={`${loaded.stored.updatedAt}|${loaded.stored.status}`}
+        initial={toDraft(loaded.stored.chart, loaded.stored.status)}
+        updatedAt={loaded.stored.updatedAt}
+      />
+    );
+  const invalid = loaded.mode === "edit" ? loaded.stored.fieldErrors : null;
+  const count = Object.keys(invalid ?? {}).length;
+  return (
+    <s-page>
+      <div className="editor">
+        <Link to="/app/charts">Size charts</Link>
+        {revalidator.state === "loading" ? (
+          <div role="status" className="card">
+            <span className="visually-hidden">Loading chart</span>
+            <span className="sk" />
+            <span className="sk short" />
+          </div>
+        ) : invalid ? (
+          // ponytail: names the count only; the follow-up step opens the chart with the cells marked.
+          <s-banner
+            tone="critical"
+            heading={`Fix ${count} ${count === 1 ? "value" : "values"} to save this chart`}
+          >
+            They were changed outside Fitted. Nothing on your store has changed.
+          </s-banner>
+        ) : (
+          <>
+            <s-banner tone="critical" heading="This chart didn't load">
+              Fitted couldn&apos;t reach your store just now. Nothing about the
+              chart has changed, and shoppers still see it as before.
+              <s-button
+                slot="secondary-actions"
+                onClick={() => revalidator.revalidate()}
+              >
+                Try again
+              </s-button>
+            </s-banner>
+            <p className="help">
+              Still not working? Email [SUPPORT EMAIL] and we&apos;ll look into
+              it.
+            </p>
+          </>
+        )}
+      </div>
+    </s-page>
+  );
 }

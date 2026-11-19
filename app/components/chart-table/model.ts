@@ -51,6 +51,37 @@ export function parseCell(text: string): Cell | null | "invalid" {
   return nums.length === 2 && nums[0] === nums[1] ? [nums[0]] : (nums as Cell);
 }
 
+// What's wrong with a typed cell: `short` for the banner ("M, Bust is 0"),
+// `long` for the list under the table (the Editor board's words).
+export function cellProblem(text: string) {
+  const c = parseCell(text);
+  if (c === null) return null;
+  const say = (short: string, long: string) => ({ short, long });
+  if (c === "invalid") {
+    const first = new RegExp(String.raw`^${NUM}\s*[-–—]$`).exec(text.trim());
+    if (!first)
+      return say("isn't a number", "Type a number, or a range like 31–32.");
+    const n = Number(first[1].replace(",", "."));
+    return say(
+      "is missing the second number",
+      `Add the second number, like ${n}–${n + 1}, or delete the dash.`,
+    );
+  }
+  if (c.some((n) => n <= 0))
+    return say("is 0", "Use a number above 0, or clear the cell.");
+  if (c.some((n) => n >= 10000))
+    return say(
+      "is 10,000 or more",
+      "Use a number below 10,000, or clear the cell.",
+    );
+  if (c.length === 2 && c[0] > c[1])
+    return say(
+      "runs from high to low",
+      `Put the smaller number first, like ${c[1]}–${c[0]}.`,
+    );
+  return null;
+}
+
 export function toDraft(chart: ChartInput, status: ChartStatus): Draft {
   const t = chart.content.tables[0];
   const cells: Record<string, string> = {};
@@ -138,11 +169,12 @@ export function toInput(
       errs[`content.words.${name}`] = "Name this size";
     const cells: Record<string, Cell> = {};
     for (const col of measures) {
-      const cell = parseCell(d.cells[`${row.id}.${col.id}`] ?? "");
-      if (cell === "invalid" || (cell && cell[0] > cell[cell.length - 1]))
-        errs[`content.tables.0.rows.${ri}.cells.${col.id}`] =
-          "Type a number, or a range like 31–32";
-      else if (cell) cells[col.id] = cell;
+      const text = d.cells[`${row.id}.${col.id}`] ?? "";
+      const problem = cellProblem(text);
+      const cell = parseCell(text);
+      if (problem)
+        errs[`content.tables.0.rows.${ri}.cells.${col.id}`] = problem.long;
+      else if (cell && cell !== "invalid") cells[col.id] = cell;
     }
     return { id: row.id, cells };
   });
@@ -162,4 +194,48 @@ export function toInput(
       ...(d.measureImage && { measureImage: d.measureImage }),
     },
   };
+}
+
+/** A problem placed in the editor: the field to focus, and how to name it. */
+export type Problem = {
+  id?: string;
+  where: string;
+  short?: string;
+  long: string;
+};
+export function problems(d: Draft, errors: FieldErrors): Problem[] {
+  const t = table(d);
+  const words = d.content.words;
+  const sizeName = (ri: number) =>
+    words[`${t.id}.${t.rows[ri].id}.${t.columns[0].id}`] || `Size ${ri + 1}`;
+  const colName = (col: string) => words[`${t.id}.${col}`] || "Measurement";
+  const wordAt = `content.words.${t.id}.`;
+  return Object.entries(errors).map(([key, long]) => {
+    const cell = /^content\.tables\.0\.rows\.(\d+)\.cells\.(.+)$/.exec(key);
+    const ri = cell ? Number(cell[1]) : -1;
+    if (cell && t.rows[ri]) {
+      const text = d.cells[`${t.rows[ri].id}.${cell[2]}`] ?? "";
+      return {
+        id: `cell-${t.rows[ri].id}-${cell[2]}`,
+        where: `${sizeName(ri)}, ${colName(cell[2])}`,
+        short: cellProblem(text)?.short,
+        long,
+      };
+    }
+    if (key === "name") return { id: "name", where: "Chart name", long };
+    const [a, b, extra] = key.startsWith(wordAt)
+      ? key.slice(wordAt.length).split(".")
+      : [];
+    const ci = t.columns.findIndex((c) => c.id === (b ?? a));
+    const wi = t.rows.findIndex((r) => r.id === a);
+    if (!extra && b && wi >= 0 && ci >= 0)
+      return {
+        id: `cell-${a}-${b}`,
+        where: ci ? `${sizeName(wi)}, ${colName(b)}` : `Size ${wi + 1}`,
+        long,
+      };
+    if (a && !b && ci >= 0)
+      return { id: `cell-h-${a}`, where: `Column ${ci + 1} name`, long };
+    return { where: "", long };
+  });
 }
