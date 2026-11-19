@@ -10,8 +10,7 @@ export type Guide = {
   roundTo: number;
   tables: Table[];
   words: Record<string, string>; // content.words under the shopper's translations
-  sys: Sys; // the units the guide opens in
-  toggle: boolean;
+  sys: Sys; // the units the guide shows
   locale: string;
 };
 
@@ -89,7 +88,6 @@ export function parseGuide(json: string | null | undefined): Guide | null {
         : ["US", "LR", "MM"].includes(d.country as string)
           ? "in"
           : "cm",
-    toggle: units.toggle !== false,
     locale: isStr(d.locale) ? d.locale : "en",
   };
 }
@@ -112,64 +110,36 @@ export function h(
 const shown = (u: Unit, conv: boolean, sys: Sys): Unit =>
   !conv ? u : u === "in" || u === "cm" ? sys : sys === "in" ? "lb" : "kg";
 
-/** Draws the Size chart tab into root, whose data-t-* attributes hold the interface words. */
+/** Draws the Size chart tab into root; its data-t-chart names a table without a title. */
 export function render(root: HTMLElement, g: Guide) {
-  const t = root.dataset;
-  let nf: Intl.NumberFormat;
-  try {
-    nf = new Intl.NumberFormat(g.locale, { maximumFractionDigits: 2 });
-  } catch {
-    nf = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
-  }
+  const nf = new Intl.NumberFormat(g.locale, { maximumFractionDigits: 2 });
   const word = (k: string) => g.words[k] ?? "";
   const note = (k: string) =>
     word(k) && h("p", { class: "fitted-note" }, word(k));
-  const countries = (tb: Table) =>
-    tb.columns.flatMap((c) => (c.kind === "country" ? [c.country] : []));
-  // Country columns show one at a time when a table has two or more (§5).
-  const regions = [
-    ...new Set(
-      g.tables.flatMap((tb) => (countries(tb).length > 1 ? countries(tb) : [])),
-    ),
-  ];
-  const toggle =
-    g.toggle &&
-    g.tables.some((tb) =>
-      tb.columns.some((c) => c.kind === "measure" && c.convert),
-    );
-  const st: { sys: Sys; region?: string } = { sys: g.sys, region: regions[0] };
   const number = (n: number, from: Unit, to: Unit) =>
     nf.format(
       from === to
         ? n
         : Math.round((convert(n, from, to) ?? n) / g.roundTo) * g.roundTo,
     );
-
   const table = (tb: Table): Kid[] => {
-    const cs = countries(tb);
-    const region = cs.find((c) => c === st.region) ?? cs[0];
-    const cols = tb.columns.filter(
-      (c) => c.kind !== "country" || cs.length < 2 || c.country === region,
-    );
-    const head = cols.map((c) => {
+    const head = tb.columns.map((c) => {
       let text = word(`${tb.id}.${c.id}`);
       if (c.kind === "country") text ||= c.country;
-      if (c.kind === "measure") {
-        const u = shown(c.unit ?? g.unit, c.convert, st.sys);
-        if (!toggle || u !== st.sys) text += ` (${u})`;
-      }
+      if (c.kind === "measure")
+        text += ` (${shown(c.unit ?? g.unit, c.convert, g.sys)})`;
       return h("th", { scope: "col" }, text);
     });
     const rows = tb.rows.map((row) =>
       h(
         "tr",
         {},
-        ...cols.map((c, i) => {
+        ...tb.columns.map((c, i) => {
           const text = word(`${tb.id}.${row.id}.${c.id}`);
           if (i === 0) return h("th", { scope: "row" }, text);
           if (c.kind !== "measure") return h("td", {}, text);
           const from = c.unit ?? g.unit;
-          const to = shown(from, c.convert, st.sys);
+          const to = shown(from, c.convert, g.sys);
           const cell = row.cells[c.id];
           return h(
             "td",
@@ -189,7 +159,7 @@ export function render(root: HTMLElement, g: Guide) {
         h(
           "table",
           { class: "fitted-table" },
-          h("caption", { class: "fitted-sr" }, title || t.tChart),
+          h("caption", { class: "fitted-sr" }, title || root.dataset.tChart),
           h("thead", {}, h("tr", {}, ...head)),
           h("tbody", {}, ...rows),
         ),
@@ -197,58 +167,6 @@ export function render(root: HTMLElement, g: Guide) {
       note(`${tb.id}.note`),
     ];
   };
-  const seg = (
-    name: string | undefined,
-    key: string,
-    values: string[],
-    on?: string,
-  ) =>
-    h(
-      "div",
-      { role: "group", "aria-label": name, class: "fitted-seg" },
-      ...values.map((v) =>
-        h(
-          "button",
-          { type: "button", [`data-${key}`]: v, "aria-pressed": `${v === on}` },
-          v,
-        ),
-      ),
-    );
-
-  // Redrawn whole on every change; focus returns to the same control. Its
-  // value is a unit or a country code, which parseGuide limited, so it is
-  // safe inside the selector.
-  const draw = () => {
-    const active = document.activeElement;
-    const was =
-      active instanceof HTMLElement && root.contains(active)
-        ? active.dataset
-        : undefined;
-    const kids: Kid[] = [
-      (regions.length > 1 || toggle) &&
-        h(
-          "div",
-          { class: "fitted-controls" },
-          regions.length > 1 && seg(t.tSystem, "region", regions, st.region),
-          toggle && seg(t.tUnits, "unit", ["in", "cm"], st.sys),
-        ),
-      ...g.tables.flatMap(table),
-      note("tips"),
-    ];
-    root.replaceChildren(...kids.filter((k): k is Node => !!k));
-    const again = was?.unit
-      ? `[data-unit="${was.unit}"]`
-      : was?.region && `[data-region="${was.region}"]`;
-    if (again) root.querySelector<HTMLElement>(again)?.focus();
-  };
-  root.addEventListener("click", (e) => {
-    const el = (e.target as Element).closest<HTMLElement>(
-      "[data-unit], [data-region]",
-    );
-    if (!el) return;
-    if (el.dataset.unit) st.sys = el.dataset.unit as Sys;
-    else st.region = el.dataset.region;
-    draw();
-  });
-  draw();
+  const kids = [...g.tables.flatMap(table), note("tips")];
+  root.replaceChildren(...kids.filter((k): k is Node => !!k));
 }
