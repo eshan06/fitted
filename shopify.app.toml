@@ -7,7 +7,7 @@ name = "fitted"
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "write_products,write_metaobjects,write_metaobject_definitions"
+scopes = "write_products,write_metaobjects,write_metaobject_definitions,read_locales"
 
 [webhooks]
 api_version = "2027-01"
@@ -66,6 +66,13 @@ name = "Fitted plan"
 description = "Which Fitted plan the size guide follows. Fitted keeps it up to date."
 type = "single_line_text_field"
 validations.choices = [ "free", "standard", "pro" ]
+access.admin = "merchant_read"
+
+# Appearance, units, placement and fit finder settings: ARCHITECTURE §7. Written only by app/models/settings.server.ts.
+[shop.metafields.app.settings]
+name = "Fitted settings"
+description = "How the size guide looks and where it shows. Change it in Fitted."
+type = "json"
 access.admin = "merchant_read"
 
 [auth]
