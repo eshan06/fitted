@@ -2,8 +2,20 @@
 import { describe, expect, it } from "vitest";
 import { parseGuide, render } from "./guide";
 
+// Loose on purpose: the tests write invalid charts into it.
+type Fixture = {
+  v: unknown;
+  unit: unknown;
+  roundTo: unknown;
+  tables: {
+    id: string;
+    columns: unknown[];
+    rows: { id: string; cells: Record<string, unknown> }[];
+  }[];
+  words: Record<string, unknown>;
+};
 // The canvas's Linen Wrap Top, plus a weight column and one kept as typed.
-const chart = () => ({
+const chart = (): Fixture => ({
   v: 1,
   unit: "in",
   roundTo: 0.5,
@@ -150,7 +162,7 @@ describe("parseGuide", () => {
     ["an uppercase id", withChart((c) => (c.tables[0].id = "T1"))],
     [
       "a cell that is text",
-      withChart((c) => (c.tables[0].rows[0].cells = { bust: ["33"] as never })),
+      withChart((c) => (c.tables[0].rows[0].cells = { bust: ["33"] })),
     ],
     [
       "a cell of zero",
@@ -162,9 +174,7 @@ describe("parseGuide", () => {
     ],
     [
       "a cell of three numbers",
-      withChart(
-        (c) => (c.tables[0].rows[0].cells = { bust: [1, 2, 3] as never }),
-      ),
+      withChart((c) => (c.tables[0].rows[0].cells = { bust: [1, 2, 3] })),
     ],
     ["words that aren't a map", withChart((c) => (c.words = [] as never))],
     [
@@ -273,9 +283,7 @@ describe("render", () => {
   });
 
   it("names an untitled table with the extension's words", () => {
-    const root = draw(
-      withChart((c) => delete (c.words as Record<string, string>)["t1.title"]),
-    );
+    const root = draw(withChart((c) => delete c.words["t1.title"]));
     expect(root.querySelector("caption")?.textContent).toBe("Size chart");
   });
 
