@@ -2,6 +2,30 @@
 
 Dated entries, newest first. Grep for the area you touch; never read front to back.
 
+## 2026-11-18 Data: app-owned definitions; uninstall removes charts in time
+
+Charts, rules and settings use app-owned definitions in `shopify.app.toml`, Shopify's recommended path, with `merchant_read` so only Fitted writes. Shopify deletes app-owned definitions at uninstall and keeps the values only temporarily, so charts don't outlive an uninstall; CSV export on every plan is the way out. Merchant-owned definitions would survive uninstall but let any app or staff edit what the storefront renders. ARCHITECTURE §4.
+
+## 2026-11-18 Charts: numbers and words in separate fields
+
+A chart's `content` json holds structure and numbers and is never translated; `strings` holds the words and carries the translations. Translating one json blob would freeze old numbers inside each translation. The storefront merges source words under the translation, so new words fall back to the primary language. ARCHITECTURE §5, §11.
+
+## 2026-11-18 Billing: the plan comes from the Partner API
+
+Shopify App Pricing reports subscriptions only through the Partner API's `activeSubscription` and sends no webhooks, so the app caches the confirmed plan for 5 minutes and writes it to `$app.plan` for the storefront. This needs three env vars the owner creates: `SHOPIFY_PARTNER_ORG_ID`, `SHOPIFY_PARTNER_API_ACCESS_TOKEN`, `SHOPIFY_APP_GID`. ARCHITECTURE §8.
+
+## 2026-11-18 Plans: what each gate covers (owner may change)
+
+Free allows 3 Active charts with unlimited drafts, so a Free merchant can import everything; its rules use the store default, products and collections only, since a chart needs some way onto products. Home's opens stats show on every plan, as the approved Home board draws them on Standard; Pro adds fit finder results. Pro gates Fitted's translation tools, not translations a merchant already has. Downgrades never take anything down. ARCHITECTURE §8.
+
+## 2026-11-18 Storefront: chart data inline, no fetch endpoint
+
+The theme app extension prints each product's chart into the page with Liquid, which also localizes it, and loads the popup script only on first open. Quick view and featured sections get the same app block from the theme, so no chart-fetching endpoint is needed. ARCHITECTURE §9.
+
+## 2026-11-18 App database: versions, jobs, events in Postgres; one instance
+
+Version history, import and resolve jobs, events and AI usage are app-only state in Postgres. Jobs and the event rate limiter run in the app's memory, which holds while Railway runs one instance. ARCHITECTURE §13, §14.
+
 ## 2026-11-17 Pipeline: steps are GitHub issues; workers are sessions
 
 The plan's steps live as issues in the "Fitted v1" milestone and project board instead of docs/PLAN.md, so many agents can share one source of truth without editing the same file. Workers run as separate sessions the owner can open and steer, claim their issue, and coordinate in issue comments tagged with their role. Each issue carries its effort label (high, or max on careful paths).
