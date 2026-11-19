@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { validateChart } from "./chart.server";
 import {
@@ -359,6 +360,466 @@ describe("importing an edited export", () => {
       steps: [],
     });
   });
+
+  it("generates a blank row id that no other part of the chart uses", async () => {
+    const fit =
+      '""fit"":{""table"":""t1"",""questions"":[{""id"":""r2"",""kind"":""fit""}],""ease"":{},""stretch"":""none""}';
+    const csv = fitted(
+      "Chart,Shirts,tops,in,1",
+      `Settings,"{""measure"":{""steps"":[""r1""]},${fit}}"`,
+      "Table,t1",
+      "Columns,,s:size,c:in",
+      "Row,,S,34",
+      "Row,r3,M,36",
+      "Table,t2",
+      "Columns,,z:size",
+      "Row,r4,X",
+      "Row,,Y",
+    );
+    const [draft] = await drafts(csv);
+    const ids = (t: number) =>
+      draft.status === "ready" && draft.content.tables[t].rows.map((r) => r.id);
+    expect([ids(0), ids(1)]).toEqual([
+      ["r5", "r3"],
+      ["r4", "r6"],
+    ]);
+    expect(draft.status === "ready" && draft.content.words).toMatchObject({
+      "t1.r5.s": "S",
+      "t2.r6.z": "Y",
+    });
+    // Table and column ids typed in the file are taken too.
+    const typed = fitted(
+      "Chart,Shirts,tops,in,1",
+      "Table,r1",
+      "Columns,,s:size,,c1:text",
+      "Row,,S,34,x",
+    );
+    const [t] = await drafts(typed);
+    expect(t.status === "ready" && t.content.tables[0]).toMatchObject({
+      columns: [{ id: "s" }, { id: "c2" }, { id: "c1" }],
+      rows: [{ id: "r2" }],
+    });
+  });
+
+  it("infers a column with no type, as in a spreadsheet", async () => {
+    const csv = fitted(
+      "Chart,Shirts,tops,cm,1",
+      "Table,t1",
+      "Columns,,s:size,,chest:,us:US,hips",
+      "Labels,,Size,Waist (in),Chest,,Hips",
+      "Row,a,S,30,86-90,4,94",
+    );
+    const [draft] = await drafts(csv);
+    expect(draft.status === "ready" && draft.content.tables[0]).toEqual({
+      id: "t1",
+      columns: [
+        { id: "s", kind: "size" },
+        { id: "c1", kind: "measure", unit: "in", convert: true },
+        { id: "chest", kind: "measure", convert: true },
+        { id: "us", kind: "country", country: "US" },
+        { id: "hips", kind: "measure", convert: true },
+      ],
+      rows: [{ id: "a", cells: { c1: [30], chest: [86, 90], hips: [94] } }],
+    });
+    expect(draft.status === "ready" && draft.content.words).toEqual({
+      "t1.s": "Size",
+      "t1.c1": "Waist",
+      "t1.chest": "Chest",
+      "t1.hips": "Hips",
+      "t1.a.s": "S",
+      "t1.a.us": "4",
+    });
+    // With no Columns row at all, every column is inferred.
+    const bare = fitted("Chart,R,rings,cm,1", "Table,r", "Row,x,5,1.5,Gold");
+    const [ring] = await drafts(bare);
+    expect(ring.status === "ready" && ring.content.tables[0].columns).toEqual([
+      { id: "c1", kind: "size" },
+      { id: "c2", kind: "measure", convert: true },
+      { id: "c3", kind: "text" },
+    ]);
+  });
+
+  it("reads an export a spreadsheet saved with semicolons and decimal commas", async () => {
+    const csv = [
+      "Fitted size charts;1",
+      "Chart;Rings;rings;cm;0,25",
+      "Table;r",
+      "Columns;;s:size;dia:measure:fixed",
+      "Row;r0;5;1,5 - 2",
+    ].join("\n");
+    const [draft] = await drafts(csv);
+    expect(draft.status === "ready" && draft.content).toMatchObject({
+      roundTo: 0.25,
+      tables: [{ rows: [{ cells: { dia: [1.5, 2] } }] }],
+    });
+  });
+
+  it("reads a unit in a measure cell only when it is the column's", async () => {
+    const top = ["Chart,Shirts,tops,in,1", "Table,t1"];
+    const cols = "Columns,,s:size,c:measure,w:kg";
+    const [draft] = await drafts(fitted(...top, cols, 'Row,a,S,34 in,"60kg"'));
+    expect(draft.status === "ready" && draft.content.tables[0].rows).toEqual([
+      { id: "a", cells: { c: [34], w: [60] } },
+    ]);
+    expect(await reasonOf(fitted(...top, cols, "Row,a,S,86 cm,130 lbs"))).toBe(
+      "Row 5, column D: Give this in inches, like the rest of its column; " +
+        "Row 5, column E: Give this in kilograms, like the rest of its column.",
+    );
+  });
+});
+
+describe("importing a spreadsheet", () => {
+  const sheet = (csv: string, fileName = "Shirts.csv") =>
+    importCsv(stream(csv), fileName).then(([draft]) => draft);
+  const sheetReason = async (csv: string) => {
+    const draft = await sheet(csv);
+    expect(draft.status).toBe("unreadable");
+    return draft.status === "unreadable" ? draft.reason : "";
+  };
+  const CHECK =
+    "The file doesn't say whether the measurements are in inches or centimeters.";
+
+  it("reads Fitted's template as a ready chart named after the file", async () => {
+    const csv = readFileSync("public/fitted-template.csv", "utf8");
+    const m = (id: string) => ({
+      id,
+      kind: "measure",
+      unit: "in",
+      convert: true,
+    });
+    const sizes = [
+      ["XS", [31, 32], [24, 25], [34, 35]],
+      ["S", [33, 34], [26, 27], [36, 37]],
+      ["M", [35, 36], [28, 29], [38, 39]],
+      ["L", [37.5, 39], [30.5, 32], [40.5, 42]],
+      ["XL", [40.5, 42], [33.5, 35], [43.5, 45]],
+    ] as const;
+    expect(await sheet(csv, "fitted-template.csv")).toEqual(
+      ready({
+        name: "fitted-template",
+        template: "blank",
+        content: {
+          v: 1,
+          unit: "in",
+          roundTo: 0.5,
+          tables: [
+            {
+              id: "t1",
+              columns: [{ id: "c1", kind: "size" }, m("c2"), m("c3"), m("c4")],
+              rows: sizes.map(([, bust, waist, hips], i) => ({
+                id: `r${i + 1}`,
+                cells: { c2: bust, c3: waist, c4: hips },
+              })),
+            },
+          ],
+          measure: { steps: [] },
+          words: {
+            "t1.c1": "Size",
+            "t1.c2": "Bust",
+            "t1.c3": "Waist",
+            "t1.c4": "Hips",
+            ...Object.fromEntries(
+              sizes.map(([size], i) => [`t1.r${i + 1}.c1`, size]),
+            ),
+          },
+        },
+      }),
+    );
+  });
+
+  it("reads each column's kind and unit from its label and cells", async () => {
+    const csv = [
+      'Size,US,Chest (cm),Waist cm,"Hips, cm",Inseam [in],Weight (lbs),Height,Fit',
+      "S,4,86-90,70 cm,94,30,120 to 130,160 cm,Relaxed",
+      "M,6,90-94,74,98,30.5,130–140,165,Slim",
+    ].join("\r\n");
+    const draft = await sheet(csv);
+    const m = (id: string, unit?: string) => ({
+      id,
+      kind: "measure",
+      ...(unit && { unit }),
+      convert: true,
+    });
+    // Four length columns are in cm and one in inches, so the chart is in cm.
+    expect(draft.status === "ready" && draft.content.unit).toBe("cm");
+    expect(draft.status === "ready" && draft.content.tables[0].columns).toEqual(
+      [
+        { id: "c1", kind: "size" },
+        { id: "c2", kind: "country", country: "US" },
+        m("c3", "cm"),
+        m("c4", "cm"),
+        m("c5", "cm"),
+        m("c6", "in"),
+        m("c7", "lb"),
+        m("c8", "cm"),
+        { id: "c9", kind: "text" },
+      ],
+    );
+    expect(draft.status === "ready" && draft.content.words).toMatchObject({
+      "t1.c2": "US",
+      "t1.c3": "Chest",
+      "t1.c4": "Waist",
+      "t1.c5": "Hips",
+      "t1.c6": "Inseam",
+      "t1.c7": "Weight",
+      "t1.c8": "Height",
+      "t1.r2.c9": "Slim",
+    });
+    expect(draft.status === "ready" && draft.content.tables[0].rows[0]).toEqual(
+      {
+        id: "r1",
+        cells: {
+          c3: [86, 90],
+          c4: [70],
+          c5: [94],
+          c6: [30],
+          c7: [120, 130],
+          c8: [160],
+        },
+      },
+    );
+  });
+
+  it("asks to check the units when no label or cell names a length unit", async () => {
+    const draft = await sheet("Size,Chest,Weight (kg)\nS,34-36,60\nM,36,");
+    expect(draft).toMatchObject({ status: "check_units", reason: CHECK });
+    expect(draft.status === "check_units" && draft.content.tables[0]).toEqual({
+      id: "t1",
+      columns: [
+        { id: "c1", kind: "size" },
+        { id: "c2", kind: "measure", convert: true },
+        { id: "c3", kind: "measure", unit: "kg", convert: true },
+      ],
+      rows: [
+        { id: "r1", cells: { c2: [34, 36], c3: [60] } },
+        { id: "r2", cells: { c2: [36] } },
+      ],
+    });
+    // Nothing to measure, or only weights, is nothing to check.
+    for (const csv of ["US,UK,EU\n4,8,36", "Size,Weight (kg)\nS,60"])
+      expect(await sheet(csv)).toMatchObject({ status: "ready" });
+    // As many lengths in cm as in inches: inches.
+    const tie = await sheet("Size,Chest (cm),Waist (in)\nS,86,28");
+    expect(tie.status === "ready" && tie.content.unit).toBe("in");
+  });
+
+  it("reads every common spelling of a unit", async () => {
+    const labels = [
+      "Size",
+      "A (inches)",
+      "B ins",
+      "C (centimetres)",
+      "D centimeter",
+      "E (lbs.)",
+      "F pounds",
+      '"G, kilograms"',
+      "H [kgs]",
+      // These two take their units from their cells.
+      "I",
+      "J",
+    ];
+    const csv = `${labels}\nS,1,2,3,4,5,6,7,8,"9""",10 Kilos.`;
+    const draft = await sheet(csv);
+    const units = ["in", "in", "cm", "cm", "lb", "lb", "kg", "kg", "in", "kg"];
+    expect(draft.status === "ready" && draft.content.tables[0].columns).toEqual(
+      [
+        { id: "c1", kind: "size" },
+        ...units.map((unit, i) => ({
+          id: `c${i + 2}`,
+          kind: "measure",
+          unit,
+          convert: true,
+        })),
+      ],
+    );
+    expect(draft.status === "ready" && draft.content.words).toMatchObject(
+      Object.fromEntries(
+        "ABCDEFGHIJ".split("").map((l, i) => [`t1.c${i + 2}`, l]),
+      ),
+    );
+  });
+
+  it("refuses a column in a unit Fitted can't hold, instead of guessing", async () => {
+    const convert =
+      "Convert this column to inches, centimeters, pounds or kilograms";
+    expect(
+      await sheetReason(
+        "Size,Diameter (in),mm,Weight (g),Height m\nS,1,16,3,2",
+      ),
+    ).toBe(`Row 1, mm: ${convert}; Row 1, Weight (g): ${convert}.`);
+    // A g or m outside brackets, or ending a word, is no unit.
+    const csv =
+      "Méret,Mellbőség,Cup G,Cup (A-G),S/M,Height m\nS,86,32,B,x,1\nM,90,34,C,y,2";
+    expect(await sheet(csv)).toMatchObject({ status: "check_units" });
+  });
+
+  it("reads a label's unit past its first 32 characters", async () => {
+    const draft = await sheet(
+      "Size,Chest circumference at the fullest point (cm)\nS,86",
+    );
+    expect(draft.status === "ready" && draft.content.words["t1.c2"]).toBe(
+      "Chest circumference at the fullest point",
+    );
+  });
+
+  it("reads a unit before a country or size system in the label", async () => {
+    const csv = [
+      "Größe,Außenbeinlänge (cm),US Waist (in),UK Chest (cms)",
+      "38,104,28,86 cms",
+    ].join("\n");
+    const draft = await sheet(csv);
+    expect(draft.status === "ready" && draft.content.tables[0].columns).toEqual(
+      [
+        { id: "c1", kind: "size" },
+        { id: "c2", kind: "measure", unit: "cm", convert: true },
+        { id: "c3", kind: "measure", unit: "in", convert: true },
+        { id: "c4", kind: "measure", unit: "cm", convert: true },
+      ],
+    );
+  });
+
+  it("reads a size system or an age as text, never as a length", async () => {
+    const csv = [
+      "Size,us sizes,Size UK,EUR,AU/NZ,IT,JP,Age (years),Chest (cm),Size (US),USA,AUS,Size IT,Months,Age (m)",
+      "S,4,8,36,8,40,7,2-3,86,4,4,8,40,6,6",
+    ].join("\n");
+    const draft = await sheet(csv);
+    const country = (id: string, c: string) => ({
+      id,
+      kind: "country",
+      country: c,
+    });
+    expect(draft.status === "ready" && draft.content.tables[0].columns).toEqual(
+      [
+        { id: "c1", kind: "size" },
+        country("c2", "US"),
+        country("c3", "UK"),
+        country("c4", "EU"),
+        country("c5", "AU"),
+        { id: "c6", kind: "text" },
+        { id: "c7", kind: "text" },
+        { id: "c8", kind: "text" },
+        { id: "c9", kind: "measure", unit: "cm", convert: true },
+        country("c10", "US"),
+        country("c11", "US"),
+        country("c12", "AU"),
+        { id: "c13", kind: "text" },
+        { id: "c14", kind: "text" },
+        { id: "c15", kind: "text" },
+      ],
+    );
+  });
+
+  it("makes a column of mostly numbers a measure column, and a dash no value", async () => {
+    // Notes: one number in two filled cells. Gap: empty. Neither is mostly
+    // numbers.
+    const csv =
+      "Size,Chest (in),Notes,Waist,Gap\nS,34,Runs small,28\nM,—,36,–\nL,-,,30";
+    const draft = await sheet(csv);
+    expect(draft.status).toBe("ready");
+    expect(draft.status === "ready" && draft.content.tables[0]).toEqual({
+      id: "t1",
+      columns: [
+        { id: "c1", kind: "size" },
+        { id: "c2", kind: "measure", unit: "in", convert: true },
+        { id: "c3", kind: "text" },
+        { id: "c4", kind: "measure", convert: true },
+        { id: "c5", kind: "text" },
+      ],
+      rows: [
+        { id: "r1", cells: { c2: [34], c4: [28] } },
+        { id: "r2", cells: {} },
+        { id: "r3", cells: { c4: [30] } },
+      ],
+    });
+  });
+
+  it("reads semicolons with decimal commas, and tabs", async () => {
+    const semi = await sheet(
+      'Size;"Chest; relaxed (cm)";Waist, in\nS;86,5-90;28,5',
+    );
+    expect(semi.status === "ready" && semi.content.tables[0]).toMatchObject({
+      columns: [{}, { unit: "cm" }, { unit: "in" }],
+      rows: [{ cells: { c2: [86.5, 90], c3: [28.5] } }],
+    });
+    expect(semi.status === "ready" && semi.content.words["t1.c2"]).toBe(
+      "Chest; relaxed",
+    );
+    const tab = await sheet(
+      "Size\tChest (in)\tFit, notes\nS\t34.5\tSnug, short",
+    );
+    expect(tab.status === "ready" && tab.content.words).toMatchObject({
+      "t1.c3": "Fit, notes",
+      "t1.r1.c3": "Snug, short",
+    });
+    // A decimal comma needs semicolons: with commas, it's no number.
+    expect(await sheetReason('Size,Chest (in)\nS,"34,5"')).toBe(
+      "Row 2, Chest (in): Use a number like 34.5 or a range like 34–36.",
+    );
+  });
+
+  it("picks the delimiter the first row with text uses most outside quotes", async () => {
+    const chest = async (csv: string) => {
+      const draft = await sheet(csv);
+      return (
+        draft.status === "ready" && draft.content.tables[0].rows[0].cells.c2
+      );
+    };
+    // Delimiters inside quotes don't count, even ones another delimiter
+    // would leave outside them.
+    for (const csv of [
+      'Size,"Chest; relaxed, cm"\nS,86',
+      '"Size","Chest; a; b (cm)"\nS,86',
+      'Size,"Chest\tcm"\nS,86',
+      // A tie goes to the semicolon or tab; an empty row is passed over, and a
+      // padded one counts, since a spreadsheet pads with its own delimiter.
+      "Size;Chest, cm\nS;86",
+      "\r\n  \r\n;;\r\nSize;Chest, relaxed, cm\nS;86",
+      "Size\tChest, cm\nS\t86",
+      // A quote inside a cell, or a row of no-break spaces, starts nothing.
+      `${String.fromCharCode(0xa0)}\nSize;Chest, cm;Inseam 30"\nS;86;76`,
+    ])
+      expect(await chest(csv), JSON.stringify(csv)).toEqual([86]);
+  });
+
+  it("names the row and column of each bad cell", async () => {
+    const csv = "Size,Chest (in),Waist\nS,86 cm,abc\nM,36,28\nL,38,30";
+    expect(await sheetReason(csv)).toBe(
+      "Row 2, Chest (in): Give this in inches, like the rest of its column; " +
+        "Row 2, Waist: Use a number like 34.5 or a range like 34–36.",
+    );
+    const long = "x".repeat(501);
+    expect(await sheetReason(`Size,${long}\nS,y`)).toBe(
+      "Row 1, column B: Must be text of at most 500 characters.",
+    );
+  });
+
+  it("refuses a table without sizes, or of more than 60 rows or 20 columns", async () => {
+    expect(await sheetReason("Size,Chest (in)")).toBe(
+      "Row 1: A table needs 1 to 60 size rows.",
+    );
+    const rows = Array.from({ length: 70 }, (_, i) => `S${i},34`);
+    expect(await sheetReason(["Size,Chest (in)", ...rows].join("\n"))).toBe(
+      "Row 62: A table needs 1 to 60 size rows.",
+    );
+    const wide = Array.from({ length: 21 }, (_, i) => `C${i}`).join(",");
+    expect(await sheetReason(`${wide}\nS`)).toBe(
+      "Row 1: A table needs 1 to 20 columns.",
+    );
+  });
+
+  it("names the chart after the file, on one line of at most 100 characters", async () => {
+    const name = async (fileName: string) =>
+      (await sheet("Size\nS", fileName)).name;
+    const nul = String.fromCharCode(0);
+    expect(await name(`  Women's\ttops${nul}v2.csv `)).toBe("Women's tops v2");
+    expect(await name("tops.2026.csv")).toBe("tops.2026");
+    for (const blank of ["", ".csv", " \n.csv"])
+      expect(await name(blank)).toBe("Imported chart");
+    // Cut at 100, never through the middle of an emoji.
+    const smile = String.fromCodePoint(0x1f600);
+    expect(await name(`${"a".repeat(99)}${smile}.csv`)).toBe("a".repeat(99));
+  });
 });
 
 describe("row-level errors", () => {
@@ -667,6 +1128,18 @@ describe("file-level errors", () => {
     { length: 6 },
     (_, i) => `""${i}${".".repeat(16000)}"":0`,
   );
+  // Charts of four tables, each with no Columns row and 20 labels that make
+  // a unit search backtrack, so every label is searched.
+  const label = `${"(".repeat(32)}in${" ".repeat(60)}x`;
+  const padded = ["", "Chart,A,tops,in,1"]
+    .concat(
+      ...[1, 2, 3, 4].map((t) => [
+        `Table,t${t}`,
+        `Labels,,${Array(20).fill(label)}`,
+        "Row,a,S",
+      ]),
+    )
+    .join("\n");
   const dotted = [
     "",
     ...chart.slice(0, 1),
@@ -690,6 +1163,15 @@ describe("file-level errors", () => {
     ],
     ["settings keys full of dots", fitted(), dotted, ""],
     ["one wide Wrap row", fitted(...chart, "Row,a,S", "Wrap"), ",s", ""],
+    // Spreadsheets, whose labels are searched for units and countries.
+    ["one label of brackets", "Size,a", "(", "b\nS,1"],
+    ["a padded label", 'Size,"', " ", 'x in"\nS,1'],
+    ["a wide first row of semicolons", "Size", ";", ""],
+    ["a quote only commas open", 'Size;x,"', "a;", ""],
+    ["many size rows", "Size,Chest (in)", "\nS,1", ""],
+    ["a measure cell of spaces", 'Size,Chest\nS,"1', " ", 'x"'],
+    ["decimal commas", "Size;Chest\nS;1", ",", ""],
+    ["many padded labels in untyped columns", fitted(), padded, ""],
   ])("reads %s in linear time", async (_, before, unit, after) => {
     const csv = fill(before, unit, after);
     const start = Date.now();
@@ -729,10 +1211,9 @@ describe("file-level errors", () => {
     expect(await fileError(fitted("", "Table,t1"))).toBe(
       "Row 3: Put a Chart row above this row.",
     );
-    const other =
-      "Fitted can only read its own CSV export for now, with commas between cells.";
-    expect(await fileError("Size,Chest\nS,34")).toBe(other);
-    // Text that merely starts with PK is no zip.
-    expect(await fileError("PKG,Chest\nS,34")).toBe(other);
+    // Text that merely starts with PK is no zip, but a spreadsheet.
+    await expect(drafts("PKG,Chest (in)\nS,34")).resolves.toMatchObject([
+      { status: "ready" },
+    ]);
   });
 });
