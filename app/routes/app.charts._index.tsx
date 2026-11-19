@@ -133,16 +133,22 @@ export default function SizeCharts() {
   );
 }
 
+const HEADERS = (
+  <s-table-header-row>
+    <s-table-header listSlot="primary">Chart</s-table-header>
+    <s-table-header listSlot="inline">Status</s-table-header>
+    <s-table-header listSlot="labeled" format="numeric">
+      Products
+    </s-table-header>
+    <s-table-header listSlot="labeled">Last edited</s-table-header>
+  </s-table-header-row>
+);
+
 function Loading() {
   return (
     <s-section padding="none" accessibilityLabel="Loading your size charts">
       <s-table loading>
-        <s-table-header-row>
-          <s-table-header listSlot="primary">Chart</s-table-header>
-          <s-table-header listSlot="inline">Status</s-table-header>
-          <s-table-header listSlot="labeled">Products</s-table-header>
-          <s-table-header listSlot="labeled">Last edited</s-table-header>
-        </s-table-header-row>
+        {HEADERS}
         <s-table-body></s-table-body>
       </s-table>
     </s-section>
@@ -294,14 +300,7 @@ export function Charts({ rows, limit }: Extract<ChartList, { rows: unknown }>) {
         {shown.length ? (
           <>
             <s-table variant="auto">
-              <s-table-header-row>
-                <s-table-header listSlot="primary">Chart</s-table-header>
-                <s-table-header listSlot="inline">Status</s-table-header>
-                <s-table-header listSlot="labeled" format="numeric">
-                  Products
-                </s-table-header>
-                <s-table-header listSlot="labeled">Last edited</s-table-header>
-              </s-table-header-row>
+              {HEADERS}
               <s-table-body>
                 {shown.map((r) => (
                   <s-table-row key={r.id}>
