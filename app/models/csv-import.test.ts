@@ -428,19 +428,66 @@ describe("row-level errors", () => {
     );
   });
 
-  it("reports text past a row's last cell instead of dropping it", async () => {
+  it("reports text in a cell Fitted doesn't read instead of dropping it", async () => {
+    const unread = "This row has text in a cell Fitted doesn't read";
     const csv = fitted(
       "Chart,Shirts,tops,in,1,extra",
+      'Settings,"{""measure"":{""steps"":[]}}",extra',
       "Table,t1,Tops,,,extra",
-      "Columns,,s:size",
+      "Columns,,s:size,c:text",
+      "Labels,Size,Notes",
       "Row,a,S",
+      "Merge,a,s,1,1,extra",
       "Text,tips,Measure over light clothing, not a coat",
     );
     expect(await reasonOf(csv)).toBe(
-      "Row 2: This row has more cells than Fitted reads; " +
-        "Row 3: This row has more cells than Fitted reads; " +
-        "Row 6: This row has more cells than Fitted reads.",
+      [2, 3, 4, 6, 8].map((n) => `Row ${n}: ${unread}`).join("; ") +
+        "; and 1 more.",
     );
+    expect(await reasonOf(fitted("Chart,A,tops,in,1,x", "Text,a,b,c"))).toMatch(
+      `Row 2: ${unread}; Row 2: A chart needs 1 to 4 tables; Row 3: ${unread}`,
+    );
+  });
+
+  it("reads a Wrap row's ids past blank cells, and places one over 20", async () => {
+    const top = ["Chart,A,tops,in,1", "Table,t1", "Columns,,s:size,c:text"];
+    const [draft] = await drafts(
+      fitted(...top, "Row,a,S", `Wrap,s${",".repeat(21)}c`),
+    );
+    expect(draft.status === "ready" && draft.content.tables[0].wrap).toEqual([
+      "s",
+      "c",
+    ]);
+    expect(
+      await reasonOf(fitted(...top, "Row,a,S", `Wrap${",s".repeat(21)}`)),
+    ).toBe("Row 6: Must have 0 to 20 items.");
+  });
+
+  // A long id copied into every key built from it would make each of them
+  // as long, and V8 hashes strings past 16,383 characters by length alone.
+  it("reads long table and column ids in linear time", async () => {
+    const cols = Array.from({ length: 19 }, (_, i) => `c${i}:text`);
+    const rows = Array.from(
+      { length: 60 },
+      (_, i) => `Row,r${i},${Array(20).fill("x")}`,
+    );
+    const long = "t".repeat(50_000);
+    for (const [table, first] of [
+      [long, "s"],
+      ["t1", "s".repeat(900_000)],
+    ]) {
+      const csv = fitted(
+        "Chart,A,tops,in,1",
+        `Table,${table}`,
+        `Columns,,${first}:size,${cols}`,
+        ...rows,
+      );
+      const start = Date.now();
+      expect(await reasonOf(csv)).toMatch(
+        /^Row \d(, column C)?: Use 1 to 8 lowercase letters or digits; /,
+      );
+      expect(Date.now() - start).toBeLessThan(1000);
+    }
   });
 
   it("reads Settings once, and each table's Columns row once", async () => {
@@ -526,16 +573,23 @@ describe("row-level errors", () => {
   });
 
   it("never lets a Settings row replace the chart's tables or words", async () => {
-    const csv = fitted(
-      "Chart,Shirts,tops,in,1",
-      'Settings,"{""tables"":[],""words"":{}}"',
-      "Table,t1",
-      "Columns,,s:size",
-      "Row,a,S",
-    );
-    expect(await reasonOf(csv)).toBe(
-      "Row 3: This Settings row isn't in the form Fitted writes.",
-    );
+    // Not Fitted's keys, not an object, and cut short as Excel cuts long cells.
+    for (const json of [
+      '"{""tables"":[],""words"":{}}"',
+      "[]",
+      '"{""fit"":{"',
+    ]) {
+      const csv = fitted(
+        "Chart,Shirts,tops,in,1",
+        `Settings,${json}`,
+        "Table,t1",
+        "Columns,,s:size",
+        "Row,a,S",
+      );
+      expect(await reasonOf(csv)).toBe(
+        "Row 3: This Settings row isn't in the form Fitted writes.",
+      );
+    }
   });
 
   it("refuses a chart without tables, or with more than four", async () => {
@@ -628,7 +682,12 @@ describe("file-level errors", () => {
     ["one wide row", fitted(...chart, "Row,a,S"), ",", ""],
     ["thousands of tiny charts", fitted(), "\nChart", ""],
     ["one chart of junk rows", fitted(...chart), "\nx", ""],
-    ["settings nested deep", fitted(...chart, 'Settings,"'), "[", '"'],
+    [
+      "settings nested deep",
+      fitted(...chart, 'Settings,"{""measure"":'),
+      "[",
+      '"',
+    ],
     ["settings keys full of dots", fitted(), dotted, ""],
     ["one wide Wrap row", fitted(...chart, "Row,a,S", "Wrap"), ",s", ""],
   ])("reads %s in linear time", async (_, before, unit, after) => {

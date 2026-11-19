@@ -240,8 +240,8 @@ class Draft {
       if (!(err instanceof ChartValidationError)) throw err;
       for (const [path, text] of Object.entries(err.fieldErrors)) {
         if (this.reported.has(path)) continue;
-        // A place is the path or one of its first six segments: walking up a
-        // long Settings key one dot at a time would cost its length squared.
+        // Cells and words are placed by their whole path, the rest by its first
+        // six segments at most: walking up a long key dot by dot is quadratic.
         const parts = path.split(".", 6);
         let at = this.at.get(path);
         for (let n = parts.length; !at && n; n--)
@@ -276,6 +276,10 @@ const SPEC =
   /^([^:]*):(?:(size|text)|(US|UK|EU|AU)|(measure|in|cm|lb|kg)(:fixed)?)$/;
 type Country = Extract<Column, { kind: "country" }>["country"];
 type Unit = NonNullable<Extract<Column, { kind: "measure" }>["unit"]>;
+// An id past 8 characters fails validateChart anyway; cut to 9, it can't make
+// every key built from it as long (V8 hashes a long string by its length).
+const cut = (id = "") => id.slice(0, 9);
+const UNREAD = "This row has text in a cell Fitted doesn't read";
 
 // One table: its Table row, then the rows that belong to it.
 type Grid = { at: Rec; rows: Rec[]; merges: Rec[] } & {
@@ -283,22 +287,21 @@ type Grid = { at: Rec; rows: Rec[]; merges: Rec[] } & {
 };
 function table(d: Draft, ti: number, g: Grid): Table {
   const p = `content.tables.${ti}`;
-  const tid = g.at.cells[1] ?? "";
+  const tid = cut(g.at.cells[1]);
   d.at.set(p, g.at);
   if (g.rows.length < 1 || g.rows.length > 60)
     d.fail(g.rows[60] ?? g.at, "A table needs 1 to 60 size rows", `${p}.rows`);
   const rows = g.rows.slice(0, 60); // the rest are reported above
   rows.forEach((r, ri) => d.at.set(`${p}.rows.${ri}`, r));
-  // Spreadsheets pad rows with empty cells, so trailing ones don't count.
-  const width = (r?: Rec) => {
-    let n = r?.cells.length ?? 0;
-    while (n > 2 && r?.cells[n - 1] === undefined) n--;
-    return n - 2;
-  };
+  // A row is as wide as its last filled cell: spreadsheets pad rows.
+  const width = (r?: Rec) =>
+    r?.cells.reduce((w, c, i) => (c === undefined ? w : i - 1), 0) ?? 0;
   const n = Math.max(0, width(g.types), width(g.labels), ...rows.map(width));
   const head = g.types ?? g.at;
   if (n < 1 || n > 20)
     d.fail(head, "A table needs 1 to 20 columns", `${p}.columns`);
+  // Their second cell is blank in Fitted's layout.
+  for (const r of [g.types, g.labels]) if (r?.cells[1]) d.fail(r, UNREAD);
   const columns: Column[] = [];
   const cells = rows.map(() => new Map<string, Cell>());
   for (let j = 0; j < Math.min(n, 20); j++) {
@@ -306,19 +309,16 @@ function table(d: Draft, ti: number, g: Grid): Table {
     const label = cell(g.labels);
     // Named by its label in reasons, or its letter when that is blank or long.
     const shown = label?.trim();
-    const col =
-      shown && shown.length <= 40
-        ? shown
-        : `column ${String.fromCharCode(67 + j)}`;
+    const letter = `column ${String.fromCharCode(67 + j)}`;
+    const col = shown && shown.length <= 40 ? shown : letter;
+    const where = { line: head.line, col };
     const m = SPEC.exec(cell(g.types) ?? "");
     if (!m) {
-      d.fail(
-        { line: head.line, col },
-        "Fitted doesn't know this column's type",
-      );
+      d.fail(where, "Fitted doesn't know this column's type");
       continue;
     }
-    const [, id, kind, country, unit, fixed] = m;
+    const [, spec, kind, country, unit, fixed] = m;
+    const id = cut(spec);
     const column: Column = kind
       ? { id, kind: kind as "size" | "text" }
       : country
@@ -329,16 +329,13 @@ function table(d: Draft, ti: number, g: Grid): Table {
             ...(unit !== "measure" && { unit: unit as Unit }),
             convert: !fixed,
           };
-    d.at.set(`${p}.columns.${columns.push(column) - 1}`, {
-      line: head.line,
-      col,
-    });
+    d.at.set(`${p}.columns.${columns.push(column) - 1}`, where);
     d.word(`${tid}.${id}`, label, { line: (g.labels ?? head).line, col });
     rows.forEach((r, ri) => {
       const w = { line: r.line, col };
       const v = cell(r);
       if (column.kind !== "measure")
-        return d.word(`${tid}.${r.cells[1] ?? ""}.${id}`, v, w);
+        return d.word(`${tid}.${cut(r.cells[1])}.${id}`, v, w);
       if (v === undefined) return;
       const num = VALUE.exec(v);
       if (!num)
@@ -351,7 +348,7 @@ function table(d: Draft, ti: number, g: Grid): Table {
     id: tid,
     columns,
     rows: rows.map((r, ri) => ({
-      id: r.cells[1] ?? "",
+      id: cut(r.cells[1]),
       cells: Object.fromEntries(cells[ri]),
     })),
   };
@@ -361,11 +358,10 @@ function table(d: Draft, ti: number, g: Grid): Table {
       const [, row = "", col = "", rows, cols] = m.cells;
       return { row, col, rows: Number(rows), cols: Number(cols) };
     });
-  // validateChart allows 20, so the rest of a long Wrap row isn't kept.
-  const ids = g.wrap?.cells.slice(1, 22) ?? [];
-  const wrap = ids.filter((w): w is string => w !== undefined);
-  wrap.forEach((_, wi) => d.at.set(`${p}.wrap.${wi}`, g.wrap!));
-  if (wrap.length) out.wrap = wrap;
+  // validateChart allows 20 ids, so a long Wrap row keeps 21.
+  const ids = g.wrap?.cells.slice(1).filter((w) => w !== undefined) ?? [];
+  if (g.wrap) d.at.set(`${p}.wrap`, g.wrap);
+  if (ids.length) out.wrap = ids.slice(0, 21);
   return out;
 }
 
@@ -392,7 +388,7 @@ function fittedChart([head, ...rest]: Rec[]): ChartDraft {
   let settings: Record<string, unknown> | undefined;
   for (const r of [head, ...rest])
     if (r.cells.slice(FIELDS.get(r.cells[0] ?? "") ?? Infinity).some(Boolean))
-      d.fail(r, "This row has more cells than Fitted reads");
+      d.fail(r, UNREAD);
   for (const r of rest) {
     const [kind = "", b, c] = r.cells;
     const t = grids.at(-1);
@@ -401,7 +397,7 @@ function fittedChart([head, ...rest]: Rec[]): ChartDraft {
       // Tables past the fourth are reported below, not read.
       if (grids.length <= 4)
         ["title", "sub", "note"].forEach((k, i) =>
-          d.word(`${b ?? ""}.${k}`, r.cells[i + 2], r),
+          d.word(`${cut(b)}.${k}`, r.cells[i + 2], r),
         );
     } else if (kind === "Settings" && !settings) {
       let s: Record<string, unknown> | undefined;
