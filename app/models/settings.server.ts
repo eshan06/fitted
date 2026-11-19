@@ -365,7 +365,7 @@ export async function saveSettings(
           key: "settings",
           type: "json",
           value: JSON.stringify(settings),
-          compareDigest: digest,
+          compareDigest: digest ?? null, // never omitted: an omitted digest skips the check
         },
       ],
     },
