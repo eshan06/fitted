@@ -45,7 +45,7 @@ export const STRETCH = { none: 0, some: 0.03, high: 0.06 };
 const PER_BASE: Record<Unit, number> = { in: 2.54, cm: 1, lb: 0.4536, kg: 1 };
 const isLength = (u: Unit) => u === "in" || u === "cm";
 
-function convert(value: number, from: Unit, to: Unit): number | null {
+export function convert(value: number, from: Unit, to: Unit): number | null {
   if (!Object.hasOwn(PER_BASE, from) || !Object.hasOwn(PER_BASE, to)) {
     return null;
   }

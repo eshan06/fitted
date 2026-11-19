@@ -1,0 +1,62 @@
+{%- comment -%}
+  The Size guide link and popup for the product page (ARCHITECTURE §9). A
+  product without an Active chart renders nothing, and loader.js shows the
+  link only once the chart's data validates. Liquid escapes every word it prints.
+{%- endcomment -%}
+{%- assign p = block.settings.product -%}
+{%- assign chart = p.metafields['$app'].chart.value -%}
+{%- if chart -%}
+  {%- assign title_id = 'fitted-title-' | append: block.id -%}
+  <div class="fitted-guide" data-url="{{ 'guide.js' | asset_url }}">
+    <button type="button" class="fitted-link" aria-haspopup="dialog" hidden>
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke-linejoin="round" aria-hidden="true">
+        <path d="M8 3h8l5 4-2.5 3.5L17 9.5V21H7V9.5L5.5 10.5 3 7z" stroke="currentColor" stroke-width="1.4"/>
+        <path d="M9.5 6h5l3 2.6-1 1.4-1.5-.9V18.5h-6V9.1l-1.5.9-1-1.4z" stroke="#2448A8" stroke-width="1.8"/>
+      </svg>
+      {{- 'size_guide.title' | t -}}
+    </button>
+    <dialog class="fitted-dialog" aria-labelledby="{{ title_id }}">
+      <div class="fitted-panel">
+        <div class="fitted-head">
+          <div>
+            <h2 id="{{ title_id }}" class="fitted-title">{{ 'size_guide.title' | t }}</h2>
+            <p class="fitted-sub">{{ p.title | escape }}</p>
+          </div>
+          <button type="button" class="fitted-x" aria-label="{{ 'size_guide.close' | t }}" data-close></button>
+        </div>
+        <div class="fitted-body" data-t-chart="{{ 'size_guide.chart' | t }}" data-t-units="{{ 'size_guide.units' | t }}" data-t-system="{{ 'size_guide.system' | t }}"></div>
+      </div>
+      <template data-state="loading">
+        <p role="status" class="fitted-note">{{ 'size_guide.loading' | t }}</p>
+        <div aria-hidden="true">
+          {%- for row in (1..6) -%}
+            <div class="fitted-skrow">{% for cell in (1..5) %}<span class="fitted-sk"></span>{% endfor %}</div>
+          {%- endfor -%}
+        </div>
+      </template>
+      <template data-state="error">
+        <div role="alert" class="fitted-alert">
+          <h3 class="fitted-h3">{{ 'size_guide.error' | t }}</h3>
+          <p>{{ 'size_guide.error_text' | t }}</p>
+          <div class="fitted-actions">
+            <button type="button" class="fitted-btn" data-retry>{{ 'size_guide.retry' | t }}</button>
+            <button type="button" class="fitted-btn fitted-ghost" data-close>{{ 'size_guide.dismiss' | t }}</button>
+          </div>
+          {%- if pages.contact -%}
+            <p class="fitted-note">{{ 'size_guide.help' | t }} <a href="{{ pages.contact.url }}">{{ pages.contact.title | escape }}</a>.</p>
+          {%- endif -%}
+        </div>
+      </template>
+    </dialog>
+    {%- render 'guide-data', chart: chart -%}
+  </div>
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "Size guide",
+  "target": "content",
+  "javascript": "loader.js",
+  "settings": [{ "type": "product", "id": "product", "label": "Product", "autofill": true }]
+}
+{% endschema %}
