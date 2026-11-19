@@ -194,6 +194,92 @@ describe("chart editor screen", () => {
     expect(sent[1]).toMatchObject({ updatedAt: "2026-11-19T10:05:00Z" });
   });
 
+  it("treats the saved edits as the chart's content once only the status failed", async () => {
+    const statusFailed = {
+      status: 403,
+      body: {
+        error: { code: "product_access", message: "x" },
+        updatedAt: "2026-11-19T10:05:00Z",
+      },
+    };
+    await open([stored()], [statusFailed]);
+    await type(byLabel("XS, Bust"), "33");
+    await type(byLabel("Chart status"), "ACTIVE");
+    await click("Save");
+    expect(document.querySelector("s-banner")?.getAttribute("heading")).toBe(
+      "Edits saved, but the chart is still a Draft",
+    );
+    expect(text()).toContain("x");
+    // Discard goes back to what's stored now: the new cell, still a Draft.
+    await click("Discard");
+    expect(byLabel("XS, Bust").value).toBe("33");
+    expect(byLabel("Chart status").value).toBe("DRAFT");
+    expect(document.querySelector('[data-testid="save-bar"]')).toBeNull();
+    expect(document.querySelector("s-banner")).toBeNull();
+  });
+
+  it("names the Free limit and offers no retry that would fail the same way", async () => {
+    await open(
+      [stored()],
+      [
+        {
+          status: 403,
+          body: {
+            error: {
+              code: "plan_limit",
+              message: "Free includes 3 published charts.",
+            },
+          },
+        },
+      ],
+    );
+    await type(byLabel("Chart status"), "ACTIVE");
+    await click("Save");
+    expect(document.querySelector("s-banner")?.getAttribute("heading")).toBe(
+      "Women's tops wasn't published",
+    );
+    expect(text()).toContain("Free includes 3 published charts.");
+    expect(button("Try saving again")).toBeUndefined();
+  });
+
+  it("marks the fields the server refused", async () => {
+    await open(
+      [stored()],
+      [
+        {
+          status: 422,
+          body: {
+            fieldErrors: {
+              "content.tables.0.rows.0.cells.bust": "Use a number above 0",
+            },
+          },
+        },
+      ],
+    );
+    await type(byLabel("XS, Bust"), "33");
+    await click("Save");
+    expect(document.querySelector("s-banner")?.getAttribute("heading")).toBe(
+      "Fix 1 field to save",
+    );
+    expect(text()).toContain("XS, Bust: Use a number above 0");
+    expect(byLabel("XS, Bust").getAttribute("aria-invalid")).toBe("true");
+  });
+
+  it("discards edits, and Cancel closes the changed-elsewhere banner", async () => {
+    await open(
+      [stored()],
+      [{ status: 409, body: { error: { code: "conflict", message: "x" } } }],
+    );
+    await type(byLabel("XS, Bust"), "33");
+    await click("Save");
+    await click("Cancel");
+    expect(document.querySelector("s-banner")).toBeNull();
+    expect(byLabel("XS, Bust").value).toBe("33");
+    await click("Discard");
+    expect(byLabel("XS, Bust").value).toBe("31–32");
+    expect(document.querySelector('[data-testid="save-bar"]')).toBeNull();
+  });
+
   it("offers the latest version when the chart changed elsewhere", async () => {
     const { loader } = await open(
       [stored(), stored("2026-11-19T11:00:00Z")],
@@ -239,5 +325,39 @@ describe("chart editor screen", () => {
     await click("Try again");
     expect(loader).toHaveBeenCalledTimes(2);
     expect(byLabel("XS, Bust").value).toBe("31–32");
+  });
+
+  it("shows the loading state while it tries again", async () => {
+    let finish = () => {};
+    const slow = new Promise<void>((r) => (finish = r)).then(() => stored());
+    await open([{ mode: "error", error: { code: "shopify" } }, slow]);
+    await act(async () => button("Try again").click());
+    expect(document.querySelector('[role="status"]')?.textContent).toBe(
+      "Loading chart",
+    );
+    await act(async () => finish());
+    await settle();
+    expect(byLabel("XS, Bust").value).toBe("31–32");
+  });
+
+  it("names how many saved values fail the checks", async () => {
+    await open([
+      {
+        mode: "edit",
+        stored: {
+          id: "gid://shopify/Metaobject/42",
+          status: "ACTIVE",
+          updatedAt: "2026-11-19T10:00:00Z",
+          fieldErrors: { "content.v": "Must be 1", name: "Must be text" },
+        },
+      },
+    ]);
+    expect(document.querySelector("s-banner")?.getAttribute("heading")).toBe(
+      "Fix 2 values to save this chart",
+    );
+    expect(text()).toContain(
+      "They were changed outside Fitted. Nothing on your store has changed.",
+    );
+    expect(document.querySelector("input")).toBeNull();
   });
 });

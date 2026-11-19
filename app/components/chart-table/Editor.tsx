@@ -1,7 +1,7 @@
 // The Editor board (Fitted canvas): name, template, status, the size table,
 // units and the note, saved through App Bridge's save bar. Later steps add the
 // table tools, tabs, live preview and version history around this.
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Link, useFetcher, useRevalidator } from "react-router";
 import { SaveBar } from "@shopify/app-bridge-react";
 import type { FieldErrors, Template } from "../../models/chart.server";
@@ -38,19 +38,28 @@ export function Editor(props: {
   /** Set for a new chart: the handle its create lands on. */
   handle?: string;
 }) {
-  const { initial, handle } = props;
+  const { handle } = props;
   const fetcher = useFetcher<Answer>();
   const revalidator = useRevalidator();
-  const [draft, setDraft] = useState(initial);
+  const [draft, setDraft] = useState(props.initial);
   // The editor's own check, or the action's answer until it's dismissed.
   const [local, setLocal] = useState<Answer | null>(null);
   const [dismissed, setDismissed] = useState<Answer>();
-  // A save that fails after writing hands back the chart's new updatedAt.
-  const [stamp, setStamp] = useState(props.updatedAt);
+  // What's stored. A save that writes the edits but not the status hands back
+  // the new updatedAt without a reload: the sent edits are stored from then on.
+  const [base, setBase] = useState({
+    initial: props.initial,
+    updatedAt: props.updatedAt,
+  });
+  const { initial } = base;
+  const sent = useRef(draft);
   const saving = fetcher.state !== "idle";
   const answer = saving ? undefined : fetcher.data;
-  if (answer?.updatedAt && answer.updatedAt !== stamp)
-    setStamp(answer.updatedAt);
+  if (answer?.updatedAt && answer.updatedAt !== base.updatedAt)
+    setBase({
+      initial: { ...sent.current, status: initial.status },
+      updatedAt: answer.updatedAt,
+    });
   const notice = local ?? (answer === dismissed ? undefined : answer);
   const errors = notice?.fieldErrors ?? {};
   const listed = model.problems(draft, errors);
@@ -61,9 +70,10 @@ export function Editor(props: {
     const r = model.toInput(draft);
     if ("fieldErrors" in r) return setLocal(r);
     setLocal(null);
+    sent.current = draft;
     const body = handle
       ? { handle, chart: r.input }
-      : { chart: r.input, status: draft.status, updatedAt: stamp };
+      : { chart: r.input, status: draft.status, updatedAt: base.updatedAt };
     fetcher.submit(body as never, {
       method: "post",
       encType: "application/json",
@@ -131,8 +141,8 @@ export function Editor(props: {
               Nothing was saved, so your store hasn&apos;t changed.
             </s-paragraph>
             <ul className="list">
-              {listed.map((p) => (
-                <li key={p.id ?? p.long}>
+              {listed.map((p, i) => (
+                <li key={p.id ?? i}>
                   {p.id ? (
                     <a
                       href={`#${p.id}`}
