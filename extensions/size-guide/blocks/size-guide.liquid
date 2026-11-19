@@ -1,8 +1,7 @@
 {%- comment -%}
-  The Size guide link and popup for the product page (ARCHITECTURE §9). A
-  product without an Active chart renders nothing, and loader.js shows the
-  link only once the chart's data validates (an inline style, so no theme
-  button rule shows it sooner). Liquid escapes every word it prints.
+  The Size guide link and popup for the product page (ARCHITECTURE §9). No
+  Active chart, no output. loader.js shows the link once the chart validates;
+  until then an inline style hides it from theme button rules. Liquid escapes every word.
 {%- endcomment -%}
 {%- assign p = block.settings.product -%}
 {%- assign chart = p.metafields['$app'].chart.value -%}

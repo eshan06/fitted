@@ -52,9 +52,7 @@ function setup(block: HTMLElement, load: Load) {
   // The backdrop closes the guide only when the press starts there: not a
   // drag out of the table, nor a double click's second click on the link.
   let fromBackdrop = false;
-  dialog.addEventListener("pointerdown", (e) => {
-    fromBackdrop = e.target === dialog;
-  });
+  dialog.onpointerdown = (e) => (fromBackdrop = e.target === dialog);
   dialog.addEventListener("click", (e) => {
     const el = e.target as Element;
     const backdrop = el === dialog && fromBackdrop && e.detail < 2;
