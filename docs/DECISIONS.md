@@ -16,7 +16,7 @@ Shopify App Pricing reports subscriptions only through the Partner API's `active
 
 ## 2026-11-18 Plans: what each gate covers (owner may change)
 
-Free allows 3 Active charts with unlimited drafts, so a Free merchant can import everything; its rules use products and collections only, since a chart needs some way onto products. Home's opens stats show on every plan, as the approved Home board draws them on Standard; Pro adds fit finder results. Pro gates Fitted's translation tools, not translations a merchant already has. Downgrades never take anything down. ARCHITECTURE §8.
+Free allows 3 Active charts with unlimited drafts, so a Free merchant can import everything; its rules use the store default, products and collections only, since a chart needs some way onto products. Home's opens stats show on every plan, as the approved Home board draws them on Standard; Pro adds fit finder results. Pro gates Fitted's translation tools, not translations a merchant already has. Downgrades never take anything down. ARCHITECTURE §8.
 
 ## 2026-11-18 Storefront: chart data inline, no fetch endpoint
 

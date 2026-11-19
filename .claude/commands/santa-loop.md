@@ -6,7 +6,7 @@ description: Two independent reviewers check this branch's diff before the PR sh
 
 Run it in the foreground of the worker's own turn: a backgrounded reviewer is lost when the turn ends.
 
-Skip it for a docs-only change that doesn't touch the rules files (CLAUDE.md, `.claude/`, docs/ARCHITECTURE.md), and say so in Review notes.
+Skip it for a docs-only change that doesn't touch the rules files (CLAUDE.md, `.claude/`, docs/ARCHITECTURE.md, `docs/arch/`), and say so in Review notes.
 
 ## Round 1
 
@@ -16,7 +16,7 @@ Skip it for a docs-only change that doesn't touch the rules files (CLAUDE.md, `.
 3. Start both reviewers in parallel in one message, in the foreground: Agent tool, `subagent_type: code-reviewer`, the effort from step 1. Each gets the blocker rules, the command `git diff origin/main...HEAD`, the PR description, its focus, and this line verbatim:
    "You have not seen any other review. A BLOCKER needs file:line and a concrete failure (this input or state -> this wrong result). Everything else is a WARN. Zero findings is a normal result; don't manufacture any."
    - Reviewer A, correctness and tests: does each new test fail without the change? Is any changed behavior untested?
-   - Reviewer B, attacker and rules: injection, authorization holes (one shop or user reaching another's data), unvalidated input at trust boundaries, secrets or personal data in logs or errors, destructive migrations, breaks of CLAUDE.md or docs/ARCHITECTURE.md, weakened gates (CI config, scripts, or a new workflow job named like a required check).
+   - Reviewer B, attacker and rules: injection, authorization holes (one shop or user reaching another's data), unvalidated input at trust boundaries, secrets or personal data in logs or errors, destructive migrations, breaks of CLAUDE.md or docs/ARCHITECTURE.md (with `docs/arch/`), weakened gates (CI config, scripts, or a new workflow job named like a required check).
 4. Reviewer B uses a different model when one is set up: `codex exec --sandbox read-only` logged in with an OPENAI_API_KEY, or the Gemini CLI. None is set up today, so B is a second Claude and the report says the two share a model.
 5. Each returns `{"blockers":[{"file","line","rule","failure"}],"warns":["file:line - note"]}`.
 
