@@ -42,8 +42,8 @@ const line: Check<string> = (v) =>
     ? undefined
     : "Use one line of at most 200 characters";
 
-// Every object section's fields, so the checks and the form share one list.
-export const SECTIONS = {
+// Every object section's fields and their checks.
+const SECTIONS = {
   link: {
     style: oneOf("text", "button", "tab"),
     icon: oneOf("ruler", "hanger", "tape", "none"),
@@ -78,7 +78,6 @@ export const SECTIONS = {
     askAge: bool,
   },
 } satisfies Record<string, Record<string, Check>>;
-export const isBool = (check: Check) => check === bool;
 
 export type Text = { label: string; header: string; noFit: string };
 type Shape<C> = { [K in keyof C]: C[K] extends Check<infer T> ? T : never };
@@ -154,11 +153,14 @@ const TEXT = { label: line, header: line, noFit: line };
 // Errors by field path, for one top-level key.
 function check(key: string, v: unknown, primaryLocale: string): FieldErrors {
   const errs: FieldErrors = Object.create(null);
-  const fields = (SECTIONS as Record<string, Record<string, Check>>)[key];
+  // Own keys only, so names like "constructor" or "__proto__" are unknown fields.
+  const fields = Object.hasOwn(SECTIONS, key)
+    ? (SECTIONS as Record<string, Record<string, Check>>)[key]
+    : undefined;
   const shape = (o: unknown, checks: Record<string, Check>, path: string) => {
     if (!isObj(o)) return void (errs[path] = "Missing settings");
     for (const k of Object.keys(o))
-      if (!(k in checks)) errs[`${path}.${k}`] = "Unknown field";
+      if (!Object.hasOwn(checks, k)) errs[`${path}.${k}`] = "Unknown field";
     for (const [k, c] of Object.entries(checks)) {
       const problem = c(o[k]);
       if (problem) errs[`${path}.${k}`] = problem;
@@ -243,6 +245,7 @@ export function fillDefaults(stored: unknown, primaryLocale: string): Settings {
     for (const [l, t] of Object.entries(raw.text))
       if (l === primaryLocale) fill(out.text[l], t, TEXT);
       else if (
+        Object.keys(out.text).length < MAX_LOCALES &&
         !Object.keys(
           check(
             "text",
@@ -258,7 +261,7 @@ export function fillDefaults(stored: unknown, primaryLocale: string): Settings {
 type Admin = {
   graphql: (
     query: string,
-    options?: { variables?: Record<string, unknown> },
+    options?: { variables?: Record<string, unknown>; signal?: AbortSignal },
   ) => Promise<Response>;
 };
 /** Shopify didn't answer, or answered with errors. Routes show it as a 502. */
@@ -266,13 +269,19 @@ export class SettingsReadWriteError extends Error {}
 /** Someone saved since this screen loaded. Routes show it as a 409. */
 export class SettingsConflictError extends Error {}
 
+const TIMEOUT_MS = 5_000; // per call, so a loader never hangs on Shopify
 // ponytail: inline calls with no retries; move onto #59's admin.server.ts helper when it lands.
 async function call(
   admin: Admin,
   query: string,
   variables?: Record<string, unknown>,
 ) {
-  const response = await admin.graphql(query, { variables });
+  const response = await admin
+    .graphql(query, { variables, signal: AbortSignal.timeout(TIMEOUT_MS) })
+    .catch((error) => {
+      if (error instanceof Response) throw error; // re-auth
+      throw new SettingsReadWriteError(`Admin API request failed: ${error}`);
+    });
   const body = await response.json().catch(() => null);
   if (!response.ok || !body?.data || body.errors)
     throw new SettingsReadWriteError(
@@ -322,7 +331,11 @@ export async function getSettings(admin: Admin): Promise<Loaded> {
   };
 }
 
-/** Writes the whole document over the one with `digest`. Returns the new digest. */
+/**
+ * Writes the whole document over the one with `digest`. Returns the new digest.
+ * Only `digest` may come from a browser: take `shopId` and `primaryLocale`
+ * from getSettings in the same request.
+ */
 export async function saveSettings(
   admin: Admin,
   { shopId, primaryLocale, digest }: Omit<Loaded, "settings">,

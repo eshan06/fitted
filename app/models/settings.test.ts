@@ -22,7 +22,7 @@ function fakeStore(locales = [{ locale: "en", primary: true }]) {
   const graphql = vi.fn(
     async (
       query: string,
-      options?: { variables?: Record<string, unknown> },
+      options?: { variables?: Record<string, unknown>; signal?: AbortSignal },
     ) => {
       if (query.includes("query FittedSettings"))
         return json({
@@ -197,11 +197,48 @@ describe("saving and reading settings", () => {
           data: { shop: { id: shopId, metafield: null }, shopLocales: [] },
         }),
     ],
+    [
+      "no shop id",
+      () =>
+        json({
+          data: {
+            shop: { metafield: null },
+            shopLocales: [{ locale: "en", primary: true }],
+          },
+        }),
+    ],
+    [
+      "a thrown network error",
+      () => {
+        throw new TypeError("fetch failed");
+      },
+    ],
   ])("reports %s on read as a read/write error", async (_, reply) => {
     const graphql = vi.fn(async () => reply());
     await expect(getSettings({ graphql })).rejects.toBeInstanceOf(
       SettingsReadWriteError,
     );
+  });
+
+  it("gives every call a timeout", async () => {
+    const store = fakeStore();
+    await saveSettings(store.admin, await getSettings(store.admin), custom());
+    for (const [, options] of store.graphql.mock.calls)
+      expect(options?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it.each([
+    ["no userErrors", { metafieldsSet: { metafields: [] } }],
+    ["no digest back", { metafieldsSet: { metafields: [], userErrors: [] } }],
+  ])("reports a save with %s as a read/write error", async (_, data) => {
+    const graphql = vi.fn(async () => json({ data }));
+    await expect(
+      saveSettings(
+        { graphql },
+        { shopId, primaryLocale: "en", digest: null },
+        custom(),
+      ),
+    ).rejects.toBeInstanceOf(SettingsReadWriteError);
   });
 
   it("reports other user errors on save as a read/write error", async () => {
@@ -345,6 +382,24 @@ describe("validateSettings", () => {
       "__proto__",
     ]);
   });
+
+  it.each([
+    ["__proto__", JSON.parse('{"__proto__": {}}')],
+    ["constructor", { constructor: { name: "x" } }],
+    ["toString", { toString: {} }],
+    ["link.toString", { link: { ...custom().link, toString: "x" } }],
+    [
+      "link.__proto__",
+      { link: JSON.parse('{"style":"text","icon":"ruler","__proto__":{}}') },
+    ],
+    ["colors.constructor", { colors: { mode: "theme", constructor: "x" } }],
+    [
+      "text.en.hasOwnProperty",
+      { text: { en: { ...custom().text.en, hasOwnProperty: 1 } } },
+    ],
+  ])("refuses an inherited name as a field: %s", (path, extra) => {
+    expect(errors({ ...custom(), ...extra })).toHaveProperty([path]);
+  });
 });
 
 describe("fillDefaults", () => {
@@ -376,6 +431,17 @@ describe("fillDefaults", () => {
       en: { label: "Fit guide", header: "Size guide", noFit: "No match." },
       es: custom().text.fr,
     });
+    expect(() => validateSettings(read, "en")).not.toThrow();
+  });
+
+  it("keeps at most 50 languages, so what it reads can be saved", () => {
+    const ok = custom().text.fr;
+    const text = Object.fromEntries(
+      Array.from({ length: 60 }, (_, i) => [`fr-x${i}${i}`, ok]),
+    );
+    const read = fillDefaults({ ...custom(), text: { en: ok, ...text } }, "en");
+    expect(Object.keys(read.text)).toHaveLength(50);
+    expect(read.text.en).toEqual(ok);
     expect(() => validateSettings(read, "en")).not.toThrow();
   });
 
