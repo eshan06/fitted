@@ -157,10 +157,8 @@ async function readText(body: ReadableStream<Uint8Array> | null) {
   }
   const bytes = Buffer.concat(chunks);
   // No magic number marks a CSV: refuse NUL bytes (binary, UTF-16), zips, PDFs.
-  if (
-    bytes.includes(0) ||
-    /^(PK\x03\x04|%PDF)/.test(bytes.toString("latin1", 0, 4))
-  )
+  const head = bytes.toString("latin1", 0, 4);
+  if (bytes.includes(0) || head === "PK\x03\x04" || head === "%PDF")
     throw new CsvFileError(SAVE_AS);
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes); // drops a BOM
