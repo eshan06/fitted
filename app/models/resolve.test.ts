@@ -857,6 +857,32 @@ describe("one resolve per shop at a time", () => {
 });
 
 describe("a failed resolve", () => {
+  it.each([
+    ["a clean merchant resolve", true, false],
+    ["a failed resolve that wasn't the merchant's", false, true],
+  ])(
+    "leaves a run asked for behind %s as it was asked",
+    async (_, merchant, fail) => {
+      const store = fakeStore();
+      store.setRules(rules());
+      store.hooks.afterRead = (read) => {
+        store.hooks.failRead =
+          fail && read === 1 ? "INTERNAL_SERVER_ERROR" : undefined;
+        if (read === 1) void startResolve(SHOP, false); // a collection webhook
+      };
+
+      await startResolve(SHOP, merchant);
+
+      expect(jobs()).toEqual([
+        fail
+          ? failed(merchant, "Shopify's bulk operation didn't finish")
+          : done(merchant, 34),
+        done(false, fail ? 34 : 0),
+      ]);
+      if (fail) expect(store.assigned()[product(3)]).toBe(BASIC);
+    },
+  );
+
   it("passes the merchant's changes to the run asked for meanwhile, which is now the newest (§13)", async () => {
     const store = fakeStore();
     store.setRules(rules());

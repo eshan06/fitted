@@ -663,7 +663,8 @@ async function resolvePass(
 }
 
 // One resolve per shop at a time; asking while one runs makes it run once
-// more when it finishes, as a merchant resolve if any ask was one.
+// more when it finishes, as a merchant resolve if any ask was one or the run
+// before it was a merchant resolve that failed.
 // ponytail: in-process, so one app instance (§17); a queue before running two.
 type Queued = {
   again: boolean | null;
