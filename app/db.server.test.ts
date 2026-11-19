@@ -5,9 +5,18 @@ import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prism
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import prisma from "./db.server";
 import { resetCachedPlan } from "./models/billing.server";
+import { checkJobs } from "./models/rules.server";
 
-// billing.server.ts imports it for plan checks, which nothing here runs.
-vi.mock("./shopify.server", () => ({}));
+// billing.server.ts imports it for plan checks, which nothing here runs. A
+// resolve the job checks requeue finds no store: the offline session is
+// refused at once, as a thrown Response is never retried.
+vi.mock("./shopify.server", () => ({
+  unauthenticated: {
+    admin: async () => {
+      throw new Response(null, { status: 401 });
+    },
+  },
+}));
 
 // Runs against a real, migrated Postgres: CI's service container, or the docker
 // compose one when DATABASE_URL is set (docs/GOTCHAS.md). CI never skips it.
@@ -188,5 +197,103 @@ describe.runIf(hasDatabase)("the app database on Postgres", () => {
 
     expect(await prisma.job.count({ where: { shop } })).toBe(0);
     expect(await prisma.job.count({ where: { shop: otherShop } })).toBe(1);
+  });
+
+  it("fails a job with no progress for 10 minutes and leaves one that moved since", async () => {
+    const shop = newShop();
+    const job = (minutes: number) =>
+      prisma.job.create({
+        data: {
+          id: randomUUID(),
+          shop,
+          kind: "import",
+          status: "running",
+          updatedAt: new Date(Date.now() - minutes * 60_000),
+        },
+      });
+    const stalled = await job(11);
+    const moving = await job(9);
+
+    await checkJobs();
+
+    expect(
+      await prisma.job.findUnique({ where: { id: stalled.id } }),
+    ).toMatchObject({
+      status: "failed",
+      error: "The job stopped before it finished",
+    });
+    expect(
+      await prisma.job.findUnique({ where: { id: moving.id } }),
+    ).toMatchObject({ status: "running", error: null });
+  });
+
+  it("requeues an installed shop's failed resolve as the same kind, three tries in all", async () => {
+    const logs = vi.spyOn(console, "log").mockImplementation(() => {});
+    const shop = newShop();
+    const uninstalled = newShop();
+    const recovered = newShop();
+    await storage.storeSession(offlineSession(shop));
+    await storage.storeSession(offlineSession(recovered));
+    const resolve = (forShop: string, status: string, minutes: number) =>
+      prisma.job.create({
+        data: {
+          id: randomUUID(),
+          shop: forShop,
+          kind: "resolve",
+          status,
+          progress: { merchant: true, pass: 2 }, // from before attempts: the first
+          createdAt: new Date(Date.now() - minutes * 60_000),
+        },
+      });
+    await resolve(shop, "failed", 5);
+    await resolve(uninstalled, "failed", 5);
+    await resolve(recovered, "failed", 10);
+    await resolve(recovered, "done", 5);
+
+    // Each check waits for the resolve it requeued, which fails here.
+    for (let i = 0; i < 3; i++) await checkJobs();
+
+    const tries = await prisma.job.findMany({
+      where: { shop },
+      orderBy: { createdAt: "asc" },
+    });
+    expect(tries.map((j) => [j.status, j.progress])).toEqual([
+      ["failed", { merchant: true, pass: 2 }],
+      ["failed", { merchant: true, pass: 1, attempt: 2 }],
+      ["failed", { merchant: true, pass: 1, attempt: 3 }],
+    ]);
+    expect(await prisma.job.count({ where: { shop: uninstalled } })).toBe(1);
+    expect(await prisma.job.count({ where: { shop: recovered } })).toBe(2);
+    logs.mockRestore();
+  });
+
+  it("deletes finished jobs over 7 days old but the newest finished one of each shop and kind", async () => {
+    const shop = newShop();
+    const otherShop = newShop();
+    const job = async (
+      forShop: string,
+      kind: string,
+      status: string,
+      days: number,
+    ) => {
+      const createdAt = new Date(Date.now() - days * 86_400_000);
+      const data = { id: randomUUID(), shop: forShop, kind, status, createdAt };
+      return (await prisma.job.create({ data })).id;
+    };
+    const kept = [
+      await job(shop, "resolve", "done", 2), // the newest finished resolve
+      await job(shop, "resolve", "failed", 6), // under 7 days old
+      await job(shop, "import", "done", 30), // the newest finished import
+      await job(otherShop, "resolve", "done", 30),
+    ];
+    await job(shop, "resolve", "done", 10);
+    await job(shop, "resolve", "failed", 8);
+
+    await checkJobs();
+
+    const left = await prisma.job.findMany({
+      where: { shop: { in: [shop, otherShop] } },
+    });
+    expect(left.map((j) => j.id).sort()).toEqual(kept.sort());
   });
 });
