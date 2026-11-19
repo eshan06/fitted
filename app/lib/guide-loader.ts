@@ -1,6 +1,7 @@
 // The size guide's first script, assets/loader.js (ARCHITECTURE §9): shows a
 // block's Size guide link once its chart validates, and on open shows the
 // loading state while assets/guide.js loads, or the error state with Try again.
+// Each later open has the guide pick the size the product form shows.
 import { css } from "./guide-css";
 import { h, parseGuide, type render } from "./guide";
 
@@ -27,6 +28,7 @@ function setup(block: HTMLElement, load: Load) {
   // idle: not loaded yet, or the last try failed, so the next open tries again.
   let state: "idle" | "loading" | "ready" = "idle";
   let tries = 0;
+  let sync = () => {}; // once drawn, picks the size the product form shows
   const attempt = () => {
     state = "loading";
     if (body.contains(document.activeElement))
@@ -39,7 +41,7 @@ function setup(block: HTMLElement, load: Load) {
     load(url.href)
       .then((guide) => {
         body.replaceChildren();
-        guide.render(body, g);
+        sync = guide.render(body, g);
         state = "ready";
       })
       .catch(() => {
@@ -62,6 +64,7 @@ function setup(block: HTMLElement, load: Load) {
   });
   link.addEventListener("click", () => {
     if (state === "idle") attempt();
+    else if (state === "ready") sync();
     dialog.showModal();
   });
   link.style.display = "";

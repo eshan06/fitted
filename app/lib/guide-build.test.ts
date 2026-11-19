@@ -111,6 +111,12 @@ describe("size guide Liquid", () => {
     expect(new Set(used)).toEqual(new Set(Object.keys(en)));
   });
 
+  it("keeps {size} in the words the guide fills with a size", () => {
+    const en = JSON.parse(ext("locales/en.default.json")).size_guide;
+    for (const key of ["choose", "selected", "select"])
+      expect(en[key]).toContain("{size}");
+  });
+
   it("is an app block that loads loader.js for the product it sits on", () => {
     const schema = JSON.parse(
       /\{% schema %\}([\s\S]*?)\{% endschema %\}/.exec(block)?.[1] ?? "",
