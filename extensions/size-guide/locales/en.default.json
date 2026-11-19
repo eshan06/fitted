@@ -1,0 +1,12 @@
+{
+  "size_guide": {
+    "title": "Size guide",
+    "close": "Close size guide",
+    "loading": "Loading the size chart…",
+    "error": "The size chart didn't load",
+    "error_text": "We couldn't fetch the chart for this product. Usually that's a weak connection. Your cart and size choice are unchanged.",
+    "retry": "Try again",
+    "dismiss": "Close",
+    "chart": "Size chart"
+  }
+}

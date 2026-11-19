@@ -1,0 +1,15 @@
+{%- comment -%}
+  One product's chart for the size guide (ARCHITECTURE §9). Every value goes
+  through | json, which escapes < so no word can end the script tag. Only the
+  content keys the guide reads are printed, so content.fit never is.
+{%- endcomment -%}
+{%- assign c = chart.content.value -%}
+<script type="application/json" data-fitted>
+  {
+    "chart": { "v": {{ c.v | json }}, "unit": {{ c.unit | json }}, "roundTo": {{ c.roundTo | json }}, "tables": {{ c.tables | json }}, "words": {{ c.words | json }} },
+    "strings": {{ chart.strings.value | json }},
+    "units": {{ shop.metafields['$app'].settings.value.units | json }},
+    "country": {{ localization.country.iso_code | json }},
+    "locale": {{ request.locale.iso_code | json }}
+  }
+</script>
