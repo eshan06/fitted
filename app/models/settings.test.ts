@@ -305,8 +305,7 @@ describe("validateSettings", () => {
   });
 
   it("refuses unknown and missing fields", () => {
-    const { units: _units, ...noUnits } = custom();
-    expect(errors(noUnits)).toHaveProperty(["units"]);
+    expect(errors({ ...custom(), units: undefined })).toHaveProperty(["units"]);
     expect(errors({ ...custom(), extra: true })).toHaveProperty(["extra"]);
     expect(errors(withField("link.color", "#000000"))).toHaveProperty([
       "link.color",

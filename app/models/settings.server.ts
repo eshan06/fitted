@@ -2,19 +2,21 @@
 // Appearance and Fit finder screens write it whole, with the digest they
 // loaded, so a save over a newer one is refused (§6) instead of dropping it.
 
-type Check = (v: unknown) => string | undefined;
-const bool: Check = (v) =>
+// A check returns the problem, or undefined. `T` is the type it accepts, so
+// Settings below is derived from the checks and can't drift from them.
+type Check<T = unknown> = { (v: unknown): string | undefined; accepts?: T };
+const bool: Check<boolean> = (v) =>
   typeof v === "boolean" ? undefined : "Must be true or false";
 const oneOf =
-  (...list: unknown[]): Check =>
+  <const T extends readonly unknown[]>(...list: T): Check<T[number]> =>
   (v) =>
     list.includes(v) ? undefined : "Pick one of the options";
 const COLOR = /^#[0-9a-f]{6}$/i;
-const color: Check = (v) =>
+const color: Check<string> = (v) =>
   typeof v === "string" && COLOR.test(v) ? undefined : "Use a #rrggbb color";
 // An upload to Shopify Files, safe to print inside CSS url() and an attribute.
 const FONT_URL = /^https:\/\/cdn\.shopify\.com\/[^\s"'()\\<]+$/;
-const font: Check = (v) =>
+const font: Check<"theme" | { fileUrl: string }> = (v) =>
   v === "theme" ||
   (isObj(v) &&
     Object.keys(v).join() === "fileUrl" &&
@@ -23,11 +25,11 @@ const font: Check = (v) =>
     FONT_URL.test(v.fileUrl))
     ? undefined
     : "Upload the font again";
-const selector: Check = (v) =>
+const selector: Check<string> = (v) =>
   typeof v === "string" && v.length <= 200 && !/[\r\n<]/.test(v)
     ? undefined
     : "Use one line of at most 200 characters";
-const css: Check = (v) =>
+const css: Check<string> = (v) =>
   typeof v !== "string"
     ? "Must be text"
     : Buffer.byteLength(v) > 10 * 1024
@@ -35,7 +37,7 @@ const css: Check = (v) =>
       : v.includes("<")
         ? `Custom CSS can't contain "<"`
         : undefined;
-const line: Check = (v) =>
+const line: Check<string> = (v) =>
   typeof v === "string" && v.trim() && v.length <= 200 && !/[\r\n]/.test(v)
     ? undefined
     : "Use one line of at most 200 characters";
@@ -79,45 +81,14 @@ export const SECTIONS = {
 export const isBool = (check: Check) => check === bool;
 
 export type Text = { label: string; header: string; noFit: string };
-export type Settings = {
-  v: 1;
-  link: {
-    style: "text" | "button" | "tab";
-    icon: "ruler" | "hanger" | "tape" | "none";
-  };
-  popup: {
-    style: "center" | "drawer";
-    sheetOnPhone: boolean;
-    openFrom: "bottom" | "right" | "fade";
-    font: "theme" | { fileUrl: string };
-    logo: boolean;
-    sticky: boolean;
-    rtl: boolean;
-    fitOnly: boolean;
-  };
-  placement: {
-    productBlock: boolean;
-    quickView: boolean;
-    floatingTab: boolean;
-    featured: boolean;
-    selector: string;
-  };
+type Shape<C> = { [K in keyof C]: C[K] extends Check<infer T> ? T : never };
+export type Settings = { v: 1 } & {
+  [K in keyof typeof SECTIONS]: Shape<(typeof SECTIONS)[K]>;
+} & {
   colors:
     | { mode: "theme" }
     | { mode: "custom"; text: string; accent: string; background: string };
-  units: { default: "country" | "in" | "cm"; toggle: boolean };
-  css: string;
-  fitFinder: {
-    type: "basic" | "advanced" | "custom";
-    answers: "inputs" | "sliders";
-    fitBars: boolean;
-    otherSizes: boolean;
-    addToCart: boolean;
-    onButton: boolean;
-    similar: boolean;
-    note: boolean;
-    askAge: boolean;
-  };
+  css: string; // at most 10 KB, refused if it contains "<"
   text: Record<string, Text>; // by locale; the primary locale is required
 };
 
