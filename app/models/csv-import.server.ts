@@ -157,12 +157,14 @@ function records(text: string) {
   const recs: Rec[] = [];
   let cells: string[] = [];
   let cell = "";
+  let lead = true; // only spaces so far, so a quote still opens the cell
   let quoted = false;
   let line = 1;
   const end = () => {
     const v = cell.trim();
     cells.push(/^'+[=+\-@\t\r]/.test(v) ? v.slice(1) : v);
     cell = "";
+    lead = true;
   };
   for (let i = 0; i <= text.length; i++) {
     const ch = text[i]; // undefined past the end
@@ -172,8 +174,9 @@ function records(text: string) {
       if (ch !== '"') cell += ch;
       else if (text[i + 1] === '"') cell += text[i++];
       else quoted = false;
-    } else if (ch === '"' && !cell.trim()) {
+    } else if (ch === '"' && lead) {
       quoted = true;
+      lead = false;
       cell = "";
     } else if (ch === d) end();
     else if (ch === "\r" || ch === "\n" || ch === undefined) {
@@ -182,7 +185,10 @@ function records(text: string) {
       cells = [];
       line++;
       if (ch === "\r" && text[i + 1] === "\n") i++;
-    } else cell += ch;
+    } else {
+      cell += ch;
+      if (ch.trim()) lead = false;
+    }
   }
   return { recs, semi: d === ";" };
 }
@@ -271,7 +277,9 @@ const UNITS: Record<string, Unit> = {
   lbs: "lb",
   kg: "kg",
 };
-const NUM = String.raw`(\d*\.?\d+(?:e[+-]?\d+)?)`;
+// Each part matches one way only, so a hostile cell can't make it backtrack:
+// one instance serves every shop (§17).
+const NUM = String.raw`((?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)`;
 const VALUE = new RegExp(`^${NUM}(?:\\s*(?:-|–|—|to)\\s*${NUM})?$`, "i");
 const blank = (v: string) => /^[-–—]?$/.test(v);
 const decimal = (v: string, semi: boolean) =>
@@ -334,7 +342,8 @@ function table(d: Draft, ti: number, tid: string, g: Grid, semi: boolean) {
         );
       const id = d.fresh("c");
       const country = /^(US|UK|EU|AU)(?: sizes?)?$/i.exec(label)?.[1];
-      const u = UNIT.exec(label);
+      // Unanchored, so it backtracks: only short labels are searched.
+      const u = label.length <= 100 ? UNIT.exec(label) : null;
       const unit = u ? UNITS[(u[1] ?? u[2]).toLowerCase()] : undefined;
       const filled = values.filter((v) => !blank(v));
       const numbers = filled.filter((v) => value(v, semi)).length;
