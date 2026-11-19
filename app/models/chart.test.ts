@@ -208,7 +208,7 @@ describe("validateChart", () => {
     expect(errs).toHaveProperty(["content.tables.0.rows.2.id"]);
   });
 
-  it.each([
+  it.each<[unknown, string]>([
     [[0], "zero"],
     [[10000], "too large"],
     [[40, 38], "a range from high to low"],
@@ -316,7 +316,8 @@ describe("validateChart", () => {
       for (let i = 0; i < 57; i++) rows.push({ id: `x${i}`, cells: {} });
       for (const r of rows)
         for (const col of ["us", "fitnote", "n1", "n2", "n3"])
-          c.content.words[`t1.${r.id}.${col}`] = "y".repeat(400);
+          (c.content.words as Record<string, string>)[`t1.${r.id}.${col}`] =
+            "y".repeat(400);
       t.merges = [];
     });
     expect(errs).toEqual({ content: expect.any(String) });
