@@ -111,7 +111,7 @@ const shown = (u: Unit, conv: boolean, sys: Sys): Unit =>
 
 /** Draws the Size chart tab into root; its data-t-chart names a table without a title. */
 export function render(root: HTMLElement, g: Guide) {
-  const nf = new Intl.NumberFormat(g.locale, { maximumFractionDigits: 2 });
+  const nf = new Intl.NumberFormat(g.locale, { maximumFractionDigits: 4 });
   const word = (k: string) => g.words[k] ?? "";
   const note = (k: string) =>
     word(k) && h("p", { class: "fitted-note" }, word(k));

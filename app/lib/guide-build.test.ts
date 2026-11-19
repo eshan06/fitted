@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { gzipSync } from "node:zlib";
 import { build } from "esbuild";
 import { describe, expect, it } from "vitest";
+import { parseGuide } from "./guide";
 
 // ARCHITECTURE §9: the size guide's scripts are built from app/lib into the
 // extension's assets and committed; this is their gate. The banner keeps the
@@ -51,18 +52,47 @@ describe("size guide Liquid", () => {
   const block = ext("blocks/size-guide.liquid");
   const snippet = ext("snippets/guide-data.liquid");
   const outputs = (src: string) =>
-    [...src.matchAll(/\{\{-?\s*(.*?)\s*-?\}\}/g)].map((m) => m[1]);
+    [...src.matchAll(/\{\{-?\s*([\s\S]*?)\s*-?\}\}/g)].map((m) => m[1]);
+  // What the data snippet prints for a test chart, keyed by its outputs.
+  const values: Record<string, unknown> = {
+    "c.v | json": 1,
+    "c.unit | json": "in",
+    "c.roundTo | json": 0.5,
+    "c.tables | json": [
+      {
+        id: "t1",
+        columns: [{ id: "size", kind: "size" }],
+        rows: [{ id: "m", cells: {} }],
+      },
+    ],
+    "c.words | json": { "t1.m.size": "M", tips: "Measure snugly." },
+    "chart.strings.value | json": { "t1.m.size": "Moyen" },
+    "shop.metafields['$app'].settings.value.units | json": {
+      default: "cm",
+      toggle: true,
+    },
+    "localization.country.iso_code | json": "US",
+    "request.locale.iso_code | json": "fr",
+  };
 
-  it("prints every value in the data snippet through | json", () => {
-    expect(outputs(snippet).length).toBeGreaterThan(5);
-    for (const out of outputs(snippet)) expect(out).toMatch(/\| json$/);
+  it("prints only these values, each through | json, so never content.fit", () => {
+    expect(outputs(snippet)).toEqual(Object.keys(values));
+    expect(snippet).not.toMatch(/\becho\b/);
   });
 
-  it("prints only the content keys the guide reads, so never content.fit", () => {
-    const keys = outputs(snippet).flatMap(
-      (o) => /^c\.(\w+) /.exec(o)?.[1] ?? [],
+  it("prints data that parseGuide reads", () => {
+    const json = (
+      /<script[^>]*>([\s\S]*)<\/script>/.exec(snippet)?.[1] ?? ""
+    ).replace(/\{\{-?\s*([\s\S]*?)\s*-?\}\}/g, (_, out: string) =>
+      JSON.stringify(values[out]),
     );
-    expect(keys).toEqual(["v", "unit", "roundTo", "tables", "words"]);
+    expect(parseGuide(json)).toMatchObject({
+      unit: "in",
+      roundTo: 0.5,
+      sys: "cm",
+      locale: "fr",
+      words: { "t1.m.size": "Moyen", tips: "Measure snugly." },
+    });
   });
 
   it("prints the block's words escaped", () => {

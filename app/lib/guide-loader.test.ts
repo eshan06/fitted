@@ -78,6 +78,12 @@ async function mount(json = valid) {
     body: root.querySelector<HTMLElement>(".fitted-body")!,
   };
 }
+// The link is hidden by an inline style, which no theme rule can override.
+const shown = (link: HTMLElement) => link.style.display !== "none";
+const press = (down: Element, up: Element, detail = 1) => {
+  down.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+  up.dispatchEvent(new MouseEvent("click", { bubbles: true, detail }));
+};
 
 beforeAll(() => start((url) => load(url)));
 beforeEach(() => {
@@ -85,15 +91,37 @@ beforeEach(() => {
   guide.render.mockClear();
 });
 
+// Each assertion here runs before the earlier start()'s observer can act.
+describe("start", () => {
+  const link = () => document.querySelector<HTMLElement>(".fitted-link")!;
+
+  it("sets up the blocks already on the page", () => {
+    document.body.innerHTML = block(valid);
+    start((url) => load(url));
+    expect(shown(link())).toBe(true);
+  });
+
+  it("waits for the page to finish parsing when it runs early", () => {
+    const parsing = vi
+      .spyOn(document, "readyState", "get")
+      .mockReturnValue("loading");
+    document.body.innerHTML = block(valid);
+    start((url) => load(url));
+    expect(shown(link())).toBe(false);
+    parsing.mockRestore();
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    expect(shown(link())).toBe(true);
+  });
+});
+
 describe("loader", () => {
   it("shows the link once the chart validates, and adds the styles once", async () => {
     const { link } = await mount();
-    expect(link.hidden).toBe(false);
+    expect(shown(link)).toBe(true);
     document.body.insertAdjacentHTML("beforeend", block(valid));
     await tick();
-    expect(
-      document.querySelectorAll(".fitted-link:not([hidden])"),
-    ).toHaveLength(2);
+    const links = document.querySelectorAll<HTMLElement>(".fitted-link");
+    expect([...links].filter(shown)).toHaveLength(2);
     expect(document.querySelectorAll("#fitted-css")).toHaveLength(1);
   });
 
@@ -102,10 +130,22 @@ describe("loader", () => {
     ["data that isn't JSON", "{"],
   ])("leaves the link hidden for %s", async (_, json) => {
     const { link, dialog } = await mount(json);
-    expect(link.hidden).toBe(true);
+    expect(shown(link)).toBe(false);
     link.click();
     expect(dialog.open).toBe(false);
     expect(load).not.toHaveBeenCalled();
+  });
+
+  it("leaves the link hidden in a browser without <dialog>", async () => {
+    const proto = HTMLDialogElement.prototype;
+    const showModal = proto.showModal;
+    Reflect.deleteProperty(proto, "showModal");
+    try {
+      const { link } = await mount();
+      expect(shown(link)).toBe(false);
+    } finally {
+      proto.showModal = showModal;
+    }
   });
 
   it("opens on the loading state, then draws the chart", async () => {
@@ -140,6 +180,16 @@ describe("loader", () => {
     expect(dialog.querySelector("#fitted-title-1")?.textContent).toBe(en.title);
   });
 
+  it("keeps the subtitle to the product when there are several tables", async () => {
+    const tables = [chart.tables[0], { ...chart.tables[0], id: "t2" }];
+    const { dialog } = await mount(
+      JSON.stringify({ chart: { ...chart, tables }, country: "US" }),
+    );
+    expect(dialog.querySelector(".fitted-sub")?.textContent).toBe(
+      "Linen Wrap Top",
+    );
+  });
+
   it("loads once: closing and opening again keeps the chart", async () => {
     const { link, dialog, body } = await mount();
     link.click();
@@ -161,7 +211,7 @@ describe("loader", () => {
     expect(alert?.querySelector("h3")?.textContent).toBe(en.error);
     expect(alert?.textContent).toContain(en.error_text);
     expect(dialog.hasAttribute("aria-busy")).toBe(false);
-    const retry = body.querySelector<HTMLButtonElement>("[data-retry]")!;
+    const retry = body.querySelector<HTMLButtonElement>("[data-fitted-retry]")!;
     retry.focus();
     retry.click();
     // Focus leaves the button being replaced for the close button.
@@ -180,7 +230,7 @@ describe("loader", () => {
     const { link, dialog, body } = await mount();
     link.click();
     await tick();
-    body.querySelector<HTMLElement>("[data-close]")!.click();
+    body.querySelector<HTMLElement>("[data-fitted-close]")!.click();
     expect(dialog.open).toBe(false);
     link.click();
     expect(load).toHaveBeenCalledTimes(2);
@@ -188,16 +238,33 @@ describe("loader", () => {
     expect(body.querySelector("table")).not.toBeNull();
   });
 
-  it("closes from the backdrop but not from a click inside", async () => {
+  it("closes on a press on the backdrop, and only then", async () => {
     const { link, dialog, body } = await mount();
     link.click();
     await tick();
-    body
-      .querySelector("td")!
-      .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    const cell = body.querySelector("td")!;
+    press(cell, cell);
     expect(dialog.open).toBe(true);
-    dialog.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    // A drag that starts in the table and ends over the backdrop.
+    press(cell, dialog);
+    expect(dialog.open).toBe(true);
+    // A double click's second click, landing on the backdrop the first opened.
+    press(dialog, dialog, 2);
+    expect(dialog.open).toBe(true);
+    press(dialog, dialog);
     expect(dialog.open).toBe(false);
+  });
+
+  it("ignores close hooks in the theme's markup around the block", async () => {
+    document.body.innerHTML = `<div data-close data-retry>${block(valid)}</div>`;
+    await tick();
+    const link = document.querySelector<HTMLElement>(".fitted-link")!;
+    const dialog = document.querySelector("dialog")!;
+    link.click();
+    await tick();
+    dialog.querySelector("td")!.click();
+    expect(dialog.open).toBe(true);
+    expect(load).toHaveBeenCalledTimes(1);
   });
 
   it("sets up blocks the theme adds after the page loaded", async () => {
@@ -206,8 +273,8 @@ describe("loader", () => {
     section.innerHTML = block(valid, "Rain Jacket");
     document.body.append(section);
     await tick();
-    expect(
-      section.querySelector<HTMLButtonElement>(".fitted-link")?.hidden,
-    ).toBe(false);
+    expect(shown(section.querySelector<HTMLElement>(".fitted-link")!)).toBe(
+      true,
+    );
   });
 });

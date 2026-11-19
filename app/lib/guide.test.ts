@@ -187,6 +187,33 @@ describe("parseGuide", () => {
           }))),
       ),
     ],
+    [
+      "21 columns",
+      withChart((c) =>
+        c.tables[0].columns.push(
+          ...Array.from({ length: 15 }, (_, i) => ({
+            id: `x${i}`,
+            kind: "text",
+          })),
+        ),
+      ),
+    ],
+    ["no columns", withChart((c) => (c.tables[0].columns = []))],
+    ["no rows", withChart((c) => (c.tables[0].rows = []))],
+    [
+      "a cell of 10,000",
+      withChart((c) => (c.tables[0].rows[0].cells = { bust: [10000] })),
+    ],
+    [
+      "a column id off the §5 pattern",
+      withChart(
+        (c) => (c.tables[0].columns[5] = { id: "fit-1", kind: "text" }),
+      ),
+    ],
+    [
+      "cells that aren't a map",
+      withChart((c) => (c.tables[0].rows[0].cells = [] as never)),
+    ],
   ])("refuses %s, so nothing renders", (_, json) => {
     expect(parseGuide(json)).toBeNull();
   });
@@ -211,6 +238,13 @@ describe("render", () => {
       "60",
       "Relaxed",
     ]);
+    // Typed decimals stay as typed, like 5/8 inch.
+    const typed = draw(
+      withChart((c) => (c.tables[0].rows[0].cells.len = [9.625])),
+    );
+    expect(typed.querySelector("tbody td:nth-child(5)")?.textContent).toBe(
+      "9.625",
+    );
     // A missing cell or word is an empty cell.
     expect(texts(root, "tbody tr:last-child > *")).toEqual([
       "M",

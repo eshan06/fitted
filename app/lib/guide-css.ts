@@ -3,7 +3,7 @@
 // lands in the theme's <head>, and the admin preview (#23) can add the same
 // string. Colors sit in variables for #31 to set.
 export const css = [
-  ".fitted-link:not([hidden]){display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 2px;border:0;background:none;color:inherit;font:inherit;font-weight:600;text-decoration:underline;text-underline-offset:4px;cursor:pointer}",
+  ".fitted-link{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 2px;border:0;background:none;color:inherit;font:inherit;font-weight:600;text-decoration:underline;text-underline-offset:4px;cursor:pointer}",
   ".fitted-dialog{--fitted-bg:#fff;--fitted-text:#161616;--fitted-muted:#3a3a3a;--fitted-accent:#2448a8;--fitted-line:#d9dde3;box-sizing:border-box;width:calc(100% - 32px);max-width:640px;max-height:calc(100% - 80px);margin:40px auto auto;padding:0;border:0;border-radius:0;background:var(--fitted-bg);color:var(--fitted-text);box-shadow:0 24px 64px rgba(0,0,0,.28);overflow:auto;text-align:start;line-height:1.5}",
   ".fitted-dialog::backdrop{background:rgba(22,22,22,.55)}",
   "html:has(.fitted-dialog[open]){overflow:hidden}",
