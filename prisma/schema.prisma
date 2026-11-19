@@ -39,3 +39,19 @@ model Shop {
   planOnStore   String?
   resolvedAt    DateTime?
 }
+
+// Import and resolve jobs (ARCHITECTURE §13, §14), run inside the app process.
+model Job {
+  id        String   @id
+  shop      String
+  kind      String // import, resolve
+  status    String // running, done, failed
+  progress  Json?
+  result    Json?
+  error     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([shop, kind, createdAt])
+  @@index([status, updatedAt])
+}

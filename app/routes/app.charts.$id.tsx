@@ -18,6 +18,7 @@ import {
   validateChart,
 } from "../models/chart.server";
 import { canPublishChart, getPlan } from "../models/billing.server";
+import { startResolve } from "../models/rules.server";
 
 const ROUTE = "app.charts.$id";
 // Thrown as a Response (§15); the app's error boundary prints its text.
@@ -106,6 +107,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     if (saved.status === status) return { ok: true as const };
     try {
       await (status === "ACTIVE" ? publishChart : unpublishChart)(admin, id);
+      // Products move onto or off the chart, `auto: false` ones included (§6).
+      void startResolve(session.shop, true);
       return { ok: true as const };
     } catch (err) {
       if (!(err instanceof AdminApiError)) throw err;
