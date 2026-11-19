@@ -31,6 +31,8 @@ Scaffolded from Shopify's React Router template (commit 9597d08): React Router 7
 
 Screens read and write through `app/models/*.server.ts` (charts, rules, settings, billing, stats, imports), never with GraphQL inline in a route. Whether the size guide's app embed is on (Home's setup guide) comes from App Bridge `shopify.app.extensions()` in the browser, which needs no extra scope.
 
+States these contracts add that the canvas doesn't draw yet get drawn before they're built: the shareable chart page (§5), the translation Review screen and Translate stopping at its budget (§11), the plan-check banner (§8), the staff-without-access message (§15), Display rules' "rules didn't finish applying" (§13), and Home noting a day that hit the event cap (§12).
+
 ## 3. Auth and sessions
 
 `app/shopify.server.ts` configures `shopifyApp`: Admin API version July 2026, App Store distribution, expiring offline tokens, and `PrismaSessionStorage`. OAuth runs through `app/routes/auth.$.tsx`. Every loader and action that touches shop data calls `authenticate.admin` (or `authenticate.webhook` / `authenticate.public.appProxy`) and uses only that session's shop. Background work (webhooks, jobs) uses `unauthenticated.admin(shop)` with the shop from a verified webhook or from the job row, never from a browser.
@@ -51,7 +53,7 @@ Scopes, added by the step that first needs each: `write_products`, `write_metaob
 | How to measure images, uploaded fonts                           | Shopify Files                         | §5, §7  |
 | Sessions, plan cache, versions, jobs, events, AI usage          | Postgres                              | §14     |
 
-All definitions are app-owned and declared in `shopify.app.toml` (`[metaobjects.app.chart]`, `[product.metafields.app.chart]`, `[shop.metafields.app.settings]`, and so on); code reads them as type `$app:chart` and namespace `$app`, never `app`. Admin access stays `merchant_read`: merchants can see everything in their Shopify admin, but only Fitted writes values, so every write passes Fitted's validation. Translations are the exception: any app with `write_translations` can register them, so the storefront re-validates what it reads (§9).
+All definitions are app-owned and declared in `shopify.app.toml` (`[metaobjects.app.chart]`, `[product.metafields.app.chart]`, `[shop.metafields.app.settings]`, and so on); code reads them as type `$app:chart` and namespace `$app`, never a bare `app`; Liquid outside the extension, where `$app` doesn't resolve, uses `app--<app id>` (§5). Admin access stays `merchant_read`: merchants can see everything in their Shopify admin, but only Fitted writes values, so every write passes Fitted's validation. Translations are the exception: any app with `write_translations` can register them, so the storefront re-validates what it reads (§9).
 
 Uninstalling: Shopify deletes app-owned definitions at uninstall and keeps the values only temporarily, with no guaranteed period. So charts live in the merchant's store while Fitted is installed, and CSV export on every plan (#33) is the way to take them elsewhere. Copy must not promise that charts outlive an uninstall. Reinstalling before Shopify's cleanup brings them back.
 
@@ -68,17 +70,17 @@ Postgres on Railway (#8, `DATABASE_URL`), a local Postgres for development (#14)
 | `Event`        | `shop`, `id`, `type`, `chartId`, `productId`, `size`, `createdAt`; unique on `(shop, id)`                                 | #44      |
 | `AiUsage`      | `shop`, `day`, `count`; key `(shop, day)`                                                                                 | #38      |
 
-Every query filters on the session's shop, and an id sent by a browser is looked up within that shop. Version snapshots are app-only copies kept for history; the live chart stays in the store. `app/uninstalled` deletes the shop's sessions and clears `Shop.planOnStore`; `shop/redact` deletes every row for the shop in every table; `customers/data_request` and `customers/redact` only acknowledge, because Fitted stores no shopper data. Retention: events 90 days, AI usage 30 days, versions the last 30 per chart, jobs as in §13. The privacy policy (#47) lists the staff names and emails in `Session`.
+Every query filters on the session's shop, and an id sent by a browser is looked up within that shop. Version snapshots are app-only copies kept for history; the live chart stays in the store. `app/uninstalled` deletes the shop's sessions and clears `Shop.planOnStore` and `planCheckedAt`; `shop/redact` deletes every row for the shop in every table; `customers/data_request` and `customers/redact` only acknowledge, because Fitted stores no shopper data. Retention: events 90 days, AI usage 30 days, versions the last 30 per chart, jobs as in §13, and expired online sessions deleted whenever a shop stores a new one (#24). The privacy policy (#47) lists the staff names and emails in `Session`.
 
 ## 15. Errors and retries
 
 - Every failure shows the canvas's light red banner: what failed, what didn't change, Try again. Raw error text from Shopify or OpenAI is logged, never shown.
 - Loaders and actions: a failed Shopify call returns status 502 with `{ error: { code, message } }`, and the screen shows its error state. Validation returns 422 with `{ fieldErrors: { "<path>": "<message>" } }`. A stale save returns 409 (§5, §6), a plan gate 403 with the upgrade path, a staff member without access 403 saying so, a rate limit 429. 401 and 404 are thrown Responses.
-- Admin API: every mutation checks `userErrors`; one helper in `app/models/admin.server.ts` (added by #15) throws on GraphQL errors or user errors. Reads may retry twice with backoff. Writes retry only when they're idempotent, as `metaobjectUpsert` and `metafieldsSet` are.
+- Admin API: every mutation checks `userErrors`; one helper in `app/models/admin.server.ts` (added by #15) throws on GraphQL errors or user errors. Reads may retry twice with backoff. Writes retry only when they're idempotent, as `metaobjectUpsert` and `metafieldsSet` are. A retried `metafieldsSet` that comes back stale on its `compareDigest` counts as success when the stored value already equals what was sent (the first attempt landed).
 - Partial success is reported per item (an import's "2 of 11 charts didn't import"), never as all-or-nothing.
 - Webhooks return 200 once handled and 500 when they failed, so Shopify retries; handlers are idempotent.
 - Storefront: bad or missing data renders nothing; a failed script load shows the guide's error state with Try again.
-- Logs: JSON lines to stdout (`level`, `msg`, `shop`, `route`). Never tokens, uploaded files, shopper data or env values.
+- Logs: JSON lines to stdout (`level`, `msg`, `shop`, `route`). Never tokens, uploaded files, shopper data, staff names or emails, or env values.
 
 ## 16. Webhooks
 
@@ -86,14 +88,14 @@ Subscribed in `shopify.app.toml`, handled in `app/routes/webhooks.*` (§3):
 
 | Topic                                        | Does                                                      | Step   |
 | -------------------------------------------- | --------------------------------------------------------- | ------ |
-| `app/uninstalled`                            | Deletes the shop's sessions; clears `Shop.planOnStore`    | exists |
+| `app/uninstalled`                            | Deletes the shop's sessions; clears the plan cache (§8)   | exists |
 | `app/scopes_update`                          | Updates the session's scopes                              | exists |
 | `customers/data_request`, `customers/redact` | Acknowledge (no shopper data stored)                      | #16    |
 | `shop/redact`                                | Deletes every app database row for the shop               | #16    |
 | `products/create`, `products/update`         | Resolve that product's chart (§6)                         | #26    |
 | `collections/update`                         | Re-resolve the collection's products when a rule names it | #26    |
 
-The template's demo `products/update` event subscription is removed in #13. Clearing `planOnStore` at uninstall arrives with the `Shop` table (#17). App Pricing sends no billing webhooks (§8).
+The template's demo `products/update` event subscription is removed in #13. Clearing the plan cache at uninstall arrives with the `Shop` table (#17). App Pricing sends no billing webhooks (§8).
 
 ## 17. Hosting and environment
 
