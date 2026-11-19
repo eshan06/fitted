@@ -1264,7 +1264,7 @@ describe("product deliveries while the shop's full resolve runs", () => {
     });
   });
 
-  it("start another resolve when one fails after a clean resolve, and the rest wait for that one", async () => {
+  it("start another resolve when one fails after a clean resolve, which reads the rest", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     const t0 = new Date("2026-11-19T06:00:00Z").getTime();
     vi.setSystemTime(t0);
@@ -1293,7 +1293,7 @@ describe("product deliveries while the shop's full resolve runs", () => {
       [product(6)]: SWIM,
       [product(7)]: undefined,
     });
-    // Product 7 waited for that resolve, which read it, instead of a read of its own.
+    // Product 7 was left to that resolve, which read it.
     expect(store.named("ResolveOne").map((c) => c.variables.id)).toEqual([
       product(6),
     ]);
@@ -1306,7 +1306,7 @@ describe("product deliveries while the shop's full resolve runs", () => {
     );
   });
 
-  it("after a resolve that failed, resolve one by one those its clean pass didn't read, starting no other", async () => {
+  it("after a resolve that failed, resolve one by one those its clean pass didn't read, up to the first failure", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     const t0 = new Date("2026-11-19T06:00:00Z").getTime();
     vi.setSystemTime(t0);
@@ -1316,22 +1316,24 @@ describe("product deliveries while the shop's full resolve runs", () => {
       vi.setSystemTime(t0 + read * 10_000);
       if (read !== 1) return;
       store.products.get(product(5))!.vendor = "Acme";
-      store.products.get(product(6))!.tags = ["swim"];
       void productChanged(SHOP, product(5), new Date());
-      void productChanged(SHOP, product(6), new Date());
       // Shopify's late delivery of an edit the first pass read.
       void productChanged(SHOP, product(7), new Date(t0 - 2000));
+      for (const n of [6, 8]) {
+        store.products.get(product(n))!.tags = ["swim"];
+        void productChanged(SHOP, product(n), new Date());
+      }
     };
     // The first pass applies everything it found; the second pass's read fails.
     store.hooks.afterWrite = () =>
       (store.hooks.failRead = "INTERNAL_SERVER_ERROR");
-    // Shopify refuses product 5's write, which was answered already.
-    let refusals = 0;
-    store.hooks.refuseOne = () => refusals++ === 0;
+    // Shopify refuses product 6's write, which was answered already.
+    store.hooks.refuseOne = (id) => id === product(6);
 
     await startResolve(SHOP, true);
 
-    // The failed job is on record for its own retry, so none starts here.
+    // Product 8 and the rest are left to the failed job's requeue (§13): no
+    // other resolve starts here.
     expect(jobs()).toEqual([
       failed(true, "Shopify's bulk operation didn't finish"),
     ]);
@@ -1340,8 +1342,9 @@ describe("product deliveries while the shop's full resolve runs", () => {
       product(6),
     ]);
     expect(store.assigned()).toMatchObject({
-      [product(5)]: undefined,
-      [product(6)]: SWIM,
+      [product(5)]: BASIC,
+      [product(6)]: BASIC,
+      [product(8)]: BASIC,
     });
   });
 });

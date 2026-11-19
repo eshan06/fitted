@@ -668,7 +668,8 @@ async function resolvePass(
 type Queued = {
   again: boolean | null;
   // Product deliveries that came while it ran: the newest updated_at of each.
-  // ponytail: lost on a restart, with the job, whose requeue (§13) reads every product.
+  // ponytail: lost on a restart; mid-resolve the job's requeue (§13) reads
+  // every product, and once it's done only the daily reconcile (§6) does.
   held: Map<string, Date>;
   done: Promise<void>;
 };
@@ -705,13 +706,15 @@ export function startResolve(shop: string, merchant: boolean) {
       resolves.delete(shop);
     }
     // Held deliveries meet the skip now: the passes read most of them since,
-    // the first pass's echoes included (§6). They were answered already, so
-    // one that fails after a clean resolve starts another, which holds the
-    // rest; a failed resolve is on its job for the requeue (§13).
-    for (const [id, at] of entry.held)
-      await productChanged(shop, id, at).catch(
-        () => clean && void startResolve(shop, false), // logged already
-      );
+    // the first pass's echoes included (§6).
+    try {
+      for (const [id, at] of entry.held) await productChanged(shop, id, at);
+    } catch {
+      // Logged already. They were answered, so Shopify won't send them again:
+      // a full resolve reads the rest, another one after a clean resolve, and
+      // after a failed one its requeue (§13).
+      if (clean) void startResolve(shop, false);
+    }
   })();
   return entry.done;
 }
