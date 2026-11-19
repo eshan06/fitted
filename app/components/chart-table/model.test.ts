@@ -55,6 +55,7 @@ const chart = (): ChartInput =>
         "t1.s.size": "S",
         "t1.note": "Between sizes? Size up.",
         "t2.sz": "Size",
+        "t2.len": "Length",
         "t2.r1.sz": "XS",
       },
     },
@@ -139,6 +140,26 @@ describe("the editor draft", () => {
       { id: "s", cells: {} },
     ]);
     expect(saved.content.tables[1]).toEqual(chart().content.tables[1]);
+  });
+
+  it("names sizes by the table's own size column id", () => {
+    // t2's size column is "sz", not "size".
+    const c = chart();
+    const d = toDraft(
+      { ...c, content: { ...c.content, tables: [c.content.tables[1]] } },
+      "DRAFT",
+    );
+    expect(toInput(d)).toHaveProperty("input");
+    expect(toInput(setWord(d, "t2.r1.sz", ""))).toEqual({
+      fieldErrors: { "content.words.t2.r1.sz": "Name this size" },
+    });
+  });
+
+  it("stops adding sizes at 60 and columns at 20", () => {
+    let d = blankDraft();
+    for (let i = 0; i < 70; i++) d = addMeasurement(addSize(d));
+    expect(d.content.tables[0].rows).toHaveLength(60);
+    expect(d.content.tables[0].columns).toHaveLength(20);
   });
 
   it("leaves emptied words out instead of saving them blank", () => {

@@ -155,7 +155,17 @@ describe("loading the editor", () => {
       new AdminApiError("Shopify request failed", "secret detail"),
     );
     const r = await result(load("42"));
-    expect(r).toEqual({ status: 502, body: { mode: "error" } });
+    expect(r).toEqual({
+      status: 502,
+      body: {
+        mode: "error",
+        error: {
+          code: "shopify",
+          message:
+            "Fitted couldn't reach your store just now. Nothing about the chart has changed, and shoppers still see it as before.",
+        },
+      },
+    });
     expect(JSON.parse(logs[0])).toMatchObject({
       level: "error",
       shop: SHOP,
@@ -263,6 +273,10 @@ describe("saving a chart", () => {
 
   it("says so when the edits saved but the status didn't change (502)", async () => {
     m.publishChart.mockRejectedValue(new AdminApiError("x", "raw detail"));
+    m.updateChart.mockResolvedValue({
+      ...stored("DRAFT"),
+      updatedAt: "2026-11-19T00:00:09Z",
+    });
     const r = await result(save("ACTIVE"));
     expect(r.status).toBe(502);
     expect(r.body).toEqual({
@@ -271,9 +285,32 @@ describe("saving a chart", () => {
         message:
           "Your edits were saved, but the chart is still a Draft. Change its status and save again.",
       },
+      // A failed action doesn't reload the chart, so the next save needs this.
+      updatedAt: "2026-11-19T00:00:09Z",
     });
     expect(JSON.stringify(r.body)).not.toContain("raw detail");
     expect(JSON.parse(logs[0]).detail).toBe("raw detail");
+  });
+
+  it("says a failed unpublish leaves the chart Published", async () => {
+    m.updateChart.mockResolvedValue(stored("ACTIVE"));
+    m.unpublishChart.mockRejectedValue(new AdminApiError("x", "y"));
+    const r = await result(save("DRAFT"));
+    expect(r.body).toMatchObject({
+      error: { message: expect.stringContaining("still Published") },
+    });
+  });
+
+  it("says when Free's limit comes from a plan it couldn't check", async () => {
+    m.countActiveCharts.mockResolvedValue(3);
+    m.getPlan.mockResolvedValue({ plan: "free", checkFailed: true });
+    const r = await result(save("ACTIVE"));
+    expect(r.status).toBe(403);
+    expect(r.body).toMatchObject({
+      error: {
+        message: expect.stringMatching(/^Fitted couldn't check your plan/),
+      },
+    });
   });
 
   it("maps each failure to its status (§15)", async () => {

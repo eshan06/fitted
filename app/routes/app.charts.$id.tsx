@@ -55,7 +55,17 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     if (err instanceof ChartNotFoundError) throw notFound();
     if (!(err instanceof AdminApiError)) throw err;
     logShopifyError(session.shop, err);
-    return data({ mode: "error" as const }, { status: 502 });
+    return data(
+      {
+        mode: "error" as const,
+        error: {
+          code: "shopify",
+          message:
+            "Fitted couldn't reach your store just now. Nothing about the chart has changed, and shoppers still see it as before.",
+        },
+      },
+      { status: 502 },
+    );
   }
 };
 
@@ -84,12 +94,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       status === "ACTIVE" &&
       (await getChart(admin, id)).status !== "ACTIVE"
     ) {
-      const { plan } = await getPlan(session.shop);
+      const { plan, checkFailed } = await getPlan(session.shop);
       if (!canPublishChart(plan, await countActiveCharts(admin)))
         return fail(
           403,
           "plan_limit",
-          "Free includes 3 published charts. Nothing was saved: set this chart to Draft to save your changes, or upgrade to Standard to publish more.",
+          `${checkFailed ? "Fitted couldn't check your plan just now, so it counts as Free. " : ""}Free includes 3 published charts. Nothing was saved: set this chart to Draft to save your changes, or upgrade to Standard to publish more.`,
         );
     }
     const saved = await updateChart(admin, id, body.chart, body.updatedAt);
@@ -100,10 +110,16 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     } catch (err) {
       if (!(err instanceof AdminApiError)) throw err;
       logShopifyError(session.shop, err);
-      return fail(
-        502,
-        "status",
-        `Your edits were saved, but the chart is still ${saved.status === "ACTIVE" ? "Published" : "a Draft"}. Change its status and save again.`,
+      // A failed action doesn't reload the chart, so the next save needs the new updatedAt.
+      return data(
+        {
+          error: {
+            code: "status",
+            message: `Your edits were saved, but the chart is still ${saved.status === "ACTIVE" ? "Published" : "a Draft"}. Change its status and save again.`,
+          },
+          updatedAt: saved.updatedAt,
+        },
+        { status: 502 },
       );
     }
   } catch (err) {

@@ -91,16 +91,20 @@ function freshId(c: Content, prefix: string) {
 export const MAX_ROWS = 60;
 export const MAX_COLUMNS = 20;
 export const addSize = (d: Draft) =>
-  withTable(d, {
-    rows: [...table(d).rows, { id: freshId(d.content, "r"), cells: {} }],
-  });
+  table(d).rows.length >= MAX_ROWS
+    ? d
+    : withTable(d, {
+        rows: [...table(d).rows, { id: freshId(d.content, "r"), cells: {} }],
+      });
 export const addMeasurement = (d: Draft) =>
-  withTable(d, {
-    columns: [
-      ...table(d).columns,
-      { id: freshId(d.content, "c"), kind: "measure", convert: true },
-    ],
-  });
+  table(d).columns.length >= MAX_COLUMNS
+    ? d
+    : withTable(d, {
+        columns: [
+          ...table(d).columns,
+          { id: freshId(d.content, "c"), kind: "measure", convert: true },
+        ],
+      });
 
 export const setWord = (d: Draft, key: string, value: string): Draft => ({
   ...d,
@@ -128,8 +132,9 @@ export function toInput(
     if (!d.content.words[`${t.id}.${col.id}`]?.trim())
       errs[`content.words.${t.id}.${col.id}`] = "Name this measurement";
   const rows = t.rows.map((row, ri) => {
-    if (!d.content.words[`${t.id}.${row.id}.size`]?.trim())
-      errs[`content.words.${t.id}.${row.id}.size`] = "Name this size";
+    const name = `${t.id}.${row.id}.${t.columns[0].id}`;
+    if (!d.content.words[name]?.trim())
+      errs[`content.words.${name}`] = "Name this size";
     const cells: Record<string, Cell> = {};
     for (const col of measures) {
       const cell = parseCell(d.cells[`${row.id}.${col.id}`] ?? "");
