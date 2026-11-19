@@ -375,19 +375,28 @@ type Metafield = { type: string; value: string } | null;
 const CHART = { namespace: "$app", key: "chart" };
 const conditions = (rules: Rules) =>
   Object.values(rules.charts).flatMap((r) => [...r.match, ...r.exclude]);
+const namesCollection = (rules: Rules) =>
+  conditions(rules).some((c) => c.field === "collection");
+const comparedKeys = (rules: Rules) => [
+  ...new Set(
+    conditions(rules).flatMap((c) => (c.field === "metafield" ? [c.key] : [])),
+  ),
+];
 
-// Compared metafields come back as m0, m1, ...; their keys passed KEY, so they
-// are safe in query text. Each collection costs a result line, so only rules
-// that name one read them.
-function productQuery(rules: Rules, keys: string[]) {
-  const fields = keys.map((k, i) => {
-    const [namespace, key] = k.split(".");
-    return `m${i}: metafield(namespace: "${namespace}", key: "${key}") { type value }`;
-  });
-  if (conditions(rules).some((c) => c.field === "collection"))
-    fields.push("collections { edges { node { id } } }");
-  return `{ products { edges { node { id tags productType vendor chart: metafield(namespace: "$app", key: "chart") { value } ${fields.join(" ")} } } } }`;
-}
+// A product's facts and current chart. Compared metafields come back as m0,
+// m1, ...; their keys passed KEY, so they are safe in query text.
+const factFields = (keys: string[]) =>
+  `id tags productType vendor chart: metafield(namespace: "$app", key: "chart") { value }` +
+  keys
+    .map((k, i) => {
+      const [namespace, key] = k.split(".");
+      return ` m${i}: metafield(namespace: "${namespace}", key: "${key}") { type value }`;
+    })
+    .join("");
+
+// Each collection costs a result line, so only rules that name one read them.
+const productQuery = (rules: Rules, keys: string[]) =>
+  `{ products { edges { node { ${factFields(keys)}${namesCollection(rules) ? " collections { edges { node { id } } }" : ""} } } } }`;
 
 // A list metafield compares item by item (§6).
 const values = (m: Metafield) =>
@@ -398,6 +407,38 @@ const values = (m: Metafield) =>
           typeof v === "string" ? v : JSON.stringify(v),
         )
       : [m.value];
+
+// Unless the merchant caused the resolve, `auto: false` charts neither gain
+// nor lose products (§6).
+const manualCharts = (rules: Rules, merchant: boolean) =>
+  new Set(merchant ? [] : rules.order.filter((id) => !rules.charts[id].auto));
+
+// The chart a product moves to (null: none), or undefined when it stays.
+// Comparing first is what stops Fitted's own writes from looping (§6).
+function nextChart(
+  n: ProductLine,
+  collectionIds: string[],
+  keys: string[],
+  rules: Rules,
+  active: ReadonlySet<string>,
+  manual: ReadonlySet<string>,
+) {
+  const current = n.chart?.value ?? null;
+  if (current && manual.has(current)) return undefined;
+  const metafields = Object.fromEntries(
+    keys.map((k, i) => [k, values(n[`m${i}`] as Metafield)]),
+  );
+  const { id, tags, productType, vendor } = n;
+  const product = { id, tags, productType, vendor, collectionIds, metafields };
+  const target = resolveChart(product, rules, active);
+  return target === current ? undefined : target;
+}
+const assignment = (ownerId: string, value: string) => ({
+  ownerId,
+  ...CHART,
+  type: "metaobject_reference",
+  value,
+});
 
 // Fitted's Active charts, paged in id order so a chart saved meanwhile isn't
 // skipped. A ranked id that isn't one (deleted, or another type) never matches.
@@ -578,18 +619,9 @@ async function resolvePass(
   const startedAt = new Date();
   const { rules } = await getRules(admin);
   const active = await activeCharts(admin);
-  // Unless the merchant caused this resolve, `auto: false` charts neither gain nor lose products (§6).
-  const manual = new Set(
-    merchant ? [] : rules.order.filter((id) => !rules.charts[id].auto),
-  );
+  const manual = manualCharts(rules, merchant);
   for (const id of manual) active.delete(id);
-  const keys = [
-    ...new Set(
-      conditions(rules).flatMap((c) =>
-        c.field === "metafield" ? [c.key] : [],
-      ),
-    ),
-  ];
+  const keys = comparedKeys(rules);
   // Starting a read twice only leaves a spare read running, so it may retry.
   const lines = await bulk<Line>(
     admin,
@@ -611,23 +643,11 @@ async function resolvePass(
   const sets: Record<string, string>[] = [];
   const removals: string[] = [];
   for (const l of lines) {
-    const n = l as ProductLine;
-    const current = n.chart?.value ?? null;
-    if (n.__parentId || (current && manual.has(current))) continue;
-    const { id, tags, productType, vendor } = n;
-    const metafields = Object.fromEntries(
-      keys.map((k, i) => [k, values(n[`m${i}`] as Metafield)]),
-    );
-    const product = { id, tags, productType, vendor, metafields };
-    const target = resolveChart(
-      { ...product, collectionIds: collections[id] ?? [] },
-      rules,
-      active,
-    );
-    if (target === current) continue;
-    const type = "metaobject_reference";
-    if (target) sets.push({ ownerId: id, ...CHART, type, value: target });
-    else removals.push(id);
+    if (l.__parentId) continue;
+    const ids = collections[l.id] ?? [];
+    const next = nextChart(l as ProductLine, ids, keys, rules, active, manual);
+    if (next) sets.push(assignment(l.id, next));
+    else if (next === null) removals.push(l.id);
   }
   const { refused, detail } = await setCharts(admin, sets, touch);
   await removeCharts(admin, removals, touch);
@@ -645,7 +665,14 @@ async function resolvePass(
 // One resolve per shop at a time; asking while one runs makes it run once
 // more when it finishes, as a merchant resolve if any ask was one.
 // ponytail: in-process, so one app instance (§17); a queue before running two.
-type Queued = { again: boolean | null; done: Promise<void> };
+type Queued = {
+  again: boolean | null;
+  // Product deliveries that came while it ran: the newest updated_at of each.
+  // ponytail: lost on a restart; mid-resolve the job's requeue (§13) reads
+  // every product, and once it's done only the daily reconcile (§6) does.
+  held: Map<string, Date>;
+  done: Promise<void>;
+};
 const resolves = new Map<string, Queued>();
 
 /**
@@ -661,17 +688,32 @@ export function startResolve(shop: string, merchant: boolean) {
     running.again = merchant || running.again === true;
     return running.done;
   }
-  const entry: Queued = { again: null, done: Promise.resolve() };
+  const entry: Queued = {
+    again: null,
+    held: new Map(),
+    done: Promise.resolve(),
+  };
   resolves.set(shop, entry);
   entry.done = (async () => {
+    let clean = false;
     try {
       for (let next: boolean | null = merchant; next !== null;) {
-        await runResolve(shop, next);
+        clean = await runResolve(shop, next);
         next = entry.again;
         entry.again = null;
       }
     } finally {
       resolves.delete(shop);
+    }
+    // Held deliveries meet the skip now: the passes read most of them since,
+    // the first pass's echoes included (§6).
+    try {
+      for (const [id, at] of entry.held) await productChanged(shop, id, at);
+    } catch {
+      // Logged already. They were answered, so Shopify won't send them again:
+      // a full resolve reads the rest, another one after a clean resolve, and
+      // after a failed one its requeue (§13).
+      if (clean) void startResolve(shop, false);
     }
   })();
   return entry.done;
@@ -680,17 +722,20 @@ export function startResolve(shop: string, merchant: boolean) {
 const log = (level: string, msg: string, shop: string, extra: object) =>
   console.log(JSON.stringify({ level, msg, shop, route: "resolve", ...extra }));
 
+// The offline session, loaded for every call so a long job outlives its token (§3).
+const offlineAdmin = (shop: string): Admin => ({
+  graphql: async (query, options) =>
+    (await unauthenticated.admin(shop)).admin.graphql(query, options),
+});
+
+// Whether the job finished.
 async function runResolve(shop: string, merchant: boolean) {
   let id: string | undefined;
   try {
     const progress = { merchant, pass: 1 };
     const data = { id: randomUUID(), shop, kind: "resolve", progress };
     ({ id } = await db.job.create({ data: { ...data, status: "running" } }));
-    // The offline session, loaded for every call so a long job outlives its token (§3).
-    const admin: Admin = {
-      graphql: async (query, options) =>
-        (await unauthenticated.admin(shop)).admin.graphql(query, options),
-    };
+    const admin = offlineAdmin(shop);
     let changed = 0;
     for (const pass of [1, 2]) {
       const touch = () =>
@@ -712,6 +757,7 @@ async function runResolve(shop: string, merchant: boolean) {
       data: { status: "done", result },
     });
     log("info", "Display rules applied", shop, result);
+    return true;
   } catch (err) {
     const known =
       err instanceof AdminApiError || err instanceof StoredRulesError;
@@ -728,5 +774,139 @@ async function runResolve(shop: string, merchant: boolean) {
             error: String(e),
           }),
         );
+    return false;
   }
+}
+
+// One product, for its webhook (§6): its facts, its chart and the status of
+// every ranked chart in one query. A ranked id that isn't one of Fitted's
+// charts never matches, as in the full resolve.
+// ponytail: matches on a product's first 250 collections; the full resolve reads every one.
+async function resolveOne(admin: Admin, shop: string, productId: string) {
+  const { rules } = await getRules(admin);
+  const keys = comparedKeys(rules);
+  type Chart = {
+    id?: string;
+    type?: string;
+    capabilities?: { publishable: { status: string } | null };
+  } | null;
+  const { product, charts, definition } = await adminGraphql<{
+    product:
+      (ProductLine & { collections?: { nodes: { id: string }[] } }) | null;
+    charts: Chart[];
+    definition: { type: string } | null;
+  }>(
+    admin,
+    `query ResolveOne($id: ID!, $charts: [ID!]!) {
+      product(id: $id) { ${factFields(keys)}${namesCollection(rules) ? " collections(first: 250) { nodes { id } }" : ""} }
+      charts: nodes(ids: $charts) { ... on Metaobject { id type capabilities { publishable { status } } } }
+      definition: metaobjectDefinitionByType(type: "$app:chart") { type }
+    }`,
+    { id: productId, charts: rules.order },
+    { retry: true },
+  );
+  if (!product) return; // deleted since the delivery
+  const manual = manualCharts(rules, false);
+  const active = new Set(
+    charts.flatMap((c) =>
+      c?.id &&
+      c.type === definition?.type &&
+      c.capabilities?.publishable?.status === "ACTIVE" &&
+      !manual.has(c.id)
+        ? [c.id]
+        : [],
+    ),
+  );
+  const ids = product.collections?.nodes.map((c) => c.id) ?? [];
+  const next = nextChart(product, ids, keys, rules, active, manual);
+  if (next === undefined) return;
+  if (next)
+    await adminGraphql(
+      admin,
+      SET_CHARTS,
+      { metafields: [assignment(productId, next)] },
+      { retry: true },
+    );
+  else await removeCharts(admin, [productId], async () => {});
+  log("info", next ? "Product chart set" : "Product chart removed", shop, {
+    productId,
+    chart: next ?? undefined,
+  });
+}
+
+// Saved rules that fail validation leave a webhook nothing to apply; a valid
+// save resolves every product (§6). Any other failure is logged and thrown.
+async function webhookWork(
+  shop: string,
+  what: string,
+  ids: object,
+  work: () => Promise<void>,
+) {
+  try {
+    await work();
+  } catch (err) {
+    if (err instanceof StoredRulesError)
+      return log(
+        "warn",
+        `${what}: the saved display rules can't be read`,
+        shop,
+        ids,
+      );
+    log("error", `${what} didn't finish`, shop, {
+      ...ids,
+      error: String(err),
+      detail: err instanceof AdminApiError ? err.detail : undefined,
+    });
+    throw err;
+  }
+}
+
+/**
+ * products/create and products/update (§6): resolves that product. While the
+ * shop's full resolve runs, the delivery waits for it to finish; one older than
+ * the shop's last clean pass is skipped, since that pass read the product after
+ * it. `shop` comes from a verified webhook. Logs and throws a failure, so the
+ * route answers 500 and Shopify retries.
+ */
+export async function productChanged(
+  shop: string,
+  productId: string,
+  updatedAt: Date,
+) {
+  const running = resolves.get(shop);
+  if (running) {
+    const held = running.held.get(productId);
+    if (!held || held < updatedAt) running.held.set(productId, updatedAt);
+    return;
+  }
+  await webhookWork(shop, "Product chart", { productId }, async () => {
+    const row = await db.shop.findUnique({
+      where: { shop },
+      select: { resolvedAt: true },
+    });
+    // updated_at has whole seconds: an edit just after a pass began can read as before it.
+    const at = row?.resolvedAt?.getTime() ?? -Infinity;
+    if (updatedAt.getTime() + 1000 <= at) return;
+    await resolveOne(offlineAdmin(shop), shop, productId);
+  });
+}
+
+/**
+ * collections/update and collections/delete (§6): products joined or left it,
+ * so a full resolve when a rule names it. Logs and throws a failure, like
+ * productChanged.
+ */
+export async function collectionChanged(shop: string, collectionId: string) {
+  await webhookWork(shop, "Collection check", { collectionId }, async () => {
+    const { rules } = await getRules(offlineAdmin(shop));
+    // ponytail: a full resolve per change to a named collection (its own
+    // products would miss those that left); Events' collection.products
+    // trigger names each product that joined or left, if catalogs feel it.
+    if (
+      conditions(rules).some(
+        (c) => c.field === "collection" && c.ids.includes(collectionId),
+      )
+    )
+      void startResolve(shop, false);
+  });
 }

@@ -78,7 +78,7 @@ Every query filters on the session's shop, and an id sent by a browser is looked
 - Loaders and actions: a failed Shopify call returns status 502 with `{ error: { code, message } }`, and the screen shows its error state. Validation returns 422 with `{ fieldErrors: { "<path>": "<message>" } }`. A stale save returns 409 (§5, §6), a plan gate 403 with the upgrade path, a staff member without access 403 saying so, a rate limit 429. 401 and 404 are thrown Responses.
 - Admin API: every mutation checks `userErrors`; one helper in `app/models/admin.server.ts` (added by #59) throws on GraphQL errors or user errors. Reads may retry twice with backoff. Writes retry only when they're idempotent, as `metaobjectUpsert` and `metafieldsSet` are. A retried `metafieldsSet` that comes back stale on its `compareDigest` counts as success when the stored value already equals what was sent (the first attempt landed).
 - Partial success is reported per item (an import's "2 of 11 charts didn't import"), never as all-or-nothing.
-- Webhooks return 200 once handled and 500 when they failed, so Shopify retries; handlers are idempotent.
+- Webhooks return 200 once handled and 500 when they failed, so Shopify retries; handlers are idempotent. A signed payload without the fields a handler needs gets 400, with no call to Shopify.
 - Storefront: bad or missing data renders nothing; a failed script load shows the guide's error state with Try again.
 - Logs: JSON lines to stdout (`level`, `msg`, `shop`, `route`). Never tokens, uploaded files, shopper data, staff names or emails, or env values.
 
@@ -93,7 +93,7 @@ Subscribed in `shopify.app.toml`, handled in `app/routes/webhooks.*` (§3):
 | `customers/data_request`, `customers/redact` | Acknowledge (no shopper data stored)                      | #16    |
 | `shop/redact`                                | Deletes every app database row for the shop               | #16    |
 | `products/create`, `products/update`         | Resolve that product's chart (§6)                         | #74    |
-| `collections/update`                         | Re-resolve the collection's products when a rule names it | #74    |
+| `collections/update`, `collections/delete`   | A full resolve when a rule names the collection (§6)      | #74    |
 
 The template's demo `products/update` event subscription is removed in #13. Clearing the plan cache at uninstall arrives with the `Shop` table (#17). App Pricing sends no billing webhooks (§8).
 

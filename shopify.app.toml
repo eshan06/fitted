@@ -33,6 +33,18 @@ api_version = "2027-01"
   uri = "/webhooks/shop/redact"
   compliance_topics = [ "shop/redact" ]
 
+  # Keep each product on its chart: ARCHITECTURE §6, §16. updated_at keeps every
+  # delivery distinct, so Shopify never debounces an edit away.
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/products"
+  topics = [ "products/create", "products/update" ]
+  include_fields = [ "id", "updated_at" ]
+
+  # The whole payload: a delete's holds no updated_at to include.
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/collections"
+  topics = [ "collections/update", "collections/delete" ]
+
 # Size charts: ARCHITECTURE §5. Read and written only through app/models/chart.server.ts.
 [metaobjects.app.chart]
 name = "Size chart"
