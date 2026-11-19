@@ -213,7 +213,7 @@ export function findSize(chart: Chart, answers: Answers): FitResult {
     });
   }
 
-  const at = rows.findIndex((r) => r.id === usual);
+  const at = usual === undefined ? -1 : rows.findIndex((r) => r.id === usual);
   if (at >= 0) return shifted("usual", at, {});
   if (narrowed && rows.length === 1)
     return result(0, "choice", { size: id(0) });
