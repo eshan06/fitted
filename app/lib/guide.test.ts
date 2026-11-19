@@ -541,6 +541,25 @@ describe("the US/UK/EU/AU switch", () => {
     expect(country(draw(regional({ country: "toString" })))).toBe("US");
   });
 
+  it("starts New Zealand on AU sizes and Canada on US sizes", () => {
+    const anz = (country: string) =>
+      json(
+        (c) =>
+          c.tables[0].columns.splice(
+            1,
+            1,
+            { id: "eu", kind: "country", country: "EU" },
+            { id: "au", kind: "country", country: "AU" },
+            { id: "us", kind: "country", country: "US" },
+          ),
+        { country },
+      );
+    expect(country(draw(anz("NZ")))).toBe("AU");
+    expect(country(draw(anz("CA")))).toBe("US");
+    expect(country(draw(anz("CH")))).toBe("EU");
+    expect(country(draw(anz("JP")))).toBe("EU");
+  });
+
   it("switches the column and keeps focus on the switch", () => {
     const root = draw(regional());
     document.body.append(root);

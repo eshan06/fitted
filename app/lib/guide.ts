@@ -159,7 +159,7 @@ const norm = (s: string) => s.trim().toLowerCase();
 const SYSTEMS = ["US", "UK", "EU", "AU"];
 // The size system most shoppers in a country wear, beyond US and AU.
 const WEARS = new Map(
-  "GB:UK IE:UK MT:UK CY:UK NZ:AU CA:US AT:EU BE:EU BG:EU CZ:EU DE:EU DK:EU EE:EU ES:EU FI:EU FR:EU GR:EU HR:EU HU:EU IT:EU LT:EU LU:EU LV:EU NL:EU PL:EU PT:EU RO:EU SE:EU SI:EU SK:EU"
+  "GB:UK IE:UK MT:UK CY:UK GG:UK JE:UK IM:UK GI:UK ZA:UK NZ:AU CA:US CH:EU NO:EU IS:EU LI:EU AT:EU BE:EU BG:EU CZ:EU DE:EU DK:EU EE:EU ES:EU FI:EU FR:EU GR:EU HR:EU HU:EU IT:EU LT:EU LU:EU LV:EU NL:EU PL:EU PT:EU RO:EU SE:EU SI:EU SK:EU"
     .split(" ")
     .map((p) => p.split(":") as [string, string]),
 );
