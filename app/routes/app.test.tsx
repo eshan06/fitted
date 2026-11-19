@@ -43,7 +43,9 @@ describe("admin shell", () => {
     expect(admin).toHaveBeenCalledExactlyOnceWith(request);
   });
 
-  it("passes the library's login redirect on, so no screen renders without a session", async () => {
+  // Only the shell's own loader: a screen that adds a loader authenticates in
+  // it too (ARCHITECTURE §3), since a data request can skip this one.
+  it("passes the library's login redirect on when there's no session", async () => {
     const login = new Response(null, {
       status: 302,
       headers: { Location: "/auth/login" },
