@@ -165,8 +165,13 @@ function checkCondition(
   if (ops.length && !ops.includes(c.op as string))
     fail(`${p}.op`, "Pick how it compares");
   if (allowed.includes("key")) {
-    if (typeof c.key === "string" && KEY.test(c.key)) keys.add(c.key);
-    else fail(`${p}.key`, "Use namespace.key, with letters, digits, - and _");
+    if (typeof c.key !== "string" || !KEY.test(c.key))
+      fail(`${p}.key`, "Use namespace.key, with letters, digits, - and _");
+    // Apps' own namespaces: another app's can't be read, and Fitted's holds
+    // `chart`, so a product's chart would depend on itself.
+    else if (/^app--/i.test(c.key))
+      fail(`${p}.key`, "Rules can't use an app's own metafields");
+    else keys.add(c.key);
   }
   if (
     allowed.includes("value") &&
@@ -224,12 +229,10 @@ export function resolveChart(
 }
 
 // Reads and writes of the rules (§6, §15).
-export async function getRules(admin: Admin) {
+type Stored = { jsonValue: unknown; compareDigest: string } | null;
+async function readRules(admin: Admin) {
   const { shop } = await adminGraphql<{
-    shop: {
-      id: string;
-      rules: { jsonValue: unknown; compareDigest: string } | null;
-    };
+    shop: { id: string; rules: Stored };
   }>(
     admin,
     `#graphql
@@ -245,11 +248,33 @@ export async function getRules(admin: Admin) {
     {},
     { retry: true },
   );
-  // A stored value that fails validation throws, so a resolve stops instead of unassigning every product.
-  const rules: Rules = shop.rules
-    ? validateRules(shop.rules.jsonValue)
-    : { v: 1, order: [], charts: {} };
-  return { rules, digest: shop.rules?.compareDigest ?? null, shopId: shop.id };
+  return shop;
+}
+/** The saved rules fail validation: nothing resolves from them, and a valid save with `digest` replaces them. */
+export class StoredRulesError extends Error {
+  constructor(
+    readonly fieldErrors: FieldErrors,
+    readonly digest: string,
+  ) {
+    super("The saved display rules can't be read");
+  }
+}
+// A stored value that fails validation throws, so a resolve stops instead of
+// unassigning every product.
+function parse(stored: Stored): Rules {
+  if (!stored) return { v: 1, order: [], charts: {} };
+  try {
+    return validateRules(stored.jsonValue);
+  } catch (err) {
+    if (!(err instanceof RulesValidationError)) throw err;
+    throw new StoredRulesError(err.fieldErrors, stored.compareDigest);
+  }
+}
+
+export async function getRules(admin: Admin) {
+  const shop = await readRules(admin);
+  const digest = shop.rules?.compareDigest ?? null;
+  return { rules: parse(shop.rules), digest, shopId: shop.id };
 }
 
 /**
@@ -265,19 +290,30 @@ export async function saveRules(
   plan: Plan,
 ): Promise<string> {
   const rules = validateRules(input);
-  const stored = await getRules(admin);
+  const shop = await readRules(admin);
+  const sent = typeof digest === "string" ? digest : null;
+  let stored: Rules | null = null; // saved rules that can't be read keep nothing
+  try {
+    stored = parse(shop.rules);
+  } catch (err) {
+    if (!(err instanceof StoredRulesError)) throw err;
+  }
   const paid: FieldErrors = Object.create(null);
   for (const [id, rule] of Object.entries(rules.charts))
     for (const list of ["match", "exclude"] as const)
       rule[list].forEach((c, i) => {
         if (
           !canUseRuleField(plan, c.field) &&
-          !stored.rules.charts[id]?.[list].some((s) => isDeepStrictEqual(s, c))
+          !stored?.charts[id]?.[list].some((s) => isDeepStrictEqual(s, c))
         )
           paid[`charts.${id}.${list}.${i}`] =
             "Tag, type, vendor and metafield rules are on Standard and Pro";
       });
-  if (Object.keys(paid).length) throw new RulesPlanError(paid);
+  // A copy from before someone else's save needs a reload more than an upgrade.
+  if (Object.keys(paid).length)
+    throw sent === (shop.rules?.compareDigest ?? null)
+      ? new RulesPlanError(paid)
+      : new RulesConflictError("The rules changed since they loaded");
   try {
     const data = await adminGraphql<{
       metafieldsSet: { metafields: { compareDigest: string }[] };
@@ -293,13 +329,12 @@ export async function saveRules(
       {
         metafields: [
           {
-            ownerId: stored.shopId,
+            ownerId: shop.id,
             namespace: "$app",
             key: "rules",
             type: "json",
             value: JSON.stringify(rules),
-            // never omitted: an omitted digest skips the check
-            compareDigest: typeof digest === "string" ? digest : null,
+            compareDigest: sent, // never omitted: an omitted digest skips the check
           },
         ],
       },

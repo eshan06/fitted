@@ -13,6 +13,7 @@ import {
   RulesConflictError,
   RulesPlanError,
   RulesValidationError,
+  StoredRulesError,
   getRules,
   resolveChart,
   saveRules,
@@ -195,6 +196,11 @@ describe("validateRules", () => {
       );
     expect(
       errorsAfter(
+        condition({ field: "tag", op: "is", value: "x".repeat(255) }),
+      ),
+    ).toEqual({});
+    expect(
+      errorsAfter(
         condition({ field: "vendor", op: "is", value: "A", key: "x" }),
       ),
     ).toEqual({ [`${p}.key`]: "Unknown field" });
@@ -221,6 +227,40 @@ describe("validateRules", () => {
       ).toEqual({
         [`${p}.key`]: "Use namespace.key, with letters, digits, - and _",
       });
+    expect(
+      errorsAfter(
+        condition({
+          field: "metafield",
+          key: `${"n".repeat(64)}.${"k".repeat(64)}`,
+          op: "is",
+          value: "x",
+        }),
+      ),
+    ).toEqual({});
+  });
+
+  it("refuses apps' own metafields, Fitted's chart included, so a chart never depends on itself", () => {
+    const p = `charts.${C1}.match.0`;
+    for (const key of [
+      "app--448658636801.chart",
+      "APP--1.fit",
+      "app--1--pim.fit",
+    ])
+      expect(
+        errorsAfter(
+          condition({ field: "metafield", key, op: "is", value: "x" }),
+        ),
+      ).toEqual({ [`${p}.key`]: "Rules can't use an app's own metafields" });
+    expect(
+      errorsAfter(
+        condition({
+          field: "metafield",
+          key: "apps.fit",
+          op: "is",
+          value: "x",
+        }),
+      ),
+    ).toEqual({});
   });
 
   it(`names at most ${MAX_IDS} products and collections across all rules`, () => {
@@ -267,6 +307,27 @@ describe("validateRules", () => {
     expect(errorsAfter(compare(MAX_METAFIELDS))).toEqual({
       "": `Rules can compare at most ${MAX_METAFIELDS} different metafields`,
     });
+  });
+
+  it("accepts rules just under 100 KB", () => {
+    // Valid rules of exactly `bytes` bytes, padded with tag conditions.
+    const sized = (bytes: number) => {
+      const r = rules() as Draft;
+      const pad = { field: "tag", op: "is", value: "x".repeat(100) };
+      const size = () => Buffer.byteLength(JSON.stringify(r));
+      while (size() + JSON.stringify(pad).length + 1 < bytes - 50)
+        r.charts[C1].match.push({ ...pad });
+      const last = { field: "tag", op: "is", value: "" };
+      r.charts[C1].match.push(last);
+      last.value = "x".repeat(bytes - size());
+      return r;
+    };
+    const under = sized(100 * 1024 - 1);
+    expect(Buffer.byteLength(JSON.stringify(under))).toBe(100 * 1024 - 1);
+    expect(validateRules(under)).toBe(under);
+    expect(() => validateRules(sized(100 * 1024))).toThrow(
+      RulesValidationError,
+    );
   });
 
   it("refuses rules of 100 KB or more before walking them", () => {
@@ -586,9 +647,36 @@ describe("reading and saving rules", () => {
     expect(err).not.toBeInstanceOf(RulesConflictError);
   });
 
-  it("refuses a stored value that fails validation instead of reading it as no rules", async () => {
+  it("treats a digest Shopify calls invalid as a conflict", async () => {
+    const store = fakeStore(rules());
+    store.hooks.userErrors = [
+      {
+        field: ["metafields", "0", "compareDigest"],
+        message: "Invalid digest",
+        code: "INVALID_COMPARE_DIGEST",
+      },
+    ];
+    const mine = rules();
+    mine.order.reverse();
+    await expect(
+      saveRules(store.admin, mine, "garbled", "pro"),
+    ).rejects.toThrow(RulesConflictError);
+  });
+
+  it("reports saved rules that fail validation, never reading them as no rules, and lets a valid save replace them", async () => {
     const store = fakeStore({ v: 1, order: [C1], charts: {} });
-    await expect(getRules(store.admin)).rejects.toThrow(RulesValidationError);
+    const err = await getRules(store.admin).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(StoredRulesError);
+    expect(err).toMatchObject({
+      digest: "d0",
+      fieldErrors: { [`charts.${C1}`]: "Missing this chart's rules" },
+    });
+    // On Free they keep no paid conditions.
+    await expect(saveRules(store.admin, rules(), "d0", "free")).rejects.toThrow(
+      RulesPlanError,
+    );
+    expect(await saveRules(store.admin, rules(), "d0", "pro")).toBe("d1");
+    expect((await getRules(store.admin)).rules).toEqual(rules());
   });
 });
 
@@ -649,7 +737,7 @@ describe("the Free plan's rule fields (§8)", () => {
     };
     edit.order = [C2, C1, C3];
     expect(await saveRules(store.admin, edit, "d0", "free")).toBe("d1");
-    // Changing one, or moving it to the other list, is a new paid condition.
+    // Changing one, or moving it to the other list or another chart, is a new paid condition.
     const changed = structuredClone(edit) as Rules;
     changed.charts[C1].match[0] = { field: "tag", op: "is", value: "Swimwear" };
     const moved = structuredClone(edit) as Rules;
@@ -657,10 +745,28 @@ describe("the Free plan's rule fields (§8)", () => {
       ...moved.charts[C2].exclude,
       moved.charts[C2].match[1],
     ];
-    for (const r of [changed, moved])
+    const elsewhere = structuredClone(edit) as Rules;
+    elsewhere.charts[C3].match.push(elsewhere.charts[C1].match[0]);
+    for (const r of [changed, moved, elsewhere])
       await expect(saveRules(store.admin, r, "d1", "free")).rejects.toThrow(
         RulesPlanError,
       );
     expect(store.stored()).toEqual(edit);
+  });
+
+  it("asks a copy from before someone else's save to reload before it talks about the plan", async () => {
+    const store = fakeStore(free());
+    const other = free();
+    other.order.reverse();
+    expect(await saveRules(store.admin, other, "d0", "free")).toBe("d1");
+    const mine = free();
+    mine.charts[C1].match.push({ field: "tag", op: "is", value: "Swim" });
+    await expect(saveRules(store.admin, mine, "d0", "free")).rejects.toThrow(
+      RulesConflictError,
+    );
+    await expect(saveRules(store.admin, mine, "d1", "free")).rejects.toThrow(
+      RulesPlanError,
+    );
+    expect(store.stored()).toEqual(other);
   });
 });
