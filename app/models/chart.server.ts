@@ -480,7 +480,8 @@ async function write(admin: Admin, variables: Record<string, unknown>) {
   }
 }
 
-export async function listCharts(admin: Admin, after?: string) {
+// Newest first, for the charts list; `byId` pages in a fixed order instead.
+export async function listCharts(admin: Admin, after?: string, byId = false) {
   const data = await adminGraphql<{
     metaobjects: {
       nodes: Node[];
@@ -490,13 +491,17 @@ export async function listCharts(admin: Admin, after?: string) {
     admin,
     `#graphql
     ${FIELDS}
-    query ChartList($after: String) {
-      metaobjects(type: "${TYPE}", first: 50, after: $after, sortKey: "updated_at", reverse: true) {
+    query ChartList($after: String, $sortKey: String, $reverse: Boolean) {
+      metaobjects(type: "${TYPE}", first: 50, after: $after, sortKey: $sortKey, reverse: $reverse) {
         nodes { ...ChartFields }
         pageInfo { hasNextPage endCursor }
       }
     }`,
-    { after: after ?? null },
+    {
+      after: after ?? null,
+      sortKey: byId ? "id" : "updated_at",
+      reverse: !byId,
+    },
     { retry: true },
   );
   const { nodes, pageInfo } = data.metaobjects;
@@ -506,22 +511,26 @@ export async function listCharts(admin: Admin, after?: string) {
   };
 }
 
-// Every page of listCharts, for CSV export and Free's limit.
-export async function allCharts(admin: Admin) {
-  const charts: StoredChart[] = [];
+// Every chart, a page at a time, for CSV export and Free's limit. In id
+// order: a chart saved meanwhile would move in an updated_at listing, so a
+// read across pages would skip it or see it twice.
+export async function* chartPages(admin: Admin) {
   let after: string | undefined;
   do {
-    const page = await listCharts(admin, after);
-    charts.push(...page.charts);
+    const page = await listCharts(admin, after, true);
+    yield page.charts;
     after = page.next ?? undefined;
   } while (after);
-  return charts;
 }
 
 // For Free's limit of Active charts (§8).
 // ponytail: pages through every chart; filter by status in the query if stores keep hundreds of drafts.
-export const countActiveCharts = async (admin: Admin) =>
-  (await allCharts(admin)).filter((c) => c.status === "ACTIVE").length;
+export async function countActiveCharts(admin: Admin) {
+  let count = 0;
+  for await (const charts of chartPages(admin))
+    count += charts.filter((c) => c.status === "ACTIVE").length;
+  return count;
+}
 
 // The id comes from a browser: it must be a metaobject of this app's chart
 // type, or it is not found.

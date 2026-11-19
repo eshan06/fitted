@@ -2,15 +2,16 @@
 // route: the parent's loader doesn't run, so this one authenticates (§3).
 import type { LoaderFunctionArgs } from "react-router";
 import { AdminApiError } from "../models/admin.server";
-import { allCharts, type StoredChart } from "../models/chart.server";
+import { chartPages, type StoredChart } from "../models/chart.server";
 import { exportCsv } from "../models/csv-import.server";
 import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
-  let charts: StoredChart[];
+  // ponytail: the whole file is built in memory; stream it if stores keep thousands of charts.
+  const charts: StoredChart[] = [];
   try {
-    charts = await allCharts(admin);
+    for await (const page of chartPages(admin)) charts.push(...page);
   } catch (err) {
     if (!(err instanceof AdminApiError)) throw err;
     console.log(

@@ -65,16 +65,19 @@ const tops = () => ({
       "t1.l.size": "+L",
       "t1.s.us": "4",
       "t1.m.us": "-6",
+      "t1.l.us": "\rx",
       "t1.s.fitnote": `Runs "small"; true to size`,
       "t1.m.fitnote": "\tindented",
       "t1.l.fitnote": "'quoted",
       "t2.title": "'=Kids",
-      "t2.a.sz": "2T – 3T",
+      "t2.sub": "a\rb",
+      "t2.note": "",
+      "t2.a.sz": " 2T – 3T ",
       "t2.a.uk": "ñ 中 😀",
       "m.bust.name": "Bust",
       "m.bust.text": "Around the fullest part",
-      tips: "Measure over light clothing.\n\nAsk us anytime.",
-      "fit.q1": "Your chest?",
+      tips: "Measure over light clothing.\n- Ask us;@noon\t+1",
+      "fit.q1": `Your chest?;"=1"`,
       "fit.q4": "Body shape?",
       "fit.q4.a": "Straight",
     },
@@ -108,7 +111,7 @@ const rings = () => ({
 });
 // The whole file Excel sees: a BOM, the layout's row, then CRLF rows.
 const file = (...rows: string[]) =>
-  ["﻿Fitted size charts,1", ...rows, ""].join("\r\n");
+  ["\uFEFFFitted size charts,1", ...rows, ""].join("\r\n");
 const ringsRows = [
   "Chart,Rings,rings,cm,0.25",
   `Settings,"{""measure"":{""steps"":[]}}"`,
@@ -130,18 +133,20 @@ describe("exportCsv", () => {
         "Labels,,Size,,Chest,'=Weight,,",
         `Row,s,S,4,34–35.5,120,22.25–22.25,"Runs ""small""; true to size"`,
         "Row,m,'@M,'-6,36–37.5,1e-7,,'\tindented",
-        "Row,l,'+L,,,,,'quoted",
+        `Row,l,'+L,"'\rx",,,,'quoted`,
         "Merge,s,fitnote,3,1",
         "Wrap,fitnote",
-        // An apostrophe that already leads a formula start gets one more.
-        "Table,t2,''=Kids,,",
+        // An apostrophe that already leads a formula start gets one more. An
+        // empty text is "", unlike no text, and spaces around text are quoted.
+        `Table,t2,''=Kids,"a\rb",""`,
         "Columns,,sz:size,uk:UK",
         "Labels,,,",
-        "Row,a,2T – 3T,ñ 中 😀",
+        `Row,a," 2T – 3T ",ñ 中 😀`,
         "Text,m.bust.name,Bust",
         "Text,m.bust.text,Around the fullest part",
-        `Text,tips,"Measure over light clothing.\n\nAsk us anytime."`,
-        "Text,fit.q1,Your chest?",
+        // A spreadsheet may start a cell after a line break, ; or tab, too.
+        `Text,tips,"Measure over light clothing.\n'- Ask us;'@noon\t'+1"`,
+        `Text,fit.q1,"Your chest?;'""=1"""`,
         "Text,fit.q4,Body shape?",
         "Text,fit.q4.a,Straight",
       ),

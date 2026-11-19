@@ -4,13 +4,19 @@
 import type { ChartInput, Column } from "./chart.server";
 
 const MARK = "Fitted size charts";
-// Spreadsheets run a cell starting with one of these as a formula. Export puts
-// an apostrophe in front, even when apostrophes already lead, so import can
-// take one off and get the text back exactly.
-const FORMULA = /^'*[=+\-@\t\r]/;
-const csvCell = (v: string) => {
-  const s = FORMULA.test(v) ? `'${v}` : v;
-  return /[",\r\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
+// Spreadsheets run a cell starting with = + - @, a tab or a carriage return as
+// a formula, and some start cells at a semicolon, tab or line break too. Export
+// puts an apostrophe at each such start, even before quotes or apostrophes
+// already there, so import can take one off and get the text back exactly.
+const FORMULA = /(?<=^|[;\t\r\n])(?=['"]*[=+\-@\t\r])/g;
+// No text is an empty cell and an empty text is "", and text with spaces
+// around it is quoted, so import can tell them apart and keep the spaces.
+const csvCell = (v?: string) => {
+  if (v === undefined) return "";
+  const s = v.replace(FORMULA, "'");
+  return s === "" || /[",\r\n]|^\s|\s$/.test(s)
+    ? `"${s.replaceAll('"', '""')}"`
+    : s;
 };
 const typeOf = (c: Column) =>
   c.kind === "country"
@@ -20,8 +26,8 @@ const typeOf = (c: Column) =>
       : c.kind;
 
 export function exportCsv(charts: { name: string; chart?: ChartInput }[]) {
-  const out: string[][] = [[MARK, "1"]];
-  const add = (...cells: string[]) => out.push(cells);
+  const out: (string | undefined)[][] = [[MARK, "1"]];
+  const add = (...cells: (string | undefined)[]) => out.push(cells);
   for (const { name, chart } of charts) {
     if (!chart) {
       // Never dropped silently (§5): named, and importing says why it's empty.
@@ -31,7 +37,7 @@ export function exportCsv(charts: { name: string; chart?: ChartInput }[]) {
     }
     const c = chart.content;
     const used = new Set<string>();
-    const word = (key: string) => (used.add(key), c.words[key] ?? "");
+    const word = (key: string) => (used.add(key), c.words[key]);
     add("Chart", chart.name, chart.template, c.unit, `${c.roundTo}`);
     const { measure, videoUrl, fit } = c;
     add("Settings", JSON.stringify({ measure, videoUrl, fit }));
@@ -42,12 +48,12 @@ export function exportCsv(charts: { name: string; chart?: ChartInput }[]) {
         id,
         ...["title", "sub", "note"].map((k) => word(`${id}.${k}`)),
       );
-      add("Columns", "", ...cols.map((k) => `${k.id}:${typeOf(k)}`));
-      add("Labels", "", ...cols.map((k) => word(`${id}.${k.id}`)));
+      add("Columns", undefined, ...cols.map((k) => `${k.id}:${typeOf(k)}`));
+      add("Labels", undefined, ...cols.map((k) => word(`${id}.${k.id}`)));
       for (const r of t.rows) {
         const cell = (k: Column) =>
           k.kind === "measure"
-            ? (r.cells[k.id]?.join("–") ?? "")
+            ? r.cells[k.id]?.join("–")
             : word(`${id}.${r.id}.${k.id}`);
         add("Row", r.id, ...cols.map(cell));
       }

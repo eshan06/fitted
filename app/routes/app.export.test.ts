@@ -74,9 +74,10 @@ describe("CSV export", () => {
     const response = await load(req);
 
     expect(admin).toHaveBeenCalledExactlyOnceWith(req);
-    expect(graphql.mock.calls.map(([, o]) => o.variables.after)).toEqual([
-      null,
-      "p2",
+    // In id order, so a chart saved meanwhile is neither skipped nor read twice.
+    expect(graphql.mock.calls.map(([, o]) => o.variables)).toEqual([
+      { after: null, sortKey: "id", reverse: false },
+      { after: "p2", sortKey: "id", reverse: false },
     ]);
     expect(response.status).toBe(200);
     expect(response.headers.get("Content-Type")).toBe(
