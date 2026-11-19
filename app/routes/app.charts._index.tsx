@@ -257,7 +257,7 @@ export function Charts({ rows, limit }: Extract<ChartList, { rows: unknown }>) {
       {limit && (
         <s-banner
           tone="info"
-          heading={`Free plan: ${limit.active} of ${FREE_ACTIVE_CHARTS} Active charts`}
+          heading={`Free plan: ${limit.active} of 3 Active charts`}
         >
           <s-stack gap="small-200">
             <s-paragraph>
