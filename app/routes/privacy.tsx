@@ -28,8 +28,8 @@ export default function Privacy() {
       <h2>The short version</h2>
       <ul>
         <li>
-          Your charts, display rules and settings are saved in your own Shopify
-          store, not on our servers.
+          Your live charts, display rules and settings are saved in your own
+          Shopify store. We keep only past versions of charts, for history.
         </li>
         <li>
           Fitted collects no personal data about your shoppers. Fit finder
@@ -41,7 +41,7 @@ export default function Privacy() {
         </li>
         <li>
           We don&rsquo;t sell data or use it for advertising. Files you upload
-          to import a chart are read once and never stored.
+          to import a chart are read once and never stored by Fitted.
         </li>
       </ul>
 
@@ -76,11 +76,13 @@ export default function Privacy() {
       </p>
       <h3>Imports</h3>
       <p>
-        When you import charts, we keep the import&rsquo;s progress and result,
-        and a daily count of how many times your store used AI reading. A CSV,
-        image, PDF or document you upload is read in memory and never stored. To
-        find charts from Kiwi Size Chart, Fitted reads your store&rsquo;s public
-        product pages.
+        When you import charts, we keep the import&rsquo;s progress and result.
+        A CSV, image, PDF or document you upload is read in memory and never
+        stored. To find charts from Kiwi Size Chart, Fitted reads your
+        store&rsquo;s public product pages; to import from your product
+        descriptions it reads those; to import from a web page it reads the link
+        you paste. We also keep a daily count of how often your store used
+        OpenAI, for imports and translations, to keep within limits.
       </p>
       <h3>Logs</h3>
       <p>
@@ -102,10 +104,10 @@ export default function Privacy() {
       <h2>Your shoppers</h2>
       <ul>
         <li>
-          Fitted stores no personal data about shoppers. Size guide events carry
-          no customer ID, IP address or device details. A shopper&rsquo;s IP
-          address is used for a moment, in memory, to stop floods of fake
-          events, and is never saved.
+          Fitted stores no personal data about shoppers. It never saves a
+          customer ID, IP address or device details with an event. A
+          shopper&rsquo;s IP address is used for a moment, in memory, to stop
+          floods of fake events, and is never saved.
         </li>
         <li>
           Fit finder answers, such as measurements, usual size or preferred fit,
@@ -155,9 +157,10 @@ export default function Privacy() {
         <li>
           <strong>OpenAI</strong> reads a chart for us when you import from an
           image or PDF: we send it the file&rsquo;s contents. If you use
-          Translate, we send it your charts&rsquo; words to translate. Nothing
-          else goes to OpenAI, and never shopper data. OpenAI handles it under
-          its <a href="https://openai.com/policies/">API terms and policies</a>.
+          Translate, we send it your charts&rsquo; words and your size
+          guide&rsquo;s custom text to translate. Nothing else goes to OpenAI,
+          and never shopper data. OpenAI handles it under its{" "}
+          <a href="https://openai.com/policies/">API terms and policies</a>.
         </li>
       </ul>
       <p>We may also disclose data when the law requires it.</p>
@@ -183,6 +186,10 @@ export default function Privacy() {
               <td>Until you uninstall Fitted</td>
             </tr>
             <tr>
+              <td>Your store&rsquo;s plan record</td>
+              <td>Until about 48 hours after you uninstall</td>
+            </tr>
+            <tr>
               <td>Staff sign-in sessions (name and email)</td>
               <td>
                 Until the session expires; expired ones are deleted the next
@@ -199,7 +206,7 @@ export default function Privacy() {
               <td>90 days</td>
             </tr>
             <tr>
-              <td>Daily AI reading counts</td>
+              <td>Daily OpenAI use counts</td>
               <td>30 days</td>
             </tr>
             <tr>
@@ -225,15 +232,17 @@ export default function Privacy() {
         asks us to erase your store&rsquo;s data, and we delete everything we
         hold for your store. Shopify also removes Fitted&rsquo;s app data,
         including your charts, from your store, so export your charts as CSV
-        first if you want to keep them. Export is free on every plan.
+        first if you want to keep them. Export is free on every plan. Images and
+        fonts you uploaded through Fitted stay in your store&rsquo;s Files until
+        you delete them.
       </p>
 
       <h2>How we protect it</h2>
       <p>
         Fitted is served only over HTTPS. Every request from Shopify is checked
         for Shopify&rsquo;s signature, and Fitted only ever reads or changes
-        data for the store that is signed in. Our database is not open to the
-        internet, and access tokens never appear in our logs.
+        data for the store that is signed in. Access tokens never appear in our
+        logs.
       </p>
 
       <h2>Your choices and rights</h2>

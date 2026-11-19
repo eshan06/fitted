@@ -59,7 +59,8 @@ export default function Support() {
       <p>
         Shopify removes Fitted&rsquo;s data from your store when you uninstall,
         including your charts. Export them as CSV first if you want to keep
-        them.
+        them. Images and fonts you uploaded through Fitted stay in your
+        store&rsquo;s Files.
       </p>
       <h3>How do I change my plan?</h3>
       <p>

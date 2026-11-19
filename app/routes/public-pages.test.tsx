@@ -51,7 +51,7 @@ describe("privacy policy", () => {
 
   it("states the retention periods the app enforces (ARCHITECTURE §13, §14)", () => {
     expect(policy).toContain("Size guide events 90 days");
-    expect(policy).toContain("Daily AI reading counts 30 days");
+    expect(policy).toContain("Daily OpenAI use counts 30 days");
     expect(policy).toContain("The last 30 versions of each chart");
     expect(policy).toContain("older ones for 7 days");
     expect(policy).toContain("About 48 hours later");
@@ -61,11 +61,18 @@ describe("privacy policy", () => {
     for (const name of ["Shopify", "Railway", "OpenAI"])
       expect(policy).toContain(name);
     expect(policy).toContain("never shopper data");
+    // Translate sends settings.text as well as chart words (ARCHITECTURE §11).
+    expect(policy).toContain("words and your size guide’s custom text");
   });
 
   it("says fit finder answers never leave the browser (§10)", () => {
     expect(policy).toContain("are never sent to us or anyone else");
     expect(policy).toContain("Fitted stores no personal data about shoppers");
+  });
+
+  it("doesn't claim charts never reach our database (§14 keeps versions)", () => {
+    expect(policy).not.toContain("not on our servers");
+    expect(policy).toContain("We keep only past versions of charts");
   });
 
   it("lists every placeholder a contact section needs", () => {
