@@ -18,14 +18,20 @@ const h = vi.hoisted(() => {
     $executeRaw: vi.fn(async () => 0),
     job: {
       updateMany: vi.fn(async () => ({ count: 0 })),
-      // The newest job of a shop and kind, as resolveIfStale reads it.
+      // A shop's first job of a kind in createdAt order, as resolveIfStale reads it.
       findFirst: vi.fn(
-        async ({ where }: { where: Row }): Promise<Row | null> =>
-          jobs
-            .filter((j) => j.shop === where.shop && j.kind === where.kind)
-            .sort(
-              (a, b) => +(b.createdAt as Date) - +(a.createdAt as Date),
-            )[0] ?? null,
+        async (q: {
+          where: Row;
+          orderBy: { createdAt: "asc" | "desc" };
+        }): Promise<Row | null> => {
+          const sign = q.orderBy.createdAt === "desc" ? -1 : 1;
+          const at = (j: Row) => +(j.createdAt as Date);
+          return (
+            jobs
+              .filter((j) => j.shop === q.where.shop && j.kind === q.where.kind)
+              .sort((a, b) => sign * (at(a) - at(b)))[0] ?? null
+          );
+        },
       ),
       create: vi.fn(async ({ data }: { data: Row }) => {
         const now = new Date();
@@ -851,6 +857,23 @@ describe("one resolve per shop at a time", () => {
 });
 
 describe("a failed resolve", () => {
+  it("passes the merchant's changes to the run asked for meanwhile, which is now the newest (§13)", async () => {
+    const store = fakeStore();
+    store.setRules(rules());
+    store.hooks.afterRead = (read) => {
+      store.hooks.failRead = read === 1 ? "INTERNAL_SERVER_ERROR" : undefined;
+      if (read === 1) void startResolve(SHOP, false); // a collection webhook
+    };
+
+    await startResolve(SHOP, true);
+
+    expect(jobs()).toEqual([
+      failed(true, "Shopify's bulk operation didn't finish"),
+      done(true, 34),
+    ]);
+    expect(store.assigned()).toEqual(expected());
+  });
+
   it("is recorded on the job and logged, leaving products as they were", async () => {
     const store = fakeStore();
     store.setRules(rules());
@@ -1426,6 +1449,10 @@ describe("the daily reconcile", () => {
     await vi.waitFor(() =>
       expect(jobs()).toEqual([done(false, 34), done(false, 0)]),
     );
+
+    // The newest counts, not an older one kept beside it.
+    await resolveIfStale(SHOP);
+    expect(h.jobs).toHaveLength(2);
   });
 
   it("never queues another resolve behind one that runs, even before its row is written", async () => {
@@ -1460,16 +1487,34 @@ describe("the daily reconcile", () => {
 });
 
 describe("the job checks", () => {
-  it("requeue a failed resolve as the same kind with its attempt counted", async () => {
+  it.each([true, false])(
+    "requeue a failed resolve as the same kind with its attempt counted (merchant: %s)",
+    async (merchant) => {
+      const store = fakeStore();
+      store.setRules(rules());
+      h.db.$queryRaw.mockResolvedValueOnce([
+        { shop: SHOP, progress: { merchant, pass: 1, attempt: 2 } },
+      ]);
+
+      await checkJobs();
+
+      expect(jobs()).toEqual([done(merchant, 34, 3)]);
+    },
+  );
+
+  it("count a resolve asked for while a requeue runs from one again", async () => {
     const store = fakeStore();
     store.setRules(rules());
     h.db.$queryRaw.mockResolvedValueOnce([
       { shop: SHOP, progress: { merchant: true, pass: 1, attempt: 2 } },
     ]);
+    store.hooks.afterRead = (read) => {
+      if (read === 1) void startResolve(SHOP, true);
+    };
 
     await checkJobs();
 
-    expect(jobs()).toEqual([done(true, 34, 3)]);
+    expect(jobs()).toEqual([done(true, 34, 3), done(true, 0)]);
   });
 
   it("leave a failed resolve alone while one runs here, so its count holds", async () => {

@@ -700,7 +700,9 @@ export function startResolve(shop: string, merchant: boolean, attempt = 1) {
       for (let next: boolean | null = merchant; next !== null;) {
         clean = await runResolve(shop, next, attempt);
         attempt = 1;
-        next = entry.again;
+        // The next run is the newest, which the job checks requeue (§13), so
+        // a failed merchant resolve's changes go with it.
+        next = entry.again === null ? null : entry.again || (!clean && next);
         entry.again = null;
       }
     } finally {
@@ -921,8 +923,9 @@ const DAY_MS = 24 * 60 * 60_000;
 
 /**
  * For Home's loader (§6): a resolve when the shop's newest started over a day
- * ago, which catches webhooks Shopify never delivered. A failing shop tries
- * again the next day, not on every load. Never rejects.
+ * ago, which catches webhooks Shopify never delivered. A failing shop starts
+ * again the next day, not on every load. `shop` must come from the
+ * authenticated session. Never rejects.
  */
 export async function resolveIfStale(shop: string) {
   try {

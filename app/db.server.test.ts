@@ -9,7 +9,9 @@ import { checkJobs } from "./models/rules.server";
 
 // billing.server.ts imports it for plan checks, which nothing here runs. A
 // resolve the job checks requeue finds no store: the offline session is
-// refused at once, as a thrown Response is never retried.
+// refused at once, as a thrown Response is never retried. checkJobs acts on
+// every shop in the database, so point these tests at the branch's own
+// database (docs/GOTCHAS.md), never one npm run dev uses.
 vi.mock("./shopify.server", () => ({
   unauthenticated: {
     admin: async () => {
@@ -201,18 +203,19 @@ describe.runIf(hasDatabase)("the app database on Postgres", () => {
 
   it("fails a job with no progress for 10 minutes and leaves one that moved since", async () => {
     const shop = newShop();
-    const job = (minutes: number) =>
+    const job = (minutes: number, status = "running") =>
       prisma.job.create({
         data: {
           id: randomUUID(),
           shop,
           kind: "import",
-          status: "running",
+          status,
           updatedAt: new Date(Date.now() - minutes * 60_000),
         },
       });
     const stalled = await job(11);
     const moving = await job(9);
+    const finished = await job(60, "done");
 
     await checkJobs();
 
@@ -225,6 +228,9 @@ describe.runIf(hasDatabase)("the app database on Postgres", () => {
     expect(
       await prisma.job.findUnique({ where: { id: moving.id } }),
     ).toMatchObject({ status: "running", error: null });
+    expect(
+      await prisma.job.findUnique({ where: { id: finished.id } }),
+    ).toMatchObject({ status: "done", error: null });
   });
 
   it("requeues an installed shop's failed resolve as the same kind, three tries in all", async () => {
