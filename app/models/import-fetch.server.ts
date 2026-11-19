@@ -134,17 +134,25 @@ async function readBody(res: http.IncomingMessage) {
     res.destroy();
     throw new FetchError("failed", `Unsupported encoding ${encoding}`);
   }
-  // Copied into one buffer as it arrives, so a body trickled a byte per chunk
-  // holds 5 MB, not millions of chunk objects. Leaving the loop early
-  // destroys the streams, and the socket with them; a body cut short throws.
-  const body = Buffer.alloc(MAX_BYTES);
+  // Copied into one buffer that doubles as it fills, so a body trickled a
+  // byte per chunk holds at most twice its size, not millions of chunk
+  // objects. Leaving the loop early destroys the streams, and the socket with
+  // them; a body cut short throws.
+  let body = Buffer.alloc(16 * 1024);
   let bytes = 0;
   for await (const chunk of decoder ? pipeline(res, decoder, () => {}) : res) {
-    if (bytes + chunk.length > MAX_BYTES)
-      throw new FetchError("too_large", "Over 5 MB");
+    const end = bytes + chunk.length;
+    if (end > MAX_BYTES) throw new FetchError("too_large", "Over 5 MB");
+    if (end > body.length) {
+      const grown = Buffer.alloc(
+        Math.min(MAX_BYTES, Math.max(end, body.length * 2)),
+      );
+      body.copy(grown, 0, 0, bytes);
+      body = grown;
+    }
     bytes += (chunk as Buffer).copy(body, bytes);
   }
-  return Buffer.from(body.subarray(0, bytes));
+  return body.subarray(0, bytes);
 }
 
 // Non-2xx answers come back for the caller to judge; only redirects are

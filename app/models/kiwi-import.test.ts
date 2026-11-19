@@ -203,6 +203,15 @@ describe("scanForKiwi", () => {
     expect(await scan(shopWith([product("gone")]))).toBe("kiwi_unreadable");
   });
 
+  it("still answers no Kiwi when the last page sampled is gone", async () => {
+    storefront({
+      [product("a")]: { html: PLAIN_PAGE },
+      [product("b")]: { html: "Not found", status: 404 },
+    });
+    const admin = shopWith([product("a"), product("b")]);
+    expect(await scan(admin)).toBe("no_kiwi");
+  });
+
   it("fails instead of saying no Kiwi when every product page is gone", async () => {
     storefront({
       [product("a")]: { html: "Not found", status: 404 },
