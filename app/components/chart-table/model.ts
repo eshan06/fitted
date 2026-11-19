@@ -131,6 +131,7 @@ export function toInput(
   for (const col of measures)
     if (!d.content.words[`${t.id}.${col.id}`]?.trim())
       errs[`content.words.${t.id}.${col.id}`] = "Name this measurement";
+  // validateChart makes the first column, and only it, the size column.
   const rows = t.rows.map((row, ri) => {
     const name = `${t.id}.${row.id}.${t.columns[0].id}`;
     if (!d.content.words[name]?.trim())
