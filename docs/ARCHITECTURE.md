@@ -70,7 +70,7 @@ Postgres 18 on Railway (#8, `DATABASE_URL`), and the same version locally from `
 | `Event`        | `shop`, `id`, `type`, `chartId`, `productId`, `size`, `createdAt`; unique on `(shop, id)`                                 | #44      |
 | `AiUsage`      | `shop`, `day`, `count`; key `(shop, day)`                                                                                 | #38      |
 
-Every query filters on the session's shop, and an id sent by a browser is looked up within that shop. Version snapshots are app-only copies kept for history; the live chart stays in the store. `app/uninstalled` deletes the shop's sessions and clears `Shop.planOnStore` and `planCheckedAt`; `shop/redact` deletes every row for the shop in every table; `customers/data_request` and `customers/redact` only acknowledge, because Fitted stores no shopper data. Retention: events 90 days, AI usage 30 days, versions the last 30 per chart, jobs as in §13, and expired online sessions deleted whenever a shop stores a new one (#24). The privacy policy (#47) lists the staff names and emails in `Session`.
+Every query filters on the session's shop, and an id sent by a browser is looked up within that shop. Version snapshots are app-only copies kept for history; the live chart stays in the store. `app/uninstalled` deletes the shop's sessions on every delivery, with or without a session from the library, and resets its cached plan to Free (§8); `shop/redact` deletes every row for the shop in every table; `customers/data_request` and `customers/redact` only acknowledge, because Fitted stores no shopper data. Retention: events 90 days, AI usage 30 days, versions the last 30 per chart, jobs as in §13, and expired online sessions deleted whenever a shop stores a new one (#24). The privacy policy (#47) lists the staff names and emails in `Session`.
 
 ## 15. Errors and retries
 
@@ -88,7 +88,7 @@ Subscribed in `shopify.app.toml`, handled in `app/routes/webhooks.*` (§3):
 
 | Topic                                        | Does                                                      | Step   |
 | -------------------------------------------- | --------------------------------------------------------- | ------ |
-| `app/uninstalled`                            | Deletes the shop's sessions; clears the plan cache (§8)   | exists |
+| `app/uninstalled`                            | Deletes the shop's sessions; resets its plan to Free (§8) | exists |
 | `app/scopes_update`                          | Updates the session's scopes                              | exists |
 | `customers/data_request`, `customers/redact` | Acknowledge (no shopper data stored)                      | #16    |
 | `shop/redact`                                | Deletes every app database row for the shop               | #16    |
