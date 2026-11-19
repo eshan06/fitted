@@ -118,11 +118,30 @@ describe("adminGraphql", () => {
   });
 
   it("rethrows a thrown Response (re-auth) untouched, without retrying", async () => {
-    const reauth = new Response(null, { status: 401 });
-    const { admin, graphql } = adminWith(reauth, { data: {} });
-    const r = await run(adminGraphql(admin, "q", {}, { retry: true }));
-    expect(r.error).toBe(reauth);
-    expect(graphql).toHaveBeenCalledTimes(1);
+    const bounce = {
+      status: 302,
+      headers: { Location: "/auth/session-token" },
+    };
+    for (const reauth of [
+      new Response(null, { status: 401 }),
+      new Response(null, bounce),
+    ]) {
+      const { admin, graphql } = adminWith(reauth, { data: {} });
+      const r = await run(adminGraphql(admin, "q", {}, { retry: true }));
+      expect(r.error).toBe(reauth);
+      expect(graphql).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("treats any other thrown Response, Shopify's HTTP error, as a failed call (§15)", async () => {
+    const down = () => new Response("Service Unavailable", { status: 503 });
+    const retried = adminWith(down(), { data: { ok: true } });
+    const r1 = await run(adminGraphql(retried.admin, "q", {}, { retry: true }));
+    expect(r1.value).toEqual({ ok: true });
+    expect(retried.graphql).toHaveBeenCalledTimes(2);
+    const r2 = await run(adminGraphql(adminWith(down()).admin, "q"));
+    expect(r2.error).toBeInstanceOf(AdminApiError);
+    expect((r2.error as AdminApiError).detail).toBe("HTTP 503");
   });
 
   it("never puts Shopify's raw text in its message", async () => {
@@ -163,6 +182,7 @@ describe("canReadProducts", () => {
     const other = { message: "Internal", extensions: { code: "INTERNAL" } };
     for (const step of [
       new Error("socket hang up"),
+      new Response("Service Unavailable", { status: 503 }),
       queryError(other),
       queryError(null),
       { errors: [other] },

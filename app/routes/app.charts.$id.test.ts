@@ -282,13 +282,18 @@ describe("saving a chart", () => {
   });
 
   it("starts a merchant resolve for the session's shop once the status changes, so products follow (§6)", async () => {
-    expect(await save("ACTIVE", { shop: "other.myshopify.com" })).toEqual({
-      ok: true,
-    });
-    expect(m.startResolve).toHaveBeenCalledExactlyOnceWith(SHOP, true);
-    expect(m.publishChart.mock.invocationCallOrder[0]).toBeLessThan(
-      m.startResolve.mock.invocationCallOrder[0],
+    let published = () => {};
+    m.publishChart.mockReturnValue(
+      new Promise<void>((r) => (published = () => r())),
     );
+    // The job runs in the background: one that never ends can't hold the save.
+    m.startResolve.mockReturnValue(new Promise(() => {}));
+    const saving = save("ACTIVE", { shop: "other.myshopify.com" });
+    await vi.waitFor(() => expect(m.publishChart).toHaveBeenCalled());
+    expect(m.startResolve).not.toHaveBeenCalled();
+    published();
+    expect(await saving).toEqual({ ok: true });
+    expect(m.startResolve).toHaveBeenCalledExactlyOnceWith(SHOP, true);
     m.startResolve.mockClear();
     m.updateChart.mockResolvedValue(stored("ACTIVE"));
     expect(await save("DRAFT")).toEqual({ ok: true });

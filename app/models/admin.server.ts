@@ -24,6 +24,17 @@ export class AdminApiError extends Error {
 
 const BACKOFF_MS = [500, 1500];
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// The library throws a Response to re-authenticate (401, or a redirect to its
+// bounce page) and also for any other HTTP error Shopify answers. Only re-auth
+// is the library's to handle; the rest is a failed call like any other (§15).
+const reauth = (err: unknown): err is Response =>
+  err instanceof Response &&
+  (err.status === 401 || (err.status >= 300 && err.status < 400));
+const failed = (err: unknown) =>
+  new AdminApiError(
+    "Shopify request failed",
+    err instanceof Response ? `HTTP ${err.status}` : String(err),
+  );
 
 export async function adminGraphql<T>(
   admin: Admin,
@@ -38,13 +49,12 @@ export async function adminGraphql<T>(
       if (body.errors || !body.data)
         throw new Error(`GraphQL errors: ${JSON.stringify(body.errors)}`);
     } catch (err) {
-      // A thrown Response is the library asking for re-auth: pass it through.
-      if (err instanceof Response) throw err;
+      if (reauth(err)) throw err;
       if (retry && attempt < BACKOFF_MS.length) {
         await sleep(BACKOFF_MS[attempt]);
         continue;
       }
-      throw new AdminApiError("Shopify request failed", String(err));
+      throw failed(err);
     }
     const userErrors = Object.values(body.data).flatMap((v) =>
       v &&
@@ -79,11 +89,11 @@ export async function canReadProducts(admin: Admin) {
     if (body.data?.products) return true;
     errors = body.errors;
   } catch (err) {
-    if (err instanceof Response) throw err;
+    if (reauth(err)) throw err;
     // The client throws its GraphqlQueryError with the GraphQL errors on it.
     errors = (err as { body?: { errors?: { graphQLErrors?: unknown } } })?.body
       ?.errors?.graphQLErrors;
-    if (!errors) throw new AdminApiError("Shopify request failed", String(err));
+    if (!errors) throw failed(err);
   }
   const denied = (e: GraphqlError) => e?.extensions?.code === "ACCESS_DENIED";
   if (Array.isArray(errors) && errors.some(denied)) return false;
