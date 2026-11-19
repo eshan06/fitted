@@ -95,7 +95,7 @@ Subscribed in `shopify.app.toml`, handled in `app/routes/webhooks.*` (§3):
 | `products/create`, `products/update`         | Resolve that product's chart (§6)                         | #74    |
 | `collections/update`, `collections/delete`   | A full resolve when a rule names the collection (§6)      | #74    |
 
-The template's demo `products/update` event subscription is removed in #13. Clearing the plan cache at uninstall arrives with the `Shop` table (#17). App Pricing sends no billing webhooks (§8).
+The template's demo `products/update` event subscription is removed in #13. Since #64, uninstalling deletes the shop's sessions and resets its cached plan to Free. App Pricing sends no billing webhooks (§8).
 
 ## 17. Hosting and environment
 

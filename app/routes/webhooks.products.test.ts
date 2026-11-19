@@ -313,7 +313,7 @@ describe("the collections/update and collections/delete webhook", () => {
           shop,
           kind: "resolve",
           status: "running",
-          progress: { merchant: false, pass: 1 },
+          progress: { merchant: false, pass: 1, attempt: 1 },
         }),
       });
       // It runs after the answer, over this store's empty catalog.

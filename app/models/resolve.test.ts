@@ -13,7 +13,26 @@ const h = vi.hoisted(() => {
   const jobs: Row[] = [];
   const shops = new Map<string, Row>();
   const db = {
+    // The job checks' own queries run on Postgres (db.server.test.ts).
+    $queryRaw: vi.fn(async (): Promise<Row[]> => []),
+    $executeRaw: vi.fn(async () => 0),
     job: {
+      updateMany: vi.fn(async () => ({ count: 0 })),
+      // A shop's first job of a kind in createdAt order, as resolveIfStale reads it.
+      findFirst: vi.fn(
+        async (q: {
+          where: Row;
+          orderBy: { createdAt: "asc" | "desc" };
+        }): Promise<Row | null> => {
+          const sign = q.orderBy.createdAt === "desc" ? -1 : 1;
+          const at = (j: Row) => +(j.createdAt as Date);
+          return (
+            jobs
+              .filter((j) => j.shop === q.where.shop && j.kind === q.where.kind)
+              .sort((a, b) => sign * (at(a) - at(b)))[0] ?? null
+          );
+        },
+      ),
       create: vi.fn(async ({ data }: { data: Row }) => {
         const now = new Date();
         const row = {
@@ -56,9 +75,12 @@ vi.mock("../db.server", () => ({ default: h.db }));
 vi.mock("../shopify.server", () => ({ unauthenticated: { admin: h.admin } }));
 import {
   type Rules,
+  checkJobs,
   collectionChanged,
   productChanged,
+  resolveIfStale,
   saveRules,
+  startJobChecks,
   startResolve,
 } from "./rules.server";
 
@@ -541,11 +563,11 @@ const jobs = () =>
     result,
     error,
   }));
-const done = (merchant: boolean, changed: number) => ({
+const done = (merchant: boolean, changed: number, attempt = 1) => ({
   shop: SHOP,
   kind: "resolve",
   status: "done",
-  progress: { merchant, pass: 2 },
+  progress: { merchant, pass: 2, attempt },
   result: { changed },
   error: null,
 });
@@ -835,6 +857,49 @@ describe("one resolve per shop at a time", () => {
 });
 
 describe("a failed resolve", () => {
+  it.each([
+    ["a clean merchant resolve", true, false],
+    ["a failed resolve that wasn't the merchant's", false, true],
+  ])(
+    "leaves a run asked for behind %s as it was asked",
+    async (_, merchant, fail) => {
+      const store = fakeStore();
+      store.setRules(rules());
+      store.hooks.afterRead = (read) => {
+        store.hooks.failRead =
+          fail && read === 1 ? "INTERNAL_SERVER_ERROR" : undefined;
+        if (read === 1) void startResolve(SHOP, false); // a collection webhook
+      };
+
+      await startResolve(SHOP, merchant);
+
+      expect(jobs()).toEqual([
+        fail
+          ? failed(merchant, "Shopify's bulk operation didn't finish")
+          : done(merchant, 34),
+        done(false, fail ? 34 : 0),
+      ]);
+      if (fail) expect(store.assigned()[product(3)]).toBe(BASIC);
+    },
+  );
+
+  it("passes the merchant's changes to the run asked for meanwhile, which is now the newest (§13)", async () => {
+    const store = fakeStore();
+    store.setRules(rules());
+    store.hooks.afterRead = (read) => {
+      store.hooks.failRead = read === 1 ? "INTERNAL_SERVER_ERROR" : undefined;
+      if (read === 1) void startResolve(SHOP, false); // a collection webhook
+    };
+
+    await startResolve(SHOP, true);
+
+    expect(jobs()).toEqual([
+      failed(true, "Shopify's bulk operation didn't finish"),
+      done(true, 34),
+    ]);
+    expect(store.assigned()).toEqual(expected());
+  });
+
   it("is recorded on the job and logged, leaving products as they were", async () => {
     const store = fakeStore();
     store.setRules(rules());
@@ -1389,5 +1454,138 @@ describe("a collection webhook", () => {
       detail: "TypeError: fetch failed",
     });
     expect(h.jobs).toEqual([]);
+  });
+});
+
+describe("the daily reconcile", () => {
+  it("starts a resolve, not the merchant's, when the shop's newest started over a day ago or none ran", async () => {
+    const store = fakeStore();
+    store.setRules(rules());
+    const day = 24 * 60 * 60_000;
+
+    await resolveIfStale(SHOP);
+    await vi.waitFor(() => expect(jobs()).toEqual([done(false, 34)]));
+
+    h.jobs[0].createdAt = new Date(Date.now() - day + 60_000);
+    await resolveIfStale(SHOP);
+    expect(h.jobs).toHaveLength(1);
+
+    h.jobs[0].createdAt = new Date(Date.now() - day - 1000);
+    await resolveIfStale(SHOP);
+    await vi.waitFor(() =>
+      expect(jobs()).toEqual([done(false, 34), done(false, 0)]),
+    );
+
+    // The newest counts, not an older one kept beside it.
+    await resolveIfStale(SHOP);
+    expect(h.jobs).toHaveLength(2);
+  });
+
+  it("never queues another resolve behind one that runs, even before its row is written", async () => {
+    const store = fakeStore();
+    store.setRules(rules());
+    let ask: Promise<void> | undefined;
+    store.hooks.afterRead = (read) => {
+      if (read !== 1) return;
+      h.db.job.findFirst.mockResolvedValueOnce(null);
+      ask = resolveIfStale(SHOP);
+    };
+
+    await startResolve(SHOP, false);
+    await ask;
+
+    expect(jobs()).toEqual([done(false, 34)]);
+  });
+
+  it("never throws, logging a database failure", async () => {
+    h.db.job.findFirst.mockRejectedValueOnce(new Error("database unavailable"));
+
+    await expect(resolveIfStale(SHOP)).resolves.toBeUndefined();
+
+    expect(JSON.parse(logs.at(-1)!)).toMatchObject({
+      level: "error",
+      msg: "Display rules check didn't start",
+      shop: SHOP,
+      error: expect.stringContaining("database unavailable"),
+    });
+    expect(h.jobs).toEqual([]);
+  });
+});
+
+describe("the job checks", () => {
+  it.each([true, false])(
+    "requeue a failed resolve as the same kind with its attempt counted (merchant: %s)",
+    async (merchant) => {
+      const store = fakeStore();
+      store.setRules(rules());
+      h.db.$queryRaw.mockResolvedValueOnce([
+        { shop: SHOP, progress: { merchant, pass: 1, attempt: 2 } },
+      ]);
+
+      await checkJobs();
+
+      expect(jobs()).toEqual([done(merchant, 34, 3)]);
+    },
+  );
+
+  it("count a resolve asked for while a requeue runs from one again", async () => {
+    const store = fakeStore();
+    store.setRules(rules());
+    h.db.$queryRaw.mockResolvedValueOnce([
+      { shop: SHOP, progress: { merchant: true, pass: 1, attempt: 2 } },
+    ]);
+    store.hooks.afterRead = (read) => {
+      if (read === 1) void startResolve(SHOP, true);
+    };
+
+    await checkJobs();
+
+    expect(jobs()).toEqual([done(true, 34, 3), done(true, 0)]);
+  });
+
+  it("leave a failed resolve alone while one runs here, so its count holds", async () => {
+    const store = fakeStore();
+    store.setRules(rules());
+    let check: Promise<void> | undefined;
+    store.hooks.afterRead = (read) => {
+      if (read !== 1) return;
+      h.db.$queryRaw.mockResolvedValueOnce([
+        { shop: SHOP, progress: { merchant: true, pass: 1, attempt: 1 } },
+      ]);
+      check = checkJobs();
+    };
+
+    await startResolve(SHOP, false);
+    await check;
+
+    expect(jobs()).toEqual([done(false, 34)]);
+  });
+
+  it("run at once and every minute, start once per process, and log a check that fails", async () => {
+    vi.useFakeTimers();
+    h.db.job.updateMany.mockRejectedValueOnce(
+      new Error("database unavailable"),
+    );
+    try {
+      startJobChecks();
+      startJobChecks(); // a dev reload of the module
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(h.db.job.updateMany).toHaveBeenCalledOnce();
+      expect(JSON.parse(logs.at(-1)!)).toMatchObject({
+        level: "error",
+        msg: "Job checks didn't run",
+        route: "jobs",
+        error: expect.stringContaining("database unavailable"),
+      });
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(h.db.job.updateMany).toHaveBeenCalledTimes(2);
+      expect(h.db.$executeRaw).toHaveBeenCalledOnce();
+      expect(h.db.$queryRaw).toHaveBeenCalledOnce();
+    } finally {
+      clearInterval(globalThis.fittedJobChecks);
+      globalThis.fittedJobChecks = undefined;
+    }
   });
 });

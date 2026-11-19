@@ -663,7 +663,8 @@ async function resolvePass(
 }
 
 // One resolve per shop at a time; asking while one runs makes it run once
-// more when it finishes, as a merchant resolve if any ask was one.
+// more when it finishes, as a merchant resolve if any ask was one or the run
+// before it was a merchant resolve that failed.
 // ponytail: in-process, so one app instance (§17); a queue before running two.
 type Queued = {
   again: boolean | null;
@@ -679,10 +680,10 @@ const resolves = new Map<string, Queued>();
  * Applies the rules to every product (§6). `merchant`: a rules save or a chart
  * published, unpublished or deleted, which also applies `auto: false` charts.
  * `shop` must come from an authenticated session or a verified webhook, and an
- * action checks canReadProducts first (§13). Never rejects: a failure is
- * logged and recorded on the job.
+ * action checks canReadProducts first (§13). `attempt` counts the job checks'
+ * requeues. Never rejects: a failure is logged and recorded on the job.
  */
-export function startResolve(shop: string, merchant: boolean) {
+export function startResolve(shop: string, merchant: boolean, attempt = 1) {
   const running = resolves.get(shop);
   if (running) {
     running.again = merchant || running.again === true;
@@ -698,8 +699,11 @@ export function startResolve(shop: string, merchant: boolean) {
     let clean = false;
     try {
       for (let next: boolean | null = merchant; next !== null;) {
-        clean = await runResolve(shop, next);
-        next = entry.again;
+        clean = await runResolve(shop, next, attempt);
+        attempt = 1;
+        // The next run is the newest, which the job checks requeue (§13), so
+        // a failed merchant resolve's changes go with it.
+        next = entry.again === null ? null : entry.again || (!clean && next);
         entry.again = null;
       }
     } finally {
@@ -719,7 +723,12 @@ export function startResolve(shop: string, merchant: boolean) {
   return entry.done;
 }
 
-const log = (level: string, msg: string, shop: string, extra: object) =>
+const log = (
+  level: string,
+  msg: string,
+  shop: string | undefined,
+  extra: object,
+) =>
   console.log(JSON.stringify({ level, msg, shop, route: "resolve", ...extra }));
 
 // The offline session, loaded for every call so a long job outlives its token (§3).
@@ -729,10 +738,10 @@ const offlineAdmin = (shop: string): Admin => ({
 });
 
 // Whether the job finished.
-async function runResolve(shop: string, merchant: boolean) {
+async function runResolve(shop: string, merchant: boolean, attempt: number) {
   let id: string | undefined;
   try {
-    const progress = { merchant, pass: 1 };
+    const progress = { merchant, pass: 1, attempt };
     const data = { id: randomUUID(), shop, kind: "resolve", progress };
     ({ id } = await db.job.create({ data: { ...data, status: "running" } }));
     const admin = offlineAdmin(shop);
@@ -741,7 +750,7 @@ async function runResolve(shop: string, merchant: boolean) {
       const touch = () =>
         db.job.update({
           where: { id, shop },
-          data: { progress: { merchant, pass } },
+          data: { progress: { merchant, pass, attempt } },
         });
       await touch();
       const r = await resolvePass(admin, shop, merchant, touch);
@@ -909,4 +918,100 @@ export async function collectionChanged(shop: string, collectionId: string) {
     )
       void startResolve(shop, false);
   });
+}
+
+const DAY_MS = 24 * 60 * 60_000;
+
+/**
+ * For Home's loader (§6): a resolve when the shop's newest started over a day
+ * ago, which catches webhooks Shopify never delivered. A failing shop starts
+ * again the next day, not on every load. `shop` must come from the
+ * authenticated session. Never rejects.
+ */
+export async function resolveIfStale(shop: string) {
+  try {
+    const last = await db.job.findFirst({
+      where: { shop, kind: "resolve" },
+      orderBy: { createdAt: "desc" },
+      select: { createdAt: true },
+    });
+    // A running resolve is fresh, even before its row is written.
+    if (resolves.has(shop)) return;
+    if (!last || Date.now() - last.createdAt.getTime() > DAY_MS)
+      void startResolve(shop, false);
+  } catch (err) {
+    log("error", "Display rules check didn't start", shop, {
+      error: String(err),
+    });
+  }
+}
+
+const STALL_MS = 10 * 60_000;
+// A failed resolve is tried this many times in all, so a lasting failure stops.
+const ATTEMPTS = 3;
+
+/**
+ * The job checks (§13): a job with no progress for 10 minutes fails, finished
+ * jobs over 7 days old go except the newest of each shop and kind, and an
+ * installed shop's failed resolve goes again as the same kind of resolve.
+ * Settles when the resolves it requeued do; the next check never waits on it.
+ */
+export async function checkJobs() {
+  // A job the old instance still runs during a deploy keeps touching its row.
+  await db.job.updateMany({
+    where: {
+      status: "running",
+      updatedAt: { lt: new Date(Date.now() - STALL_MS) },
+    },
+    data: { status: "failed", error: "The job stopped before it finished" },
+  });
+  // Prisma writes these columns in UTC. The newest finished job per shop and
+  // kind stays: Home's setup guide reads it.
+  await db.$executeRaw`
+    DELETE FROM "Job" j
+    WHERE j.status <> 'running'
+      AND j."createdAt" < (now() AT TIME ZONE 'UTC') - interval '7 days'
+      AND EXISTS (SELECT 1 FROM "Job" n
+        WHERE n.shop = j.shop AND n.kind = j.kind AND n.status <> 'running'
+          AND n."createdAt" > j."createdAt")`;
+  // Each shop's newest resolve, when it failed. Only shops with an offline
+  // session, so a resolve never brings back rows shop/redact deleted.
+  const failed = await db.$queryRaw<{ shop: string; progress: unknown }[]>`
+    SELECT j.shop, j.progress FROM "Job" j
+    WHERE j.kind = 'resolve' AND j.status = 'failed'
+      AND NOT EXISTS (SELECT 1 FROM "Job" n
+        WHERE n.shop = j.shop AND n.kind = 'resolve' AND n."createdAt" > j."createdAt")
+      AND EXISTS (SELECT 1 FROM "Session" s WHERE s.shop = j.shop AND NOT s."isOnline")`;
+  await Promise.all(
+    failed.map(({ shop, progress: p }) => {
+      const attempt = isObj(p) && typeof p.attempt === "number" ? p.attempt : 1;
+      const merchant = isObj(p) && p.merchant === true;
+      // One still running here supersedes it; asking it to run again would
+      // restart the count.
+      return (
+        attempt < ATTEMPTS &&
+        !resolves.has(shop) &&
+        startResolve(shop, merchant, attempt + 1)
+      );
+    }),
+  );
+}
+
+declare global {
+  // eslint-disable-next-line no-var
+  var fittedJobChecks: ReturnType<typeof setInterval> | undefined;
+}
+
+/** Runs checkJobs at server start and every minute, once per process though dev reloads modules. */
+export function startJobChecks() {
+  if (globalThis.fittedJobChecks) return;
+  const run = () =>
+    checkJobs().catch((err) =>
+      log("error", "Job checks didn't run", undefined, {
+        route: "jobs",
+        error: String(err),
+      }),
+    );
+  void run();
+  globalThis.fittedJobChecks = setInterval(run, 60_000).unref();
 }
