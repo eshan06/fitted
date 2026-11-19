@@ -125,6 +125,16 @@ describe("app/uninstalled webhook", () => {
       deleteSessions,
     );
     expect(db.shop.updateMany).toHaveBeenCalledExactlyOnceWith(resetPlanToFree);
+    // One §15 log line, naming only the shop.
+    const logged = vi.mocked(console.log).mock.calls.map(([line]) => line);
+    expect(logged.map((line) => JSON.parse(line))).toEqual([
+      {
+        level: "info",
+        msg: "App uninstalled: sessions deleted, plan reset to Free",
+        shop,
+        route: "webhooks/app/uninstalled",
+      },
+    ]);
   });
 
   it("deletes the sessions when Shopify refuses to refresh the stored token, as it does after an uninstall", async () => {
