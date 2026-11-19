@@ -25,14 +25,14 @@ const h = vi.hoisted(() => {
         jobs.push(row);
         return { ...row };
       }),
-      update: vi.fn(
-        async ({ where, data }: { where: { id: string }; data: Row }) => {
-          const row = jobs.find((j) => j.id === where.id);
-          if (!row) throw new Error("Record to update not found");
-          Object.assign(row, data, { updatedAt: new Date() });
-          return { ...row };
-        },
-      ),
+      update: vi.fn(async ({ where, data }: { where: Row; data: Row }) => {
+        const row = jobs.find((j) =>
+          Object.entries(where).every(([k, v]) => j[k] === v),
+        );
+        if (!row) throw new Error("Record to update not found");
+        Object.assign(row, data, { updatedAt: new Date() });
+        return { ...row };
+      }),
     },
     shop: {
       upsert: vi.fn(
@@ -149,11 +149,13 @@ const fetchFake = vi.fn(async (url: string, init?: RequestInit) => {
 
 function fakeStore(shop = SHOP) {
   const products = new Map(catalog());
-  const charts = new Map<string, { status: string }>([
+  // updatedAt defaults to the order charts were added, oldest first.
+  const charts = new Map<string, { status: string; updatedAt?: number }>([
     [SWIM, { status: "ACTIVE" }],
     [SLIM, { status: "ACTIVE" }],
     [BASIC, { status: "ACTIVE" }],
   ]);
+  let chartPages = 0;
   let stored: { value: string; digest: string } | null = null;
   const ops = new Map<
     string,
@@ -168,6 +170,8 @@ function fakeStore(shop = SHOP) {
     refuse?: (ownerId: string, write: number) => boolean;
     // Mutation answers in input order without __lineNumber.
     unnumbered?: boolean;
+    // After each page of the chart list, numbered across the job.
+    afterChartPage?: (page: number) => void;
   } = {};
   let reads = 0;
   let writes = 0;
@@ -281,13 +285,27 @@ function fakeStore(shop = SHOP) {
           });
         }
         case "ChartList": {
-          // Fitted's charts, 50 a page, as chart.server.ts reads them.
+          // Fitted's charts, 50 a page, by id or newest saved first. Like
+          // Shopify's, a cursor names the last chart sent, so a chart saved
+          // between pages can move ahead of it in an updated_at listing.
           expect(query).toContain('metaobjects(type: "$app:chart", first: 50');
-          const all = [...charts];
-          const from = v.after ? Number(v.after) : 0;
-          const nodes = all.slice(from, from + 50).map(([id, c]) => ({
-            id,
-            handle: `c-${id.slice(-10).padStart(10, "0")}`,
+          expect(v.reverse).toBe(v.sortKey !== "id");
+          const rank = (id: string, at: number) => {
+            const n = Number(id.split("/").pop());
+            return v.sortKey === "id" ? [n, 0] : [-at, -n];
+          };
+          const before = (a: number[], b: number[]) =>
+            a[0] < b[0] || (a[0] === b[0] && a[1] < b[1]);
+          const sorted = [...charts]
+            .map(([id, c], i) => ({ id, ...c, r: rank(id, c.updatedAt ?? i) }))
+            .sort((a, b) => (before(a.r, b.r) ? -1 : 1));
+          const cursor = v.after ? (JSON.parse(v.after) as number[]) : null;
+          const rest = sorted.filter((c) => !cursor || before(cursor, c.r));
+          const page = rest.slice(0, 50);
+          const more = rest.length > 50;
+          const nodes = page.map((c) => ({
+            id: c.id,
+            handle: `c-${c.id.slice(-10).padStart(10, "0")}`,
             type: TYPE,
             updatedAt: "2026-11-19T00:00:00Z",
             capabilities: { publishable: { status: c.status } },
@@ -297,15 +315,13 @@ function fakeStore(shop = SHOP) {
             measureImage: null,
             importNote: null,
           }));
-          const more = from + 50 < all.length;
+          hooks.afterChartPage?.(++chartPages);
+          const endCursor = more ? JSON.stringify(page.at(-1)!.r) : null;
           return json({
             data: {
               metaobjects: {
                 nodes,
-                pageInfo: {
-                  hasNextPage: more,
-                  endCursor: more ? String(from + 50) : null,
-                },
+                pageInfo: { hasNextPage: more, endCursor },
               },
             },
           });
@@ -451,11 +467,18 @@ describe("a full resolve", () => {
   it("moves every product onto its chart after a rules save, in one bulk mutation of 25 a line", async () => {
     const store = fakeStore();
     await saveRules(store.admin, rules(), null, "pro");
+    const saveCalls = store.calls.length;
 
     await startResolve(SHOP, true);
 
     expect(store.assigned()).toEqual(expected());
     expect(jobs()).toEqual([done(true, 34)]);
+    // The offline session is loaded for every call, and each job write names the shop.
+    expect(h.admin).toHaveBeenCalledTimes(store.calls.length - saveCalls);
+    expect(h.admin.mock.calls.every(([s]) => s === SHOP)).toBe(true);
+    expect(
+      h.db.job.update.mock.calls.every(([q]) => q.where.shop === SHOP),
+    ).toBe(true);
     // One staged file of two lines (25 and 9) in the first pass; the second pass finds nothing to change.
     expect(store.writes()).toBe(1);
     const staged = [...files.entries()].find(([k]) => k.startsWith("tmp/"));
@@ -488,9 +511,15 @@ describe("a full resolve", () => {
     await startResolve(SHOP, true);
     store.charts.set(BASIC, { status: "DRAFT" });
     store.charts.set(SWIM, { status: "DRAFT" });
+    h.db.job.update.mockClear();
 
     await startResolve(SHOP, true);
 
+    // A touch as each pass starts and after each batch of removals.
+    const touches = h.db.job.update.mock.calls.filter(
+      ([q]) => !("status" in q.data),
+    );
+    expect(touches).toHaveLength(2 + 2);
     // Product 1 had nothing after swimwear; the store default's 31 go too.
     expect(store.assigned()).toEqual({
       ...Object.fromEntries(
@@ -531,12 +560,34 @@ describe("a full resolve", () => {
 
     // The 63rd chart, on the second page, outranks the store default.
     expect(new Set(Object.values(store.assigned()))).toEqual(new Set([LATE]));
-    expect(store.named("ChartList").map((c) => c.variables.after)).toEqual([
-      null,
-      "50",
-      null,
-      "50",
-    ]);
+    // Two pages in each pass.
+    expect(
+      store.named("ChartList").map((c) => c.variables.after === null),
+    ).toEqual([true, false, true, false]);
+  });
+
+  it("never misses an Active chart saved while the chart list is read", async () => {
+    const store = fakeStore();
+    const LATE = chart(160);
+    for (let n = 101; n < 160; n++)
+      store.charts.set(chart(n), { status: "DRAFT" });
+    // Saved longest ago, so it sits on the last page of an updated_at listing.
+    store.charts.set(LATE, { status: "ACTIVE", updatedAt: -1 });
+    const all = { match: [{ field: "all" as const }], exclude: [], auto: true };
+    store.setRules({
+      v: 1,
+      order: [LATE, BASIC],
+      charts: { [LATE]: all, [BASIC]: all },
+    });
+    // The merchant saves it between the second pass's two pages.
+    store.hooks.afterChartPage = (page) => {
+      if (page === 3) store.charts.get(LATE)!.updatedAt = 1000;
+    };
+
+    await startResolve(SHOP, true);
+
+    expect(new Set(Object.values(store.assigned()))).toEqual(new Set([LATE]));
+    expect(jobs()).toEqual([done(true, 35)]);
   });
 
   it("writes nothing when every product already shows its chart", async () => {
@@ -726,15 +777,30 @@ describe("a failed resolve", () => {
   });
 
   it("redoes in the second pass the lines Shopify refused in the first", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const start = new Date("2026-11-19T06:00:00Z");
+    vi.setSystemTime(start);
     const store = fakeStore();
     store.setRules(rules());
     store.hooks.refuse = (owner, write) => owner === product(7) && write === 1;
+    store.hooks.afterRead = (read) =>
+      vi.setSystemTime(start.getTime() + read * 60_000);
 
     await startResolve(SHOP, true);
 
     expect(store.assigned()).toEqual(expected());
     expect(store.writes()).toBe(2);
     expect(jobs()).toEqual([done(true, 34)]);
+    // Shopify's reason is logged; only the second pass, which set everything, records its start.
+    expect(JSON.parse(logs[0])).toMatchObject({
+      level: "warn",
+      msg: "Shopify refused the chart for 25 products",
+      detail: expect.stringContaining(`Owner ${product(7)} can't be set`),
+    });
+    expect(h.db.shop.upsert).toHaveBeenCalledOnce();
+    expect(h.shops.get(SHOP)?.resolvedAt).toEqual(
+      new Date(start.getTime() + 60_000),
+    );
   });
 
   it("fails when Shopify still refuses charts in the second pass", async () => {
@@ -749,6 +815,32 @@ describe("a failed resolve", () => {
       failed(true, "Shopify refused the chart for 25 products"),
     ]);
     expect(store.assigned()[product(7)]).toBeUndefined();
+    expect(JSON.parse(logs.at(-1)!).detail).toContain(
+      `Owner ${product(7)} can't be set`,
+    );
+    expect(h.shops.has(SHOP)).toBe(false);
+  });
+
+  it("finishes with nothing to do when the store has no products", async () => {
+    const store = fakeStore();
+    store.setRules(rules());
+    store.products.clear();
+
+    await startResolve(SHOP, true);
+
+    expect(jobs()).toEqual([done(true, 0)]);
+    expect(store.named("ResolveWrite")).toEqual([]);
+  });
+
+  it("records an unexpected failure as one, without its text", async () => {
+    const store = fakeStore();
+    store.setRules(rules());
+    h.db.shop.upsert.mockRejectedValueOnce(new Error("lost connection"));
+
+    await startResolve(SHOP, true);
+
+    expect(jobs()).toEqual([failed(true, "Something went wrong")]);
+    expect(JSON.parse(logs.at(-1)!).error).toContain("lost connection");
   });
 
   it("fails when a bulk file doesn't transfer, never logging its signed URL", async () => {

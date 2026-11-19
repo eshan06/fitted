@@ -8,7 +8,7 @@ import db from "../db.server";
 import { unauthenticated } from "../shopify.server";
 import { type Admin, AdminApiError, adminGraphql } from "./admin.server";
 import { type Plan, canUseRuleField } from "./billing.server";
-import { listCharts } from "./chart.server";
+import { chartPages } from "./chart.server";
 
 export type Condition =
   | { field: "all" } // the "Store default: Everything else" entry
@@ -399,17 +399,13 @@ const values = (m: Metafield) =>
         )
       : [m.value];
 
-// Fitted's Active charts: a ranked id that isn't one (deleted, or another
-// type) never matches.
-// ponytail: pages the chart list, content and all; a status-only query if stores keep hundreds of charts.
+// Fitted's Active charts, paged in id order so a chart saved meanwhile isn't
+// skipped. A ranked id that isn't one (deleted, or another type) never matches.
+// ponytail: reads every chart's content too; a status-only query if stores keep hundreds of charts.
 async function activeCharts(admin: Admin) {
   const active = new Set<string>();
-  let after: string | undefined;
-  do {
-    const page = await listCharts(admin, after);
-    for (const c of page.charts) if (c.status === "ACTIVE") active.add(c.id);
-    after = page.next ?? undefined;
-  } while (after);
+  for await (const charts of chartPages(admin))
+    for (const c of charts) if (c.status === "ACTIVE") active.add(c.id);
   return active;
 }
 
@@ -494,7 +490,7 @@ async function setCharts(
   sets: Record<string, string>[],
   touch: Touch,
 ) {
-  if (!sets.length) return 0;
+  if (!sets.length) return { refused: 0, detail: "" };
   const lines: string[] = [];
   for (let i = 0; i < sets.length; i += 25)
     lines.push(JSON.stringify({ metafields: sets.slice(i, i + 25) }));
@@ -534,18 +530,20 @@ async function setCharts(
     },
     touch,
   );
-  // An answer per line, numbered by __lineNumber; only a clean one counts as set.
-  const set = new Set(
-    answers.flatMap((a, i) =>
-      !a.errors && a.data?.metafieldsSet?.userErrors.length === 0
-        ? [a.__lineNumber ?? i]
-        : [],
-    ),
-  );
-  return lines.reduce(
+  // An answer per line, numbered by __lineNumber; only a clean one counts as
+  // set. The first refusal's text goes to the log (§15).
+  const set = new Set<number>();
+  let detail = "";
+  answers.forEach((a, i) => {
+    if (!a.errors && a.data?.metafieldsSet?.userErrors.length === 0)
+      set.add(a.__lineNumber ?? i);
+    else detail ||= JSON.stringify(a.errors ?? a.data).slice(0, 500);
+  });
+  const refused = lines.reduce(
     (n, _, i) => (set.has(i) ? n : n + Math.min(25, sets.length - i * 25)),
     0,
   );
+  return { refused, detail };
 }
 
 // metafieldsDelete answers a metafield that's already gone with null, so a
@@ -606,12 +604,6 @@ async function resolvePass(
     touch,
     true,
   );
-  // Every product was read after startedAt, so a webhook for an older edit can skip (§6).
-  await db.shop.upsert({
-    where: { shop },
-    create: { shop, plan: "free", resolvedAt: startedAt }, // billing's first check sets the plan
-    update: { resolvedAt: startedAt },
-  });
   // Each collection is its own line naming its product.
   const collections: Record<string, string[]> = {};
   for (const l of lines)
@@ -637,9 +629,17 @@ async function resolvePass(
     if (target) sets.push({ ownerId: id, ...CHART, type, value: target });
     else removals.push(id);
   }
-  const refused = await setCharts(admin, sets, touch);
+  const { refused, detail } = await setCharts(admin, sets, touch);
   await removeCharts(admin, removals, touch);
-  return { changed: sets.length - refused + removals.length, refused };
+  // It read every product after startedAt and applied all it found, so a
+  // webhook for an older edit can skip (§6).
+  if (!refused)
+    await db.shop.upsert({
+      where: { shop },
+      create: { shop, plan: "free", resolvedAt: startedAt }, // billing's first check sets the plan
+      update: { resolvedAt: startedAt },
+    });
+  return { changed: sets.length - refused + removals.length, refused, detail };
 }
 
 // One resolve per shop at a time; asking while one runs makes it run once
@@ -651,7 +651,9 @@ const resolves = new Map<string, Queued>();
 /**
  * Applies the rules to every product (§6). `merchant`: a rules save or a chart
  * published, unpublished or deleted, which also applies `auto: false` charts.
- * Never rejects: a failure is logged and recorded on the job.
+ * `shop` must come from an authenticated session or a verified webhook, and an
+ * action checks canReadProducts first (§13). Never rejects: a failure is
+ * logged and recorded on the job.
  */
 export function startResolve(shop: string, merchant: boolean) {
   const running = resolves.get(shop);
@@ -690,25 +692,25 @@ async function runResolve(shop: string, merchant: boolean) {
         (await unauthenticated.admin(shop)).admin.graphql(query, options),
     };
     let changed = 0;
-    let refused = 0;
     for (const pass of [1, 2]) {
       const touch = () =>
         db.job.update({
-          where: { id },
+          where: { id, shop },
           data: { progress: { merchant, pass } },
         });
       await touch();
-      const done = await resolvePass(admin, shop, merchant, touch);
-      changed += done.changed;
-      refused = done.refused;
+      const r = await resolvePass(admin, shop, merchant, touch);
+      changed += r.changed;
+      // The second pass redoes what the first couldn't set; refusals in it fail the job.
+      const msg = `Shopify refused the chart for ${r.refused} products`;
+      if (r.refused && pass === 2) throw new AdminApiError(msg, r.detail);
+      if (r.refused) log("warn", msg, shop, { detail: r.detail });
     }
-    if (refused)
-      throw new AdminApiError(
-        `Shopify refused the chart for ${refused} products`,
-        "metafieldsSet userErrors in the second pass",
-      );
     const result = { changed };
-    await db.job.update({ where: { id }, data: { status: "done", result } });
+    await db.job.update({
+      where: { id, shop },
+      data: { status: "done", result },
+    });
     log("info", "Display rules applied", shop, result);
   } catch (err) {
     const known =
@@ -720,7 +722,7 @@ async function runResolve(shop: string, merchant: boolean) {
     const error = known ? err.message : "Something went wrong";
     if (id)
       await db.job
-        .update({ where: { id }, data: { status: "failed", error } })
+        .update({ where: { id, shop }, data: { status: "failed", error } })
         .catch((e) =>
           log("error", "Resolve failure not recorded", shop, {
             error: String(e),
