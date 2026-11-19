@@ -1,5 +1,4 @@
-// The size charts list (ARCHITECTURE §2, §5, §8): every chart with its status
-// and product count, search, and Free's limit.
+// The size charts list (ARCHITECTURE §2, §5, §8): status, product counts, search, Free's limit.
 import { Suspense, useState } from "react";
 import type { LoaderFunctionArgs } from "react-router";
 import { Await, useLoaderData, useRevalidator } from "react-router";
@@ -181,7 +180,7 @@ function LoadError() {
   );
 }
 
-// The canvas's status mark: a solid line for Active, dashed for Draft.
+// The canvas's status mark (solid Active, dashed Draft) and empty-state logo.
 const Status = ({ status }: { status: ChartStatus }) => {
   const on = status === "ACTIVE";
   const color = on ? "#2448A8" : "#3D4043";
@@ -200,15 +199,13 @@ const Status = ({ status }: { status: ChartStatus }) => {
   );
 };
 
-// The canvas's empty-state mark: [path, color, width, dashes].
 const LOGO = [
   ["M10 40V10h30", "#161616", "1.2", "3 2"],
   ["M17 40V17h23", "#2448A8", "2.6", ""],
   ["M24 40V24h16", "#161616", "1.2", ""],
   ["M31 40V31h9", "#161616", "1.2", "1 2"],
 ];
-// React 18 never hears a Polaris field's `input` (it doesn't bubble), so
-// listen on the element itself; assigning `oninput` replaces the last render's.
+// React 18 never hears Polaris fields' non-bubbling `input`; `oninput` replaces the last render's.
 const listen = (set: (v: string) => void) => (el: HTMLElement | null) => {
   if (el) el.oninput = () => set((el as HTMLInputElement).value ?? "");
 };
