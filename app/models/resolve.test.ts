@@ -560,10 +560,13 @@ describe("a full resolve", () => {
 
     // The 63rd chart, on the second page, outranks the store default.
     expect(new Set(Object.values(store.assigned()))).toEqual(new Set([LATE]));
-    // Two pages in each pass.
-    expect(
-      store.named("ChartList").map((c) => c.variables.after === null),
-    ).toEqual([true, false, true, false]);
+    // Two pages in each pass, the second after chart 147, the 50th by id.
+    expect(store.named("ChartList").map((c) => c.variables.after)).toEqual([
+      null,
+      "[147,0]",
+      null,
+      "[147,0]",
+    ]);
   });
 
   it("never misses an Active chart saved while the chart list is read", async () => {
@@ -691,7 +694,7 @@ describe("a full resolve", () => {
 
     expect(store.assigned()[product(5)]).toBe(BASIC);
     expect(jobs()).toEqual([done(true, 35)]);
-    // Each pass records its start once it has read every product.
+    // Each pass records its start once it has applied every change it found.
     expect(
       h.db.shop.upsert.mock.calls.map(([q]) => q.update.resolvedAt),
     ).toEqual([start, new Date(start.getTime() + 60_000)]);

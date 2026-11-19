@@ -537,7 +537,7 @@ async function setCharts(
   answers.forEach((a, i) => {
     if (!a.errors && a.data?.metafieldsSet?.userErrors.length === 0)
       set.add(a.__lineNumber ?? i);
-    else detail ||= JSON.stringify(a.errors ?? a.data).slice(0, 500);
+    else detail ||= JSON.stringify(a).slice(0, 500);
   });
   const refused = lines.reduce(
     (n, _, i) => (set.has(i) ? n : n + Math.min(25, sets.length - i * 25)),
