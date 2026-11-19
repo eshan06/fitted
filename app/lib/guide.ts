@@ -157,12 +157,13 @@ const shown = (u: Unit, conv: boolean, sys: Sys): Unit =>
   !conv ? u : u === "in" || u === "cm" ? sys : sys === "in" ? "lb" : "kg";
 const norm = (s: string) => s.trim().toLowerCase();
 const SYSTEMS = ["US", "UK", "EU", "AU"];
-const EU =
-  "AT BE BG CY CZ DE DK EE ES FI FR GR HR HU IE IT LT LU LV MT NL PL PT RO SE SI SK".split(
-    " ",
-  );
-const systemOf = (country: string) =>
-  country === "GB" ? "UK" : EU.includes(country) ? "EU" : country;
+// The size system most shoppers in a country wear, beyond US and AU.
+const WEARS = new Map(
+  "GB:UK IE:UK MT:UK CY:UK NZ:AU CA:US AT:EU BE:EU BG:EU CZ:EU DE:EU DK:EU EE:EU ES:EU FI:EU FR:EU GR:EU HR:EU HU:EU IT:EU LT:EU LU:EU LV:EU NL:EU PL:EU PT:EU RO:EU SE:EU SI:EU SK:EU"
+    .split(" ")
+    .map((p) => p.split(":") as [string, string]),
+);
+const systemOf = (country: string) => WEARS.get(country) ?? country;
 const FORM = 'form[action*="/cart/add"]';
 
 /**
@@ -289,7 +290,7 @@ export function render(root: HTMLElement, g: Guide) {
         across.set(el, keys.slice(i, i + span.rows).map(norm));
         return el;
       });
-      return h("tr", { "data-size": key || undefined }, ...tds);
+      return h("tr", { "data-fitted-size": key || undefined }, ...tds);
     });
     const title = word(`${tb.id}.title`);
     return [
@@ -347,13 +348,13 @@ export function render(root: HTMLElement, g: Guide) {
   // Lights up every row of the size, in every table, and fills the footer.
   const choose = (size: string) => {
     pick = labels.has(size) ? size : "";
-    part.querySelectorAll<HTMLElement>("tr[data-size]").forEach((tr) => {
-      const on = tr.dataset.size === pick;
+    part.querySelectorAll<HTMLElement>("tr[data-fitted-size]").forEach((tr) => {
+      const on = tr.dataset.fittedSize === pick;
       tr.classList.toggle("fitted-on", on);
       tr.querySelector(".fitted-pick")?.setAttribute("aria-pressed", `${on}`);
     });
     across.forEach((ks, el) =>
-      el.classList.toggle("fitted-lit", ks.includes(pick)),
+      el.classList.toggle("fitted-lit", !!pick && ks.includes(pick)),
     );
     const label = labels.get(pick) ?? "";
     foot.hidden = !pick;
@@ -401,8 +402,8 @@ export function render(root: HTMLElement, g: Guide) {
     h(
       "div",
       { class: "fitted-bar" },
-      regions.length > 0 && seg("system", "region", regions, region),
-      toggle && seg("units", "sys", ["in", "cm"], sys, t),
+      regions.length > 0 && seg("system", "fitted-region", regions, region),
+      toggle && seg("units", "fitted-sys", ["in", "cm"], sys, t),
     );
 
   // Switches redraw only the tables, so focus stays on the switch pressed.
@@ -411,18 +412,18 @@ export function render(root: HTMLElement, g: Guide) {
       const el = (e.target as Element).closest<HTMLElement>(sel);
       return el && root.contains(el) ? el : null;
     };
-    const opt = hit("[data-region], [data-sys]");
+    const opt = hit("[data-fitted-region], [data-fitted-sys]");
     if (opt) {
-      region = opt.dataset.region ?? region;
-      sys = (opt.dataset.sys as Sys | undefined) ?? sys;
+      region = opt.dataset.fittedRegion ?? region;
+      sys = (opt.dataset.fittedSys as Sys | undefined) ?? sys;
       opt.parentElement
         ?.querySelectorAll("button")
         .forEach((b) => b.setAttribute("aria-pressed", `${b === opt}`));
       draw();
     } else if (hit("[data-fitted-select]")) apply();
     else {
-      const tr = hit("tr[data-size]");
-      if (tr?.dataset.size) choose(tr.dataset.size);
+      const tr = hit("tr[data-fitted-size]");
+      if (tr?.dataset.fittedSize) choose(tr.dataset.fittedSize);
     }
   });
   root.replaceChildren(...[bar, part, foot].filter((k) => !!k));

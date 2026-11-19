@@ -188,6 +188,13 @@ describe("loader", () => {
     expect(body.querySelector('[role="status"]')).toBeNull();
   });
 
+  it("hands the guide the extension's words", async () => {
+    const { body } = await mount();
+    const words = ["chart", "system", "units", "in", "cm", "lb", "kg"];
+    for (const k of [...words, "choose", "selected", "select"])
+      expect(body.dataset[`t${k[0].toUpperCase()}${k.slice(1)}`]).toBe(en[k]);
+  });
+
   it("names the one table in the subtitle", async () => {
     const { dialog } = await mount();
     expect(dialog.querySelector(".fitted-sub")?.textContent).toBe(

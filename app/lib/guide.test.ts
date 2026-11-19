@@ -78,7 +78,8 @@ const json = (
   return data({ chart: c, ...over });
 };
 const withChart = (edit: (c: Fixture) => void) => json(edit);
-// The extension's words, as the block passes them on .fitted-body.
+// The extension's words, as the block passes them on .fitted-body, under any
+// a test sets on root first.
 const show = (
   json: string,
   root: HTMLElement = document.createElement("div"),
@@ -86,7 +87,7 @@ const show = (
   const g = parseGuide(json);
   if (!g) throw new Error("expected a guide");
   for (const [k, v] of Object.entries<string>(en))
-    root.dataset[`t${k[0].toUpperCase()}${k.slice(1)}`] = v;
+    root.dataset[`t${k[0].toUpperCase()}${k.slice(1)}`] ??= v;
   return { root, sync: render(root, g) };
 };
 const draw = (json: string) => show(json).root;
@@ -285,6 +286,14 @@ describe("parseGuide", () => {
       ),
     ],
     [
+      "a merge of a column the table doesn't have",
+      withChart(
+        (c) =>
+          (c.tables[0].merges = [{ row: "s", col: "chest", rows: 1, cols: 2 }]),
+      ),
+    ],
+    ["a wrap that isn't a list", withChart((c) => (c.tables[0].wrap = "fit"))],
+    [
       "a merge that isn't an object",
       withChart((c) => (c.tables[0].merges = ["s"])),
     ],
@@ -455,6 +464,14 @@ describe("the in/cm toggle", () => {
     ]);
   });
 
+  it("names units with the extension's words", () => {
+    const root = document.createElement("div");
+    Object.assign(root.dataset, { tIn: "pulg.", tCm: "cm.", tLb: "libras" });
+    show(on(), root);
+    expect(texts(units(root)!, "button")).toEqual(["pulg.", "cm."]);
+    expect(texts(root, "thead th")[3]).toBe("Weight (libras)");
+  });
+
   it("shows unless settings turn it off", () => {
     expect(units(draw(data({ units: null })))).not.toBeNull();
     expect(units(draw(data()))).toBeNull();
@@ -517,8 +534,11 @@ describe("the US/UK/EU/AU switch", () => {
     ]);
     expect(country(draw(regional({ country: "DE" })))).toBe("EU");
     expect(country(draw(regional({ country: "US" })))).toBe("US");
+    expect(country(draw(regional({ country: "IE" })))).toBe("UK");
     // Elsewhere, the table's first country column.
-    expect(country(draw(regional({ country: "CA" })))).toBe("US");
+    expect(country(draw(regional({ country: "JP" })))).toBe("US");
+    expect(country(draw(regional({ country: "NZ" })))).toBe("US");
+    expect(country(draw(regional({ country: "toString" })))).toBe("US");
   });
 
   it("switches the column and keeps focus on the switch", () => {
@@ -563,6 +583,20 @@ describe("the US/UK/EU/AU switch", () => {
     const root = draw(data());
     expect(group(root)).toBeNull();
     expect(country(root)).toBe("US");
+  });
+
+  it("leaves out a merge inside the country columns it hides", () => {
+    const c = JSON.parse(regional()).chart;
+    c.tables[0].merges = [{ row: "s", col: "uk", rows: 1, cols: 2 }];
+    const root = draw(data({ chart: c }));
+    expect(texts(root, "tbody tr:first-child > *").slice(0, 3)).toEqual([
+      "S",
+      "4–6",
+      "33–34",
+    ]);
+    [...group(root)!.querySelectorAll("button")][1].click();
+    expect(root.querySelector("tbody td")?.textContent).toBe("8–10");
+    expect(root.querySelector("tbody td")?.getAttribute("colspan")).toBe("1");
   });
 
   it("shows a merge across country columns in whichever is shown", () => {
@@ -637,17 +671,31 @@ describe("merged and wrapping cells", () => {
     );
   });
 
+  it("leaves a merged cell dark while no size it spans is picked", () => {
+    const root = draw(
+      withChart((c) => {
+        delete c.words["t1.m.size"];
+        c.tables[0].merges = [{ row: "s", col: "fit", rows: 2, cols: 1 }];
+      }),
+    );
+    expect(root.querySelector(".fitted-lit")).toBeNull();
+  });
+
   it("lights up a cell merged across rows for any size it spans", () => {
     const root = draw(
       withChart((c) => {
+        c.tables[0].rows.push({ id: "l", cells: {} });
+        c.words["t1.l.size"] = "L";
         c.tables[0].merges = [{ row: "s", col: "fit", rows: 2, cols: 1 }];
       }),
     );
     const fit = root.querySelector("tbody td:last-child")!;
-    root.querySelector<HTMLElement>("tbody tr:last-child th button")!.click();
+    root.querySelector<HTMLElement>("tbody tr:nth-child(2) th button")!.click();
     expect(fit.classList.contains("fitted-lit")).toBe(true);
     root.querySelector<HTMLElement>("tbody tr:first-child th button")!.click();
     expect(fit.classList.contains("fitted-lit")).toBe(true);
+    root.querySelector<HTMLElement>("tbody tr:last-child th button")!.click();
+    expect(fit.classList.contains("fitted-lit")).toBe(false);
   });
 
   it("lets the columns in wrap wrap", () => {
@@ -771,6 +819,14 @@ describe("the product form", () => {
     expect(events).toEqual(["input", "change"]);
   });
 
+  it("skips a select's disabled option", () => {
+    const { root, go } = page(
+      '<select name="options[Size]"><option selected>S</option><option disabled>M</option></select>',
+    );
+    root.querySelector<HTMLElement>("tbody tr:last-child td")!.click();
+    expect(go.hidden).toBe(true);
+  });
+
   it("offers Select only for a size the form has", () => {
     const { root, go } = page(radio("S", "checked") + radio("M", "disabled"));
     expect([picked(root), go.hidden]).toEqual([["S"], false]);
@@ -790,6 +846,19 @@ describe("the product form", () => {
     document.querySelector<HTMLInputElement>('[value="M"]')!.checked = false;
     sync();
     expect(picked(root)).toEqual(["M"]);
+  });
+
+  it("never looks past its own section for a product form", () => {
+    document.body.innerHTML = `<div class="shopify-section">${radio("S", "checked")}${radio("M")}<form action="/cart/add"></form></div><div class="shopify-section"><div class="fitted-guide"><dialog><div class="fitted-body"></div></dialog></div></div>`;
+    const { root } = show(
+      data(),
+      document.querySelector<HTMLElement>(".fitted-body")!,
+    );
+    expect(picked(root)).toEqual([]);
+    root.querySelector<HTMLElement>("tbody td")!.click();
+    expect(
+      root.querySelector<HTMLElement>("[data-fitted-select]")!.hidden,
+    ).toBe(true);
   });
 
   it("ignores controls outside the block's section, variant ids and quantities", () => {
