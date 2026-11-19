@@ -720,6 +720,11 @@ describe("chart reads and writes", () => {
     const admin = { graphql } as unknown as Admin;
     expect(await countActiveCharts(admin)).toBe(3);
     expect(graphql).toHaveBeenCalledTimes(2);
+    // In id order, so a chart saved meanwhile is neither skipped nor counted twice.
+    expect(graphql.mock.calls.map(([, o]) => o.variables)).toEqual([
+      { after: null, sortKey: "id", reverse: false },
+      { after: "p2", sortKey: "id", reverse: false },
+    ]);
   });
 
   it("passes the list cursor through and reports the next one", async () => {
@@ -736,7 +741,7 @@ describe("chart reads and writes", () => {
     const admin = { graphql } as unknown as Admin;
     expect((await listCharts(admin, "prev")).next).toBe("abc");
     expect(graphql).toHaveBeenCalledWith(expect.any(String), {
-      variables: { after: "prev" },
+      variables: { after: "prev", sortKey: "updated_at", reverse: true },
     });
   });
 
