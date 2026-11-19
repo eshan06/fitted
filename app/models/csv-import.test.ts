@@ -210,6 +210,40 @@ describe("export then import", () => {
     expect(await drafts(csv)).toEqual([ready(tops()), ready(rings())]);
   });
 
+  it("brings back every kind of column", async () => {
+    const chart = {
+      name: "Every column",
+      template: "blank",
+      content: {
+        v: 1,
+        unit: "cm",
+        roundTo: 1,
+        tables: [
+          {
+            id: "a",
+            columns: [
+              { id: "s", kind: "size" },
+              { id: "eu", kind: "country", country: "EU" },
+              { id: "au", kind: "country", country: "AU" },
+              { id: "kg", kind: "measure", unit: "kg", convert: true },
+              { id: "inch", kind: "measure", unit: "in", convert: false },
+              { id: "t", kind: "text" },
+            ],
+            rows: [{ id: "r", cells: { kg: [60], inch: [1, 2] } }],
+          },
+        ],
+        measure: { steps: [] },
+        words: {
+          "a.r.s": "S",
+          "a.r.eu": "36",
+          "a.r.au": "8",
+          "a.r.t": "Loose",
+        },
+      },
+    };
+    expect(await drafts(exportCsv([stored(chart)]))).toEqual([ready(chart)]);
+  });
+
   // Every piece of text a spreadsheet trips on, in a seeded random order.
   it("brings any text back exactly", async () => {
     let seed = 7;
@@ -260,6 +294,11 @@ describe("export then import", () => {
 });
 
 describe("importing an edited export", () => {
+  it("reads a file saved with old Mac line ends", async () => {
+    const csv = exportCsv([stored(rings())]).replaceAll("\r\n", "\r");
+    expect(await drafts(csv)).toEqual([ready(rings())]);
+  });
+
   it("reads an export a spreadsheet saved again", async () => {
     // No BOM, LF line ends, and every row padded to the same width.
     const rows = exportCsv([stored(rings())])
@@ -384,6 +423,50 @@ describe("row-level errors", () => {
     expect(
       await reasonOf(fitted(...top, `Columns,,s:size,${wide}`, "Row,a,S")),
     ).toBe("Row 4: A table needs 1 to 20 columns.");
+    expect(await reasonOf(fitted(...top, "Row,a"))).toBe(
+      "Row 3: A table needs 1 to 20 columns.",
+    );
+  });
+
+  it("reports text past a row's last cell instead of dropping it", async () => {
+    const csv = fitted(
+      "Chart,Shirts,tops,in,1,extra",
+      "Table,t1,Tops,,,extra",
+      "Columns,,s:size",
+      "Row,a,S",
+      "Text,tips,Measure over light clothing, not a coat",
+    );
+    expect(await reasonOf(csv)).toBe(
+      "Row 2: This row has more cells than Fitted reads; " +
+        "Row 3: This row has more cells than Fitted reads; " +
+        "Row 6: This row has more cells than Fitted reads.",
+    );
+  });
+
+  it("reads Settings once, and each table's Columns row once", async () => {
+    const settings = 'Settings,"{""measure"":{""steps"":[]}}"';
+    const csv = fitted(
+      "Chart,Shirts,tops,in,1",
+      settings,
+      settings,
+      "Table,t1",
+      "Columns,,s:size",
+      "Columns,,s:size",
+      "Row,a,S",
+    );
+    expect(await reasonOf(csv)).toBe(
+      "Row 4: Fitted doesn't expect this row here; " +
+        "Row 7: Fitted doesn't expect this row here.",
+    );
+  });
+
+  it("names a chart without a name Untitled chart", async () => {
+    const csv = fitted("Chart", "Table,t1", "Columns,,s:size", "Row,a,S");
+    const [draft] = await drafts(csv);
+    expect(draft).toMatchObject({
+      name: "Untitled chart",
+      status: "unreadable",
+    });
   });
 
   it("marks only the bad chart in a file of several", async () => {
@@ -524,6 +607,19 @@ describe("file-level errors", () => {
     ) +
     after;
   const chart = ["Chart,A,tops,in,1", "Table,t1", "Columns,,s:size,c:in"];
+  // Charts whose Settings hold unknown keys full of dots, so each error that
+  // validateChart reports has a long path to place.
+  const keys = Array.from(
+    { length: 6 },
+    (_, i) => `""${i}${".".repeat(16000)}"":0`,
+  );
+  const dotted = [
+    "",
+    ...chart.slice(0, 1),
+    `Settings,"{""measure"":{${keys.join(",")}}}"`,
+    ...chart.slice(1),
+    "Row,a,S",
+  ].join("\n");
   it.each([
     ["a long run of digits", fitted(...chart, "Row,a,S,"), "1", "x"],
     ["spaces before a quote", fitted(...chart, "Row,a,"), " ", '"S"'],
@@ -533,6 +629,8 @@ describe("file-level errors", () => {
     ["thousands of tiny charts", fitted(), "\nChart", ""],
     ["one chart of junk rows", fitted(...chart), "\nx", ""],
     ["settings nested deep", fitted(...chart, 'Settings,"'), "[", '"'],
+    ["settings keys full of dots", fitted(), dotted, ""],
+    ["one wide Wrap row", fitted(...chart, "Row,a,S", "Wrap"), ",s", ""],
   ])("reads %s in linear time", async (_, before, unit, after) => {
     const csv = fill(before, unit, after);
     const start = Date.now();
@@ -567,13 +665,15 @@ describe("file-level errors", () => {
 
   it("refuses files it can't place", async () => {
     expect(await fileError("Fitted size charts,2\nChart,A")).toBe(
-      "Row 1: Fitted can't read this version of its CSV.",
+      "Row 1: Fitted can't read this CSV version.",
     );
     expect(await fileError(fitted("", "Table,t1"))).toBe(
       "Row 3: Put a Chart row above this row.",
     );
-    expect(await fileError("Size,Chest\nS,34")).toBe(
-      "This isn't a CSV that Fitted exported, and Fitted can't read other spreadsheets yet.",
-    );
+    const other =
+      "Fitted can only read its own CSV export for now, with commas between cells.";
+    expect(await fileError("Size,Chest\nS,34")).toBe(other);
+    // Text that merely starts with PK is no zip.
+    expect(await fileError("PKG,Chest\nS,34")).toBe(other);
   });
 });

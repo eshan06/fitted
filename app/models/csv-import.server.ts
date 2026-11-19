@@ -112,12 +112,10 @@ export async function importCsv(
   const { line, cells } = first.value;
   if (cells[0] !== MARK)
     throw new CsvFileError(
-      "This isn't a CSV that Fitted exported, and Fitted can't read other spreadsheets yet.",
+      "Fitted can only read its own CSV export for now, with commas between cells.",
     );
   if (cells[1] !== "1")
-    throw new CsvFileError(
-      `Row ${line}: Fitted can't read this version of its CSV.`,
-    );
+    throw new CsvFileError(`Row ${line}: Fitted can't read this CSV version.`);
   // A chart at a time, so only one chart's rows are held.
   const drafts: ChartDraft[] = [];
   let chart: Rec[] | undefined;
@@ -159,7 +157,10 @@ async function readText(body: ReadableStream<Uint8Array> | null) {
   }
   const bytes = Buffer.concat(chunks);
   // No magic number marks a CSV: refuse NUL bytes (binary, UTF-16), zips, PDFs.
-  if (bytes.includes(0) || /^(PK|%PDF)/.test(bytes.toString("latin1", 0, 4)))
+  if (
+    bytes.includes(0) ||
+    /^(PK\x03\x04|%PDF)/.test(bytes.toString("latin1", 0, 4))
+  )
     throw new CsvFileError(SAVE_AS);
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes); // drops a BOM
@@ -241,10 +242,13 @@ class Draft {
       if (!(err instanceof ChartValidationError)) throw err;
       for (const [path, text] of Object.entries(err.fieldErrors)) {
         if (this.reported.has(path)) continue;
-        let p = path;
-        while (p && !this.at.has(p))
-          p = p.slice(0, Math.max(0, p.lastIndexOf(".")));
-        this.fail(this.at.get(p) ?? this.head, text);
+        // A place is the path or one of its first six segments: walking up a
+        // long Settings key one dot at a time would cost its length squared.
+        const parts = path.split(".", 6);
+        let at = this.at.get(path);
+        for (let n = parts.length; !at && n; n--)
+          at = this.at.get(parts.slice(0, n).join("."));
+        this.fail(at ?? this.head, text);
       }
     }
     if (!chart || this.errors.length)
@@ -353,16 +357,15 @@ function table(d: Draft, ti: number, g: Grid): Table {
       cells: Object.fromEntries(cells[ri]),
     })),
   };
-  g.merges.forEach((m, mi) => d.at.set(`${p}.merges.${mi}`, m));
   if (g.merges.length)
-    out.merges = g.merges.map(({ cells: [, row = "", col = "", r, c] }) => ({
-      row,
-      col,
-      rows: Number(r),
-      cols: Number(c),
-    }));
-  const wrap =
-    g.wrap?.cells.slice(1).filter((w): w is string => w !== undefined) ?? [];
+    out.merges = g.merges.map((m, mi) => {
+      d.at.set(`${p}.merges.${mi}`, m);
+      const [, row = "", col = "", rows, cols] = m.cells;
+      return { row, col, rows: Number(rows), cols: Number(cols) };
+    });
+  // validateChart allows 20, so the rest of a long Wrap row isn't kept.
+  const ids = g.wrap?.cells.slice(1, 22) ?? [];
+  const wrap = ids.filter((w): w is string => w !== undefined);
   wrap.forEach((_, wi) => d.at.set(`${p}.wrap.${wi}`, g.wrap!));
   if (wrap.length) out.wrap = wrap;
   return out;
@@ -371,25 +374,27 @@ function table(d: Draft, ti: number, g: Grid): Table {
 // Rows a table holds once, by the Grid key each fills.
 const KEY = { Columns: "types", Labels: "labels", Wrap: "wrap" } as const;
 const SETTINGS = ["measure", "videoUrl", "fit"];
+// The cells each row kind holds, so text typed past them is reported, not lost.
+const FIELDS = new Map(
+  Object.entries({ Chart: 5, Settings: 2, Table: 5, Text: 3, Merge: 5 }),
+);
+const TOO_LARGE = "The chart is too large; split it into smaller charts";
+const BROKEN =
+  "This chart had errors in Fitted when the file was made, so the file has only its name";
 
 // One chart of Fitted's layout: its Chart row, then the rows that belong to it.
 function fittedChart([head, ...rest]: Rec[]): ChartDraft {
   const name = head.cells[1] ?? "";
   const d = new Draft(head);
   const broken = rest.find((r) => r.cells[0] === "Error");
-  if (rest.length === MAX_ROWS)
-    d.fail(
-      rest[MAX_ROWS - 1],
-      "The chart is too large; split it into smaller charts",
-    );
-  else if (broken)
-    d.fail(
-      broken,
-      "This chart had errors in Fitted when the file was made, so the file has only its name",
-    );
+  if (rest.length === MAX_ROWS) d.fail(rest[MAX_ROWS - 1], TOO_LARGE);
+  else if (broken) d.fail(broken, BROKEN);
   if (d.errors.length) return unreadable(name, d.errors);
   const grids: Grid[] = [];
   let settings: Record<string, unknown> | undefined;
+  for (const r of [head, ...rest])
+    if (r.cells.slice(FIELDS.get(r.cells[0] ?? "") ?? Infinity).some(Boolean))
+      d.fail(r, "This row has more cells than Fitted reads");
   for (const r of rest) {
     const [kind = "", b, c] = r.cells;
     const t = grids.at(-1);
@@ -401,19 +406,16 @@ function fittedChart([head, ...rest]: Rec[]): ChartDraft {
           d.word(`${b ?? ""}.${k}`, r.cells[i + 2], r),
         );
     } else if (kind === "Settings" && !settings) {
-      let s: unknown;
+      let s: Record<string, unknown> | undefined;
       try {
-        s = JSON.parse(b ?? "");
+        // Text that starts with { parses to an object or throws.
+        if (b?.startsWith("{")) s = JSON.parse(b);
       } catch {
         // reported below
       }
-      const ok =
-        typeof s === "object" &&
-        s !== null &&
-        !Array.isArray(s) &&
-        Object.keys(s).every((k) => SETTINGS.includes(k));
+      const ok = s && Object.keys(s).every((k) => SETTINGS.includes(k));
       if (!ok) d.fail(r, "This Settings row isn't in the form Fitted writes");
-      settings = ok ? (s as Record<string, unknown>) : {};
+      settings = ok ? s : {};
       SETTINGS.forEach((k) => d.at.set(`content.${k}`, r));
     } else if (kind === "Text") d.word(b ?? "", c, r);
     else if (t && kind === "Row") t.rows.push(r);
@@ -428,12 +430,10 @@ function fittedChart([head, ...rest]: Rec[]): ChartDraft {
           : "Fitted doesn't expect this row here",
       );
   }
-  if (grids.length < 1 || grids.length > 4)
-    d.fail(
-      grids[4]?.at ?? head,
-      "A chart needs 1 to 4 tables",
-      "content.tables",
-    );
+  if (grids.length < 1 || grids.length > 4) {
+    d.fail(grids[4]?.at ?? head, "A chart needs 1 to 4 tables");
+    d.reported.add("content.tables");
+  }
   const tables = grids.slice(0, 4).map((g, ti) => table(d, ti, g));
   const { measure = { steps: [] }, videoUrl, fit } = settings ?? {};
   return d.finish({
