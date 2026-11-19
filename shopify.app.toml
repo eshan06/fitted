@@ -20,6 +20,46 @@ api_version = "2027-01"
   uri = "/webhooks/app/scopes_update"
   topics = [ "app/scopes_update" ]
 
+# Size charts: ARCHITECTURE §5. Read and written only through app/models/chart.server.ts.
+[metaobjects.app.chart]
+name = "Size chart"
+display_name_field = "name"
+access.admin = "merchant_read"
+access.storefront = "public_read"
+capabilities.publishable = true
+capabilities.translatable = true
+
+[metaobjects.app.chart.fields.name]
+name = "Name"
+type = "single_line_text_field"
+required = true
+validations.max = 100
+
+[metaobjects.app.chart.fields.template]
+name = "Template"
+type = "single_line_text_field"
+required = true
+validations.choices = [ "blank", "tops", "bottoms", "dresses", "bras_swimwear", "shoes", "kids", "headwear", "rings", "bracelets", "necklaces" ]
+
+[metaobjects.app.chart.fields.content]
+name = "Content"
+type = "json"
+required = true
+
+[metaobjects.app.chart.fields.strings]
+name = "Words"
+type = "json"
+required = true
+
+[metaobjects.app.chart.fields.measure_image]
+name = "How to measure image"
+type = "file_reference"
+validations.file_type_options = [ "Image" ]
+
+[metaobjects.app.chart.fields.import_note]
+name = "Import note"
+type = "single_line_text_field"
+
 [auth]
 redirect_urls = [ "https://example.com/api/auth" ]
 
