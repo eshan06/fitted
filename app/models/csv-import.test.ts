@@ -572,6 +572,17 @@ describe("file-level errors", () => {
     expect(cancel).toHaveBeenCalled();
   });
 
+  // One app instance serves every shop (§17), so a hostile file must not stall it.
+  it.each([
+    ["a long run of digits", `Size,Chest\nS,${"1".repeat(400_000)}x`],
+    ["a label padded with spaces", `Size,a${" ".repeat(400_000)}b\nS,1`],
+    ["a cell full of quotes", `Size,Chest\nS,x${'"'.repeat(400_000)}`],
+  ])("reads %s in linear time", async (_, csv) => {
+    const start = Date.now();
+    await drafts(csv);
+    expect(Date.now() - start).toBeLessThan(1000);
+  });
+
   it("accepts a file of exactly 1 MB", async () => {
     const csv = `Size\n${"x".repeat(CSV_MAX_BYTES - 5)}`;
     await expect(drafts(csv)).resolves.toHaveLength(1);
