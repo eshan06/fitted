@@ -102,3 +102,18 @@ export async function canReadProducts(admin: Admin) {
     JSON.stringify(errors ?? null),
   );
 }
+
+/** Shopify's plan selection page for this app (§8); open it with target="_top". */
+export async function pricingPlansUrl(admin: Admin, shop: string) {
+  const data = await adminGraphql<{
+    currentAppInstallation: { app: { handle: string } };
+  }>(
+    admin,
+    `#graphql
+    query FittedAppHandle { currentAppInstallation { app { handle } } }`,
+    {},
+    { retry: true },
+  );
+  const store = shop.replace(/\.myshopify\.com$/, "");
+  return `https://admin.shopify.com/store/${store}/charges/${data.currentAppInstallation.app.handle}/pricing_plans`;
+}

@@ -4,6 +4,7 @@ import {
   AdminApiError,
   adminGraphql,
   canReadProducts,
+  pricingPlansUrl,
 } from "./admin.server";
 
 const ok = (body: unknown) => new Response(JSON.stringify(body));
@@ -197,5 +198,18 @@ describe("canReadProducts", () => {
     }
     const reauth = new Response(null, { status: 401 });
     await expect(canReadProducts(adminWith(reauth).admin)).rejects.toBe(reauth);
+  });
+});
+
+describe("pricingPlansUrl", () => {
+  it("links to Shopify's plan page for this store and the app's own handle", async () => {
+    const { admin } = adminWith({
+      data: { currentAppInstallation: { app: { handle: "fitted-2" } } },
+    });
+    await expect(
+      pricingPlansUrl(admin, "fitted-test.myshopify.com"),
+    ).resolves.toBe(
+      "https://admin.shopify.com/store/fitted-test/charges/fitted-2/pricing_plans",
+    );
   });
 });

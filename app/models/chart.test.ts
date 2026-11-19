@@ -5,6 +5,7 @@ import {
   ChartNotFoundError,
   ChartValidationError,
   countActiveCharts,
+  countChartProducts,
   createChart,
   deleteChart,
   getChart,
@@ -757,6 +758,41 @@ describe("chart reads and writes", () => {
     expect(graphql).toHaveBeenCalledWith(expect.any(String), {
       variables: { after: "prev", sortKey: "updated_at", reverse: true },
     });
+  });
+
+  it("counts each chart's products by its metafield, 50 charts a call", async () => {
+    const graphql = vi.fn(async (_q: string, { variables }) =>
+      Response.json({
+        data: Object.fromEntries(
+          Object.keys(variables).map((k) => [
+            `c${k.slice(1)}`,
+            k === "q0"
+              ? { count: 10000, precision: "AT_LEAST" }
+              : { count: Number(k.slice(1)), precision: "EXACT" },
+          ]),
+        ),
+      }),
+    );
+    const admin = { graphql } as unknown as Admin;
+    const ids = Array.from(
+      { length: 51 },
+      (_, i) => `gid://shopify/Metaobject/${i + 1}`,
+    );
+    const counts = await countChartProducts(admin, ids);
+    expect(graphql).toHaveBeenCalledTimes(2);
+    const [[query, { variables }], [, second]] = graphql.mock.calls;
+    expect(query).toContain("c49: productsCount(query: $q49)");
+    expect(variables.q1).toBe(
+      'metafields.$app.chart:"gid://shopify/Metaobject/2"',
+    );
+    expect(second.variables).toEqual({
+      q0: 'metafields.$app.chart:"gid://shopify/Metaobject/51"',
+    });
+    expect(counts[ids[0]]).toEqual({ count: 10000, atLeast: true });
+    expect(counts[ids[1]]).toEqual({ count: 1, atLeast: false });
+    expect(counts[ids[50]]).toEqual({ count: 10000, atLeast: true });
+    expect(await countChartProducts(admin, [])).toEqual({});
+    expect(graphql).toHaveBeenCalledTimes(2);
   });
 
   it("treats malformed, missing and other-type ids as not found", async () => {
