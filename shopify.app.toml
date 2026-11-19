@@ -88,6 +88,20 @@ description = "How the size guide looks and where it shows. Change it in Fitted.
 type = "json"
 access.admin = "merchant_read"
 
+# Display rules and the chart each product shows: ARCHITECTURE §6. Written only by app/models/rules.server.ts.
+[shop.metafields.app.rules]
+name = "Fitted display rules"
+description = "Which products show which size chart. Change them in Fitted."
+type = "json"
+access.admin = "merchant_read"
+
+[product.metafields.app.chart]
+name = "Size chart"
+description = "The size chart Fitted shows on this product. Change it with Fitted's display rules."
+type = "metaobject_reference<$app:chart>"
+access.admin = "merchant_read"
+capabilities.admin_filterable = true
+
 [auth]
 redirect_urls = [ "https://example.com/api/auth" ]
 
