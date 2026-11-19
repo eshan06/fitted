@@ -8,6 +8,7 @@
 }
 .editor a {
   color: #2448a8;
+  text-decoration: none;
   font-weight: 600;
 }
 .editor h1 {

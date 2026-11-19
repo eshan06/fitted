@@ -230,7 +230,7 @@ export function Editor(props: {
                 </button>
               ))}
             </div>
-            <s-button-group>
+            <s-stack direction="inline" gap="small-200">
               <s-button
                 disabled={t.rows.length >= model.MAX_ROWS}
                 onClick={() => setDraft(model.addSize(draft))}
@@ -243,7 +243,7 @@ export function Editor(props: {
               >
                 Add measurement
               </s-button>
-            </s-button-group>
+            </s-stack>
           </div>
           {t.rows.length ? (
             <ChartTable
