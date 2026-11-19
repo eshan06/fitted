@@ -173,7 +173,10 @@ describe("shop/redact webhook", () => {
     expect((await deliver(shopRedact, "shop/redact")).status).toBe(200);
     expect((await deliver(shopRedact, "shop/redact")).status).toBe(200);
     for (const [table, { deleteMany }] of Object.entries(db)) {
-      expect(deleteMany, table).toHaveBeenCalledTimes(2);
+      expect(deleteMany.mock.calls, table).toEqual([
+        [{ where: { shop } }],
+        [{ where: { shop } }],
+      ]);
     }
   });
 
