@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { type Admin, AdminApiError, adminGraphql } from "./admin.server";
+import {
+  type Admin,
+  AdminApiError,
+  adminGraphql,
+  canReadProducts,
+} from "./admin.server";
 
 const ok = (body: unknown) => new Response(JSON.stringify(body));
 // An admin whose graphql answers each call with the next step in turn.
@@ -124,5 +129,48 @@ describe("adminGraphql", () => {
     const { admin } = adminWith(new Error("secret internal detail"));
     const r = await run(adminGraphql(admin, "q"));
     expect((r.error as Error).message).not.toContain("secret");
+  });
+});
+
+describe("canReadProducts", () => {
+  const denied = {
+    message: "Access denied for products field.",
+    extensions: { code: "ACCESS_DENIED" },
+  };
+  // How the Shopify client throws a response with GraphQL errors.
+  const queryError = (...graphQLErrors: unknown[]) =>
+    Object.assign(new Error("GraphQL Client: An error occurred"), {
+      body: { errors: { graphQLErrors } },
+    });
+
+  it("is true when the session's token reads products", async () => {
+    const { admin, graphql } = adminWith({ data: { products: { nodes: [] } } });
+    expect(await canReadProducts(admin)).toBe(true);
+    expect(graphql).toHaveBeenCalledWith(
+      expect.stringContaining("products(first: 1)"),
+    );
+  });
+
+  it("is false when Shopify denies the staff member's token products", async () => {
+    expect(await canReadProducts(adminWith(queryError(denied)).admin)).toBe(
+      false,
+    );
+    const body = { data: null, errors: [denied] };
+    expect(await canReadProducts(adminWith(body).admin)).toBe(false);
+  });
+
+  it("throws an AdminApiError when the check itself fails, and passes re-auth on", async () => {
+    const other = { message: "Internal", extensions: { code: "INTERNAL" } };
+    for (const step of [
+      new Error("socket hang up"),
+      queryError(other),
+      { errors: [other] },
+      {},
+    ])
+      await expect(canReadProducts(adminWith(step).admin)).rejects.toThrow(
+        AdminApiError,
+      );
+    const reauth = new Response(null, { status: 401 });
+    await expect(canReadProducts(adminWith(reauth).admin)).rejects.toBe(reauth);
   });
 });

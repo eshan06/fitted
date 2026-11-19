@@ -39,6 +39,7 @@ describe.runIf(hasDatabase)("the app database on Postgres", () => {
   afterAll(async () => {
     await prisma.session.deleteMany({ where: { shop: { in: shops } } });
     await prisma.shop.deleteMany({ where: { shop: { in: shops } } });
+    await prisma.job.deleteMany({ where: { shop: { in: shops } } });
     await prisma.$disconnect();
   });
 
@@ -151,5 +152,41 @@ describe.runIf(hasDatabase)("the app database on Postgres", () => {
       planOnStore: "standard",
       resolvedAt: null,
     });
+  });
+
+  it("keeps each shop's jobs with their progress, and shop/redact deletes only that shop's", async () => {
+    const shop = newShop();
+    const otherShop = newShop();
+    // The writes app/models/rules.server.ts makes as a resolve runs.
+    for (const forShop of [shop, otherShop])
+      await prisma.job.create({
+        data: {
+          id: randomUUID(),
+          shop: forShop,
+          kind: "resolve",
+          status: "running",
+          progress: { merchant: true, pass: 1 },
+        },
+      });
+    const [job] = await prisma.job.findMany({ where: { shop } });
+    const finished = await prisma.job.update({
+      where: { id: job.id },
+      data: { status: "done", result: { changed: 34 } },
+    });
+
+    expect(finished).toMatchObject({
+      kind: "resolve",
+      status: "done",
+      progress: { merchant: true, pass: 1 },
+      result: { changed: 34 },
+      error: null,
+    });
+    expect(finished.updatedAt >= job.updatedAt).toBe(true);
+
+    // The query shop/redact runs.
+    await prisma.job.deleteMany({ where: { shop } });
+
+    expect(await prisma.job.count({ where: { shop } })).toBe(0);
+    expect(await prisma.job.count({ where: { shop: otherShop } })).toBe(1);
   });
 });

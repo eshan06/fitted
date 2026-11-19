@@ -1,7 +1,11 @@
 // Display rules (ARCHITECTURE §6): which chart each product shows. The rules
 // live in the `$app.rules` shop metafield, written whole; resolveChart is the
-// pure function whose answer the resolver writes to each product's `$app.chart`.
+// pure function whose answer the resolver writes to each product's `$app.chart`,
+// for the whole catalog in a resolve job (§13).
+import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
+import db from "../db.server";
+import { unauthenticated } from "../shopify.server";
 import { type Admin, AdminApiError, adminGraphql } from "./admin.server";
 import { type Plan, canUseRuleField } from "./billing.server";
 
@@ -352,5 +356,445 @@ export async function saveRules(
     const now = await getRules(admin);
     if (now.digest && isDeepStrictEqual(now.rules, rules)) return now.digest;
     throw new RulesConflictError("The rules changed since they loaded");
+  }
+}
+
+// Full resolves (§6, §13). A pass reads every product's facts and current
+// chart with a bulk query, sets the charts that change with one bulk mutation
+// (25 metafields a line) and removes the ones nothing matches 25 at a time. A
+// job runs two passes: the second catches products edited during the first,
+// and redoes what Shopify refused in it.
+type Touch = () => Promise<unknown>;
+type Line = Record<string, unknown> & { __parentId?: string };
+type ProductLine = Line & {
+  id: string;
+  tags: string[];
+  productType: string;
+  vendor: string;
+  chart: { value: string } | null;
+};
+type Metafield = { type: string; value: string } | null;
+type Assignment = {
+  ownerId: string;
+  namespace: "$app";
+  key: "chart";
+  type: "metaobject_reference";
+  value: string;
+};
+
+const conditions = (rules: Rules) =>
+  Object.values(rules.charts).flatMap((r) => [...r.match, ...r.exclude]);
+
+// Compared metafields come back as m0, m1, ...; their keys passed KEY, so they
+// are safe in query text. Each collection costs a result line, so only rules
+// that name one read them.
+function productQuery(rules: Rules, keys: string[]) {
+  const fields = keys.map((k, i) => {
+    const [namespace, key] = k.split(".");
+    return `m${i}: metafield(namespace: "${namespace}", key: "${key}") { type value }`;
+  });
+  if (conditions(rules).some((c) => c.field === "collection"))
+    fields.push("collections { edges { node { id } } }");
+  return `{ products { edges { node { id tags productType vendor chart: metafield(namespace: "$app", key: "chart") { value } ${fields.join(" ")} } } } }`;
+}
+
+function toProduct(n: ProductLine, keys: string[], collectionIds: string[]) {
+  const values = (m: Metafield) =>
+    !m
+      ? []
+      : m.type.startsWith("list.")
+        ? (JSON.parse(m.value) as unknown[]).map((v) =>
+            typeof v === "string" ? v : JSON.stringify(v),
+          )
+        : [m.value];
+  const metafields = Object.fromEntries(
+    keys.map((k, i) => [k, values(n[`m${i}`] as Metafield)]),
+  );
+  const { id, tags, productType, vendor } = n;
+  return { id, tags, productType, vendor, collectionIds, metafields };
+}
+
+// The ranked charts that are Active charts of Fitted's type. Without the
+// definition nothing is a chart, so it stops instead of unassigning everything.
+async function activeCharts(admin: Admin, order: string[]) {
+  type Node = {
+    id?: string;
+    type?: string;
+    capabilities?: { publishable: { status: string } | null };
+  } | null;
+  const data = await adminGraphql<{
+    nodes: Node[];
+    metaobjectDefinitionByType: { type: string } | null;
+  }>(
+    admin,
+    `#graphql
+    query ResolveCharts($ids: [ID!]!) {
+      nodes(ids: $ids) {
+        ... on Metaobject { id type capabilities { publishable { status } } }
+      }
+      metaobjectDefinitionByType(type: "$app:chart") { type }
+    }`,
+    { ids: order },
+    { retry: true },
+  );
+  const type = data.metaobjectDefinitionByType?.type;
+  if (!type)
+    throw new AdminApiError(
+      "Fitted's size chart definition is missing",
+      "metaobjectDefinitionByType returned null",
+    );
+  return new Set(
+    data.nodes.flatMap((n) =>
+      n?.id &&
+      n.type === type &&
+      n.capabilities?.publishable?.status === "ACTIVE"
+        ? [n.id]
+        : [],
+    ),
+  );
+}
+
+const POLL_MS = 3000;
+// ponytail: waits at most 2 hours per bulk operation, plenty for six-figure catalogs.
+const WAIT_MS = 2 * 60 * 60_000;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const parseLines = <T>(text: string): T[] =>
+  text
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l));
+
+// Bulk files sit at signed URLs, so errors and logs never carry the URL: a
+// failed fetch is reported by its error's name alone.
+async function transfer(url: string, init?: RequestInit) {
+  let res: Response;
+  try {
+    res = await fetch(url, { ...init, signal: AbortSignal.timeout(300_000) });
+  } catch (err) {
+    const name = err instanceof Error ? err.name : "Error";
+    throw new AdminApiError("Shopify's bulk file didn't transfer", name);
+  }
+  if (!res.ok)
+    throw new AdminApiError(
+      "Shopify's bulk file didn't transfer",
+      `HTTP ${res.status}`,
+    );
+  return res.text();
+}
+
+// Polls a bulk operation, touching the job so it never looks stalled (§13);
+// returns the result file's URL, null when there are no lines.
+async function finished(admin: Admin, id: string, touch: Touch) {
+  const end = Date.now() + WAIT_MS;
+  for (;;) {
+    const { bulkOperation: op } = await adminGraphql<{
+      bulkOperation: {
+        status: string;
+        errorCode: string | null;
+        url: string | null;
+      } | null;
+    }>(
+      admin,
+      `#graphql
+      query ResolveWait($id: ID!) {
+        bulkOperation(id: $id) { status errorCode url }
+      }`,
+      { id },
+      { retry: true },
+    );
+    if (op?.status === "COMPLETED") return op.url;
+    if (op?.status !== "CREATED" && op?.status !== "RUNNING")
+      throw new AdminApiError(
+        "Shopify's bulk operation didn't finish",
+        `${op?.status ?? "MISSING"} ${op?.errorCode ?? ""}`,
+      );
+    if (Date.now() > end)
+      throw new AdminApiError(
+        "Shopify's bulk operation took too long",
+        `${op.status} after ${WAIT_MS} ms`,
+      );
+    await touch();
+    await sleep(POLL_MS);
+  }
+}
+
+// ponytail: holds the whole result file in memory, fine to about 100,000
+// products; stream its lines past that.
+async function readProducts(admin: Admin, query: string, touch: Touch) {
+  // Starting a read twice only leaves a spare read running, so it may retry.
+  const { bulkOperationRunQuery: run } = await adminGraphql<{
+    bulkOperationRunQuery: { bulkOperation: { id: string } };
+  }>(
+    admin,
+    `#graphql
+    mutation ResolveRead($query: String!) {
+      bulkOperationRunQuery(query: $query) {
+        bulkOperation { id }
+        userErrors { field message code }
+      }
+    }`,
+    { query },
+    { retry: true },
+  );
+  const url = await finished(admin, run.bulkOperation.id, touch);
+  return url ? parseLines<Line>(await transfer(url)) : [];
+}
+
+const SET_CHARTS = `#graphql
+  mutation ResolveSet($metafields: [MetafieldsSetInput!]!) {
+    metafieldsSet(metafields: $metafields) {
+      userErrors { field message code }
+    }
+  }`;
+
+// Returns how many Shopify refused. metafieldsSet is atomic, so a refused line
+// leaves all of its products unchanged.
+async function setCharts(admin: Admin, sets: Assignment[], touch: Touch) {
+  if (!sets.length) return 0;
+  const batches: Assignment[][] = [];
+  for (let i = 0; i < sets.length; i += 25) batches.push(sets.slice(i, i + 25));
+  const { stagedUploadsCreate } = await adminGraphql<{
+    stagedUploadsCreate: {
+      stagedTargets: {
+        url: string;
+        parameters: { name: string; value: string }[];
+      }[];
+    };
+  }>(
+    admin,
+    `#graphql
+    mutation ResolveStage {
+      stagedUploadsCreate(input: [{ resource: BULK_MUTATION_VARIABLES, filename: "charts.jsonl", mimeType: "text/jsonl", httpMethod: POST }]) {
+        stagedTargets { url parameters { name value } }
+        userErrors { field message }
+      }
+    }`,
+    {},
+    { retry: true },
+  );
+  const [target] = stagedUploadsCreate.stagedTargets;
+  const form = new FormData();
+  for (const p of target.parameters) form.append(p.name, p.value);
+  // The file goes last, after the fields that sign the upload.
+  const file = batches.map((metafields) => JSON.stringify({ metafields }));
+  form.append("file", new Blob([file.join("\n")], { type: "text/jsonl" }));
+  await transfer(target.url, { method: "POST", body: form });
+  const { bulkOperationRunMutation: run } = await adminGraphql<{
+    bulkOperationRunMutation: { bulkOperation: { id: string } };
+  }>(
+    admin,
+    `#graphql
+    mutation ResolveWrite($mutation: String!, $path: String!) {
+      bulkOperationRunMutation(mutation: $mutation, stagedUploadPath: $path) {
+        bulkOperation { id }
+        userErrors { field message code }
+      }
+    }`,
+    {
+      mutation: SET_CHARTS,
+      path: target.parameters.find((p) => p.name === "key")?.value,
+    },
+  );
+  const url = await finished(admin, run.bulkOperation.id, touch);
+  // One result line per input line, numbered by __lineNumber; only a clean answer counts as set.
+  type Result = {
+    __lineNumber?: number;
+    errors?: unknown;
+    data?: { metafieldsSet?: { userErrors: unknown[] } | null };
+  };
+  const set = new Set(
+    (url ? parseLines<Result>(await transfer(url)) : []).flatMap((r, i) =>
+      !r.errors && r.data?.metafieldsSet?.userErrors.length === 0
+        ? [r.__lineNumber ?? i]
+        : [],
+    ),
+  );
+  return batches.reduce((n, b, i) => (set.has(i) ? n : n + b.length), 0);
+}
+
+// metafieldsDelete answers a metafield that's already gone with null, so a
+// retry is safe.
+async function removeCharts(admin: Admin, ownerIds: string[], touch: Touch) {
+  for (let i = 0; i < ownerIds.length; i += 25) {
+    await adminGraphql(
+      admin,
+      `#graphql
+      mutation ResolveRemove($metafields: [MetafieldIdentifierInput!]!) {
+        metafieldsDelete(metafields: $metafields) {
+          deletedMetafields { ownerId }
+          userErrors { field message }
+        }
+      }`,
+      {
+        metafields: ownerIds
+          .slice(i, i + 25)
+          .map((ownerId) => ({ ownerId, namespace: "$app", key: "chart" })),
+      },
+      { retry: true },
+    );
+    await touch();
+  }
+}
+
+async function resolvePass(
+  admin: Admin,
+  shop: string,
+  merchant: boolean,
+  touch: Touch,
+) {
+  const startedAt = new Date();
+  const { rules } = await getRules(admin);
+  const active = await activeCharts(admin, rules.order);
+  // Unless the merchant caused this resolve, `auto: false` charts neither gain nor lose products (§6).
+  const manual = new Set(
+    merchant ? [] : rules.order.filter((id) => !rules.charts[id].auto),
+  );
+  for (const id of manual) active.delete(id);
+  const keys = [
+    ...new Set(
+      conditions(rules).flatMap((c) =>
+        c.field === "metafield" ? [c.key] : [],
+      ),
+    ),
+  ];
+  const lines = await readProducts(admin, productQuery(rules, keys), touch);
+  // Every product was read after startedAt, so a webhook for an older edit can skip (§6).
+  await db.shop.upsert({
+    where: { shop },
+    create: { shop, plan: "free", resolvedAt: startedAt }, // billing's first check sets the plan
+    update: { resolvedAt: startedAt },
+  });
+  // Each collection is its own line naming its product.
+  const collections = new Map<string, string[]>();
+  for (const l of lines)
+    if (l.__parentId) {
+      const ids = collections.get(l.__parentId) ?? [];
+      collections.set(l.__parentId, ids);
+      ids.push(l.id as string);
+    }
+  const sets: Assignment[] = [];
+  const removals: string[] = [];
+  for (const l of lines) {
+    if (l.__parentId) continue;
+    const n = l as ProductLine;
+    const current = n.chart?.value ?? null;
+    if (current && manual.has(current)) continue;
+    const product = toProduct(n, keys, collections.get(n.id) ?? []);
+    const target = resolveChart(product, rules, active);
+    if (target === current) continue;
+    if (!target) removals.push(n.id);
+    else
+      sets.push({
+        ownerId: n.id,
+        namespace: "$app",
+        key: "chart",
+        type: "metaobject_reference",
+        value: target,
+      });
+  }
+  const refused = await setCharts(admin, sets, touch);
+  await removeCharts(admin, removals, touch);
+  return { changed: sets.length - refused + removals.length, refused };
+}
+
+// One resolve per shop at a time; asking while one runs makes it run once
+// more when it finishes, as a merchant resolve if any ask was one.
+// ponytail: in-process, so one app instance (§17); a queue before running two.
+const resolves = new Map<
+  string,
+  { again: boolean | null; done: Promise<void> }
+>();
+
+/**
+ * Applies the rules to every product (§6). `merchant`: a rules save or a chart
+ * published, unpublished or deleted, which also applies `auto: false` charts.
+ * Never rejects: a failure is logged and recorded on the job.
+ */
+export function startResolve(shop: string, merchant: boolean) {
+  const running = resolves.get(shop);
+  if (running) {
+    running.again = merchant || running.again === true;
+    return running.done;
+  }
+  const entry = { again: null as boolean | null, done: Promise.resolve() };
+  resolves.set(shop, entry);
+  entry.done = (async () => {
+    try {
+      for (let next: boolean | null = merchant; next !== null;) {
+        await runResolve(shop, next);
+        next = entry.again;
+        entry.again = null;
+      }
+    } finally {
+      resolves.delete(shop);
+    }
+  })();
+  return entry.done;
+}
+
+const log = (level: string, msg: string, shop: string, extra: object) =>
+  console.log(JSON.stringify({ level, msg, shop, route: "resolve", ...extra }));
+
+async function runResolve(shop: string, merchant: boolean) {
+  let id: string | undefined;
+  try {
+    ({ id } = await db.job.create({
+      data: {
+        id: randomUUID(),
+        shop,
+        kind: "resolve",
+        status: "running",
+        progress: { merchant, pass: 1 },
+      },
+    }));
+    // The offline session, loaded for every call so a long job outlives its token (§3).
+    const admin: Admin = {
+      graphql: async (query, options) =>
+        (await unauthenticated.admin(shop)).admin.graphql(query, options),
+    };
+    let changed = 0;
+    let refused = 0;
+    for (const pass of [1, 2]) {
+      const touch = () =>
+        db.job.update({
+          where: { id },
+          data: { progress: { merchant, pass } },
+        });
+      await touch();
+      const done = await resolvePass(admin, shop, merchant, touch);
+      changed += done.changed;
+      refused = done.refused;
+    }
+    if (refused)
+      throw new AdminApiError(
+        `Shopify refused the chart for ${refused} products`,
+        "metafieldsSet userErrors in the second pass",
+      );
+    await db.job.update({
+      where: { id },
+      data: { status: "done", result: { changed } },
+    });
+    log("info", "Display rules applied", shop, { changed });
+  } catch (err) {
+    const known =
+      err instanceof AdminApiError || err instanceof StoredRulesError;
+    log("error", "Display rules didn't finish applying", shop, {
+      error: String(err),
+      detail: err instanceof AdminApiError ? err.detail : undefined,
+    });
+    if (id)
+      await db.job
+        .update({
+          where: { id },
+          data: {
+            status: "failed",
+            error: known ? err.message : "Something went wrong",
+          },
+        })
+        .catch((e) =>
+          log("error", "Resolve failure not recorded", shop, {
+            error: String(e),
+          }),
+        );
   }
 }

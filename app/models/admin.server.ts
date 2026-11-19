@@ -62,3 +62,30 @@ export async function adminGraphql<T>(
     return body.data as T;
   }
 }
+
+type GraphqlError = { extensions?: { code?: string } };
+/**
+ * Whether the session's staff member can read products. Jobs run with the
+ * offline token, so an action checks this before it starts one (§13). An
+ * online token narrowed by the staff member's permissions gets ACCESS_DENIED.
+ */
+export async function canReadProducts(admin: Admin) {
+  let errors: GraphqlError[] | undefined;
+  try {
+    const body: { data?: { products?: unknown }; errors?: GraphqlError[] } =
+      await (
+        await admin.graphql(`#graphql
+        query FittedProductAccess { products(first: 1) { nodes { id } } }`)
+      ).json();
+    if (body.data?.products) return true;
+    errors = body.errors;
+  } catch (err) {
+    if (err instanceof Response) throw err;
+    // The client throws its GraphqlQueryError with the GraphQL errors on it.
+    errors = (err as { body?: { errors?: { graphQLErrors?: GraphqlError[] } } })
+      .body?.errors?.graphQLErrors;
+    if (!errors) throw new AdminApiError("Shopify request failed", String(err));
+  }
+  if (errors?.some((e) => e.extensions?.code === "ACCESS_DENIED")) return false;
+  throw new AdminApiError("Shopify request failed", JSON.stringify(errors));
+}
