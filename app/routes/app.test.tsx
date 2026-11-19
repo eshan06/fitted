@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App, { loader } from "./app";
 import Home from "./app._index";
 import SizeCharts from "./app.charts._index";
+import ChartEditor from "./app.charts.$id";
 import Import from "./app.import";
 import DisplayRules from "./app.rules";
 import FitFinder from "./app.fit-finder";
@@ -77,6 +78,7 @@ describe("placeholder screens", () => {
   it.each([
     ["Home", Home],
     ["Size charts", SizeCharts],
+    ["Chart editor", ChartEditor],
     ["Import charts", Import],
     ["Display rules", DisplayRules],
     ["Fit finder", FitFinder],
