@@ -613,3 +613,18 @@ describe("getPlan", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });
+
+describe("pricingPlansUrl", () => {
+  it("links to Shopify's plan page for this store and the app's own handle", async () => {
+    const graphql = vi.fn(async () =>
+      json({
+        data: { currentAppInstallation: { app: { handle: "fitted-2" } } },
+      }),
+    );
+    await expect(
+      billing.pricingPlansUrl({ graphql } as never, shop),
+    ).resolves.toBe(
+      "https://admin.shopify.com/store/fitted-test/charges/fitted-2/pricing_plans",
+    );
+  });
+});

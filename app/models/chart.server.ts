@@ -528,6 +528,33 @@ export async function* chartPages(admin: Admin) {
   } while (after);
 }
 
+// How many products show each chart (§6), for the charts list. Shopify counts
+// up to 10,000; `atLeast` marks a count that reached that cap.
+export async function countChartProducts(admin: Admin, ids: string[]) {
+  const counts: Record<string, { count: number; atLeast: boolean }> = {};
+  for (let i = 0; i < ids.length; i += 50) {
+    const batch = ids.slice(i, i + 50);
+    const data = await adminGraphql<
+      Record<string, { count: number; precision: string }>
+    >(
+      admin,
+      `#graphql
+      query ChartProductCounts(${batch.map((_, j) => `$q${j}: String`).join(", ")}) {
+        ${batch.map((_, j) => `c${j}: productsCount(query: $q${j}) { count precision }`).join("\n")}
+      }`,
+      Object.fromEntries(
+        batch.map((id, j) => [`q${j}`, `metafields.$app.chart:"${id}"`]),
+      ),
+      { retry: true },
+    );
+    batch.forEach((id, j) => {
+      const { count, precision } = data[`c${j}`];
+      counts[id] = { count, atLeast: precision !== "EXACT" };
+    });
+  }
+  return counts;
+}
+
 // For Free's limit of Active charts (§8).
 // ponytail: pages through every chart; filter by status in the query if stores keep hundreds of drafts.
 export async function countActiveCharts(admin: Admin) {

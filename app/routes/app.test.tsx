@@ -4,7 +4,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App, { loader } from "./app";
 import Home from "./app._index";
-import SizeCharts from "./app.charts._index";
 import Import from "./app.import";
 import DisplayRules from "./app.rules";
 import FitFinder from "./app.fit-finder";
@@ -76,7 +75,6 @@ describe("admin shell", () => {
 describe("placeholder screens", () => {
   it.each([
     ["Home", Home],
-    ["Size charts", SizeCharts],
     ["Import charts", Import],
     ["Display rules", DisplayRules],
     ["Fit finder", FitFinder],

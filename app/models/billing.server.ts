@@ -1,5 +1,6 @@
 import type { Shop } from "@prisma/client";
 import db from "../db.server";
+import { adminGraphql } from "./admin.server";
 import { unauthenticated } from "../shopify.server";
 
 // Plans and gating, ARCHITECTURE §8. The plan comes from Shopify App Pricing
@@ -131,6 +132,21 @@ async function check(shop: string): Promise<PlanState> {
 }
 
 type Admin = Awaited<ReturnType<typeof unauthenticated.admin>>["admin"];
+
+/** Shopify's plan selection page for this app (§8); open it with target="_top". */
+export async function pricingPlansUrl(admin: Admin, shop: string) {
+  const data = await adminGraphql<{
+    currentAppInstallation: { app: { handle: string } };
+  }>(
+    admin,
+    `#graphql
+    query FittedAppHandle { currentAppInstallation { app { handle } } }`,
+    {},
+    { retry: true },
+  );
+  const store = shop.replace(/\.myshopify\.com$/, "");
+  return `https://admin.shopify.com/store/${store}/charges/${data.currentAppInstallation.app.handle}/pricing_plans`;
+}
 
 async function readShopId(admin: Admin): Promise<string> {
   const response = await admin.graphql(
