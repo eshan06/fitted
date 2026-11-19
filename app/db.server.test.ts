@@ -38,6 +38,7 @@ describe.runIf(hasDatabase)("the app database on Postgres", () => {
 
   afterAll(async () => {
     await prisma.session.deleteMany({ where: { shop: { in: shops } } });
+    await prisma.shop.deleteMany({ where: { shop: { in: shops } } });
     await prisma.$disconnect();
   });
 
@@ -108,5 +109,47 @@ describe.runIf(hasDatabase)("the app database on Postgres", () => {
 
     expect(await storage.findSessionsByShop(shop)).toEqual([]);
     expect(await storage.loadSession(`offline_${otherShop}`)).toBeDefined();
+  });
+
+  it("keeps one plan cache row per shop, and app/uninstalled clears only that shop's", async () => {
+    const shop = newShop();
+    const otherShop = newShop();
+    const checkedAt = new Date("2026-11-19T03:00:00.123Z");
+    // The writes app/models/billing.server.ts makes after each confirmed read.
+    for (const [forShop, plan] of [
+      [shop, "free"],
+      [shop, "pro"],
+      [otherShop, "standard"],
+    ]) {
+      const data = { plan, planCheckedAt: checkedAt, planOnStore: plan };
+      await prisma.shop.upsert({
+        where: { shop: forShop },
+        create: { shop: forShop, ...data },
+        update: data,
+      });
+    }
+
+    // The query app/uninstalled runs.
+    await prisma.shop.updateMany({
+      where: { shop },
+      data: { planOnStore: null, planCheckedAt: null },
+    });
+
+    expect(await prisma.shop.findUnique({ where: { shop } })).toEqual({
+      shop,
+      plan: "pro",
+      planCheckedAt: null,
+      planOnStore: null,
+      resolvedAt: null,
+    });
+    expect(
+      await prisma.shop.findUnique({ where: { shop: otherShop } }),
+    ).toEqual({
+      shop: otherShop,
+      plan: "standard",
+      planCheckedAt: checkedAt,
+      planOnStore: "standard",
+      resolvedAt: null,
+    });
   });
 });
