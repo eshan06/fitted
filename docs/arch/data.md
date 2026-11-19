@@ -67,7 +67,7 @@ Copy link (#24) gives `https://<shop>/apps/fitted/charts/<handle>`, an app proxy
 
 ## 6. Display rules
 
-Rules live in one shop metafield, `$app.rules` (json, at most 100 KB):
+Rules live in one shop metafield, `$app.rules` (json, under 100 KB):
 
 ```ts
 type Rules = {
@@ -100,9 +100,9 @@ Rules and settings are written whole with `metafieldsSet` and the `compareDigest
 
 Resolution is a pure function, `resolveChart(product, rules, activeChartIds)`, returning a chart GID or null, where `product` is `{ id, tags, productType, vendor, collectionIds, metafields }` and `metafields` maps each compared `namespace.key` to its values (every item of a list). Its result is written to the product metafield `$app.chart` (`metaobject_reference<$app:chart>`, `merchant_read`, `capabilities.admin_filterable = true`) only when it differs from the current value; null removes it with `metafieldsDelete`. Only the resolver writes it.
 
-When it runs (full resolve #73, webhooks and checks #74):
+When it runs (full resolve #73, started by the chart editor in #83, webhooks and checks #74):
 
-- Full resolve, as a `resolve` job (§13): after a rules save, after a chart is published, unpublished or deleted, and from the Home loader when the shop's last full resolve is over 24 hours old (this catches missed webhooks without a scheduler). A bulk query reads every product's facts and current chart; assignments go out in a bulk mutation of `metafieldsSet`, 25 metafields per line, and removals in `metafieldsDelete` batches of 25. A rules change while a resolve runs makes it run once more when it finishes.
+- Full resolve, as a `resolve` job (§13): after a rules save, after a chart is published, unpublished or deleted, and from the Home loader when the shop's last full resolve is over 24 hours old (this catches missed webhooks without a scheduler). A bulk query reads every product's facts and current chart; assignments go out in a bulk mutation of `metafieldsSet`, 25 metafields per line, and removals in `metafieldsDelete` batches of 25. A rules change while a resolve runs makes it run once more when it finishes. Which charts are Active comes from the chart list (§5), so a ranked id that is deleted or not a chart never matches. Each pass sets `Shop.resolvedAt` to its start once its bulk query has read every product. `metafieldsSet` is atomic, so a line Shopify refuses (a product deleted mid-pass) leaves its products unchanged: the second pass redoes them, and refusals in the second pass fail the job. A bulk operation is polled every 3 seconds and given up after 2 hours.
 - One product: `products/create` and `products/update` resolve that product.
 - `collections/update` re-resolves that collection's products when a rule names the collection.
 - Charts with `auto: false` ("Apply to new products automatically" off) are assigned only by full resolves the merchant causes: a rules save, or a chart published, unpublished or deleted. Webhooks and the 24-hour reconcile neither add nor remove them: a product whose current chart is an `auto: false` chart is left alone, and other products resolve with `auto: false` charts left out of `activeChartIds`.
