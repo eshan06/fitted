@@ -201,6 +201,19 @@ const Status = ({ status }: { status: ChartStatus }) => {
   );
 };
 
+// The canvas's empty-state mark: [path, color, width, dashes].
+const LOGO = [
+  ["M10 40V10h30", "#161616", "1.2", "3 2"],
+  ["M17 40V17h23", "#2448A8", "2.6", ""],
+  ["M24 40V24h16", "#161616", "1.2", ""],
+  ["M31 40V31h9", "#161616", "1.2", "1 2"],
+];
+// React 18 never hears a Polaris field's `input` (it doesn't bubble), so
+// listen on the element itself; assigning `oninput` replaces the last render's.
+const listen = (set: (v: string) => void) => (el: HTMLElement | null) => {
+  if (el) el.oninput = () => set((el as HTMLInputElement).value ?? "");
+};
+
 export function Charts({ rows, limit }: Extract<ChartList, { rows: unknown }>) {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("all");
@@ -208,28 +221,16 @@ export function Charts({ rows, limit }: Extract<ChartList, { rows: unknown }>) {
     return (
       <s-section accessibilityLabel="No size charts yet">
         <s-stack gap="base" alignItems="center" padding="large">
-          <svg
-            width="112"
-            height="112"
-            viewBox="0 0 48 48"
-            fill="none"
-            strokeLinecap="square"
-            aria-hidden="true"
-          >
-            <path
-              d="M10 40V10h30"
-              stroke="#161616"
-              strokeWidth="1.2"
-              strokeDasharray="3 2"
-            />
-            <path d="M17 40V17h23" stroke="#2448A8" strokeWidth="2.6" />
-            <path d="M24 40V24h16" stroke="#161616" strokeWidth="1.2" />
-            <path
-              d="M31 40V31h9"
-              stroke="#161616"
-              strokeWidth="1.2"
-              strokeDasharray="1 2"
-            />
+          <svg width="112" height="112" viewBox="0 0 48 48" aria-hidden="true">
+            {LOGO.map(([d, color, width, dash]) => (
+              <path
+                key={d}
+                {...{ d, stroke: color, strokeWidth: width }}
+                strokeDasharray={dash}
+                fill="none"
+                strokeLinecap="square"
+              />
+            ))}
           </svg>
           <s-heading>No size charts yet</s-heading>
           <s-paragraph>
@@ -278,17 +279,16 @@ export function Charts({ rows, limit }: Extract<ChartList, { rows: unknown }>) {
             alignItems="center"
           >
             <s-search-field
+              ref={listen((v) => setQ(v))}
               label="Search charts"
               labelAccessibilityVisibility="exclusive"
               placeholder="Search charts by name"
               value={q}
-              onInput={(e) => setQ(e.currentTarget.value ?? "")}
             />
             <s-select
+              ref={listen((v) => setStatus(v))}
               label="Status"
               value={status}
-              // React 18 doesn't hear `change` on custom elements; `input` it does.
-              onInput={(e) => setStatus(e.currentTarget.value ?? "all")}
             >
               {Object.entries(STATUSES).map(([value, label]) => (
                 <s-option key={value} value={value}>
