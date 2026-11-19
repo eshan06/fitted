@@ -640,19 +640,48 @@ describe("importing a spreadsheet", () => {
   });
 
   it("refuses a column in a unit Fitted can't hold, instead of guessing", async () => {
-    // A unit alone is no name, though: G stays a column called G.
-    const g = await sheet("Size,Chest (in),G\nS,34,3");
-    expect(g.status === "ready" && g.content.words["t1.c3"]).toBe("G");
-    expect(await sheetReason("Size,Diameter (mm),Weight g\nS,16,3")).toBe(
-      "Row 1, Diameter (mm): Convert this column to inches, centimeters, pounds or kilograms; " +
-        "Row 1, Weight g: Convert this column to inches, centimeters, pounds or kilograms.",
+    const convert =
+      "Convert this column to inches, centimeters, pounds or kilograms";
+    expect(
+      await sheetReason(
+        "Size,Diameter (in),mm,Weight (g),Height m\nS,1,16,3,2",
+      ),
+    ).toBe(`Row 1, mm: ${convert}; Row 1, Weight (g): ${convert}.`);
+    // A g or m outside brackets, or ending a word, is no unit.
+    const csv =
+      "Méret,Mellbőség,Cup G,Cup (A-G),S/M,Height m\nS,86,32,B,x,1\nM,90,34,C,y,2";
+    expect(await sheet(csv)).toMatchObject({ status: "check_units" });
+  });
+
+  it("reads a label's unit past its first 32 characters", async () => {
+    const draft = await sheet(
+      "Size,Chest circumference at the fullest point (cm)\nS,86",
+    );
+    expect(draft.status === "ready" && draft.content.words["t1.c2"]).toBe(
+      "Chest circumference at the fullest point",
+    );
+  });
+
+  it("reads a unit before a country or size system in the label", async () => {
+    const csv = [
+      "Größe,Außenbeinlänge (cm),US Waist (in),UK Chest (cms)",
+      "38,104,28,86 cms",
+    ].join("\n");
+    const draft = await sheet(csv);
+    expect(draft.status === "ready" && draft.content.tables[0].columns).toEqual(
+      [
+        { id: "c1", kind: "size" },
+        { id: "c2", kind: "measure", unit: "cm", convert: true },
+        { id: "c3", kind: "measure", unit: "in", convert: true },
+        { id: "c4", kind: "measure", unit: "cm", convert: true },
+      ],
     );
   });
 
   it("reads a size system or an age as text, never as a length", async () => {
     const csv = [
-      "Size,us sizes,Size UK,EUR,AU/NZ,IT,JP,Age (years),Chest (cm)",
-      "S,4,8,36,8,40,7,2-3,86",
+      "Size,us sizes,Size UK,EUR,AU/NZ,IT,JP,Age (years),Chest (cm),Size (US),USA,AUS,Size IT,Months,Age (m)",
+      "S,4,8,36,8,40,7,2-3,86,4,4,8,40,6,6",
     ].join("\n");
     const draft = await sheet(csv);
     const country = (id: string, c: string) => ({
@@ -671,14 +700,21 @@ describe("importing a spreadsheet", () => {
         { id: "c7", kind: "text" },
         { id: "c8", kind: "text" },
         { id: "c9", kind: "measure", unit: "cm", convert: true },
+        country("c10", "US"),
+        country("c11", "US"),
+        country("c12", "AU"),
+        { id: "c13", kind: "text" },
+        { id: "c14", kind: "text" },
+        { id: "c15", kind: "text" },
       ],
     );
   });
 
   it("makes a column of mostly numbers a measure column, and a dash no value", async () => {
-    // Notes: half numbers. Gap: empty. Neither is mostly numbers.
+    // Notes: one number in two filled cells. Gap: empty. Neither is mostly
+    // numbers.
     const csv =
-      "Size,Chest (in),Notes,Waist,Gap\nS,34,Runs small,28\nM,—,36,–\nL,-,Slim,30";
+      "Size,Chest (in),Notes,Waist,Gap\nS,34,Runs small,28\nM,—,36,–\nL,-,,30";
     const draft = await sheet(csv);
     expect(draft.status).toBe("ready");
     expect(draft.status === "ready" && draft.content.tables[0]).toEqual({
@@ -725,7 +761,9 @@ describe("importing a spreadsheet", () => {
   it("picks the delimiter the first row with text uses most outside quotes", async () => {
     const chest = async (csv: string) => {
       const draft = await sheet(csv);
-      return draft.status === "ready" && draft.content.tables[0].rows[0];
+      return (
+        draft.status === "ready" && draft.content.tables[0].rows[0].cells.c2
+      );
     };
     // Delimiters inside quotes don't count, even ones another delimiter
     // would leave outside them.
@@ -733,10 +771,15 @@ describe("importing a spreadsheet", () => {
       'Size,"Chest; relaxed, cm"\nS,86',
       '"Size","Chest; a; b (cm)"\nS,86',
       'Size,"Chest\tcm"\nS,86',
-      // A blank row first, and a tie, which goes to the semicolon.
-      "\r\n;;\r\nSize;Chest, cm\nS;86",
+      // A tie goes to the semicolon or tab; an empty row is passed over, and a
+      // padded one counts, since a spreadsheet pads with its own delimiter.
+      "Size;Chest, cm\nS;86",
+      "\r\n  \r\n;;\r\nSize;Chest, relaxed, cm\nS;86",
+      "Size\tChest, cm\nS\t86",
+      // A quote inside a cell, or a row of no-break spaces, starts nothing.
+      `${String.fromCharCode(0xa0)}\nSize;Chest, cm;Inseam 30"\nS;86;76`,
     ])
-      expect(await chest(csv)).toEqual({ id: "r1", cells: { c2: [86] } });
+      expect(await chest(csv), JSON.stringify(csv)).toEqual([86]);
   });
 
   it("names the row and column of each bad cell", async () => {
@@ -1120,7 +1163,8 @@ describe("file-level errors", () => {
     ],
     ["settings keys full of dots", fitted(), dotted, ""],
     ["one wide Wrap row", fitted(...chart, "Row,a,S", "Wrap"), ",s", ""],
-    // Spreadsheets, which each delimiter is tried on.
+    // Spreadsheets, whose labels are searched for units and countries.
+    ["one label of brackets", "Size,a", "(", "b\nS,1"],
     ["a padded label", 'Size,"', " ", 'x in"\nS,1'],
     ["a wide first row of semicolons", "Size", ";", ""],
     ["a quote only commas open", 'Size;x,"', "a;", ""],

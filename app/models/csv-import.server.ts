@@ -139,22 +139,31 @@ export async function importCsv(
   return drafts;
 }
 
-// Whichever of , ; and tab the first row with text uses most outside quotes;
-// a tie goes to ; or tab, since labels hold commas more often than either.
+// Whichever of , ; and tab the first row uses most outside quotes; a tie goes
+// to ; or tab, since labels hold commas more often than either. Rows of only
+// spaces are passed over; a row of only delimiters counts, since spreadsheets
+// pad an empty row with their own. As in records(), a quote opens only where
+// a cell starts, and one right after a closing quote is a quote in the text.
 function delimiter(text: string) {
   const n: Record<string, number> = { ",": 0, ";": 0, "\t": 0 };
   let quoted = false;
+  let start = true;
   let filled = false;
   for (const ch of text)
-    if (ch === '"') {
+    if (ch === '"' && (quoted || start)) {
       quoted = !quoted;
-      filled = true;
+      filled = start = true;
     } else if (quoted) continue;
-    else if (Object.hasOwn(n, ch)) n[ch]++;
-    else if (ch === "\r" || ch === "\n") {
+    else if (Object.hasOwn(n, ch)) {
+      n[ch]++;
+      filled = start = true;
+    } else if (ch === "\r" || ch === "\n") {
       if (filled) break;
-      n[","] = n[";"] = n["\t"] = 0; // a blank row, which import skips
-    } else if (ch !== " ") filled = true;
+      start = true;
+    } else if (ch !== " ") {
+      start = false;
+      filled ||= ch.trim() !== ""; // records() trims no-break spaces too
+    }
   const { ",": c, ";": s, "\t": t } = n;
   return t && t >= Math.max(c, s) ? "\t" : s && s >= c ? ";" : ",";
 }
@@ -317,7 +326,7 @@ type Country = Extract<Column, { kind: "country" }>["country"];
 type Unit = NonNullable<Extract<Column, { kind: "measure" }>["unit"]>;
 // Each part matches one way only, so a hostile cell can't make it backtrack.
 const NUM = String.raw`((?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)`;
-const WORDS = String.raw`inch(?:es)?|ins?|cm|centimet(?:er|re)s?|lbs?|pounds?|kgs?|kilo(?:gram)?s?`;
+const WORDS = String.raw`inch(?:es)?|ins?|cms?|centimet(?:er|re)s?|lbs?|pounds?|kgs?|kilo(?:gram)?s?`;
 const VALUE = new RegExp(
   `^${NUM}(?:\\s*(?:-|–|—|to)\\s*${NUM})?(?:\\s*(${WORDS}|")\\.?)?$`,
   "i",
@@ -337,16 +346,22 @@ function measureCell(v: string | undefined, semi: boolean) {
   const cell: Cell = m[2] === undefined ? [+m[1]] : [+m[1], +m[2]];
   return { cell, unit: m[3] === undefined ? undefined : unitOf(m[3]) };
 }
-// What a label says of an untyped column: a country it starts or ends with, a
-// size system or an age that is never a length, or a unit at its end, which
-// is one Fitted holds (group 1) or one it can't (mm, m, ft, oz, g).
-const COUNTRY = /^(US|UK|EU|AU)R?\b|\b(US|UK|EU|AU)R?$/i;
-const SYSTEM = /^(?:IT|FR|DE|ES|JP|CN|KR|BR|MX|RU|Ages?)\b/i;
-const OTHER = String.raw`mm|millimet(?:er|re)s?|m|met(?:er|re)s?|ft|oz|ounces?|g|grams?`;
-const LABEL_UNIT = new RegExp(
-  String.raw`[\s,([-]*\b(?:(${WORDS})|${OTHER})\.?\s*(?:[)\]]\s*)?$`,
-  "i",
+// What a label says of an untyped column: a size system or an age, which is
+// never a length; a unit at its end, one Fitted holds (group 1) or one it
+// can't (mm, ft, oz, g or m in brackets); or a country it starts or ends
+// with. Words end at any letter or digit, not only ASCII ones (the u flag).
+const SYS = "IT|FR|DE|ES|JP|CN|KR|BR|MX|RU";
+const SYSTEM = new RegExp(
+  String.raw`^(?:${SYS}|Ages?|Months?|Years?)(?![\p{L}\p{N}])|(?<![\p{L}\p{N}])(?:${SYS})[)\]]?$`,
+  "iu",
 );
+const OTHER = String.raw`mm|millimet(?:er|re)s?|met(?:er|re)s?|ft|oz|ounces?|grams?`;
+const LABEL_UNIT = new RegExp(
+  String.raw`(?:[\s,([-]*(?<![\p{L}\p{N}])(?:(${WORDS})|${OTHER})\.?\s*(?:[)\]]\s*)?|\s*\(\s*[gm]\s*\)\s*)$`,
+  "iu",
+);
+const COUNTRY =
+  /^(US|UK|EU|AU)[RAS]?(?![\p{L}\p{N}])|(?<![\p{L}\p{N}])(US|UK|EU|AU)[RAS]?[)\]]?$/iu;
 const TYPE = /^(?:(size|text)|(US|UK|EU|AU)|(measure|in|cm|lb|kg)(:fixed)?)$/;
 // An id past 8 characters fails validateChart anyway; cut to 9, it can't make
 // every key built from it as long (V8 hashes a long string by its length).
@@ -366,22 +381,19 @@ function infer(
 ): { column: Column; label?: string } | null {
   if (j === 0) return { column: { id, kind: "size" }, label };
   const name = label?.trim() ?? "";
-  const country = COUNTRY.exec(name);
+  if (SYSTEM.test(name)) return { column: { id, kind: "text" }, label };
+  // Only a label's end is searched, so its backtracking stays small.
+  const tail = name.slice(-32);
+  const u = LABEL_UNIT.exec(tail);
+  if (u && !u[1]) return null;
+  const country = !u && COUNTRY.exec(name);
   if (country) {
     const c = (country[1] ?? country[2]).toUpperCase() as Country;
     return { column: { id, kind: "country", country: c }, label };
   }
-  // Only a label's end is searched, so its backtracking stays small.
-  const tail = name.slice(-32);
-  let u = LABEL_UNIT.exec(tail);
-  // A unit Fitted can't hold counts only after a name: `G` alone is a name.
-  if (u && !u[1]) {
-    if (u[0] !== name) return null;
-    u = null;
-  }
   // Mostly numbers or ranges: more than half the filled cells.
   const filled = vs.filter((v) => v !== undefined).length;
-  if (!u && (SYSTEM.test(name) || vs.filter(Boolean).length * 2 <= filled))
+  if (!u && vs.filter(Boolean).length * 2 <= filled)
     return { column: { id, kind: "text" }, label };
   const unit = u ? unitOf(u[1]) : vs.find((v) => v?.unit)?.unit;
   const end = name.length - tail.length + (u?.index ?? 0);
@@ -452,7 +464,7 @@ function table(d: Draft, ti: number, tid: string, g: Grid, unit?: Unit) {
     } else {
       const guess = infer(id, j, label, vs);
       if (!guess) {
-        d.fail(where, OTHER_UNIT);
+        d.fail({ line: (g.labels ?? head).line, col }, OTHER_UNIT);
         continue;
       }
       ({ column, label } = guess);
