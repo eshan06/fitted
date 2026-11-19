@@ -13,10 +13,22 @@ const escape = (s: string) =>
   s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 // The block's Liquid with Shopify's part played by plain substitutions, so
-// the loader runs against the markup that ships. `t` escapes, as Shopify's does.
-function block(json: string, product = "Linen Wrap Top") {
+// the loader runs against the markup that ships. `t` escapes, as Shopify's
+// does. contact is the store's Contact page, or null when it has none.
+function block(
+  json: string,
+  product = "Linen Wrap Top",
+  contact: { url: string; title: string } | null = {
+    url: "/pages/contact",
+    title: "Contact",
+  },
+) {
   let html = read("blocks/size-guide.liquid")
     .replace(/\{%-? comment -?%\}[\s\S]*?\{%-? endcomment -?%\}/g, "")
+    .replace(
+      /\{%-? if pages\.contact\.url -?%\}([\s\S]*?)\{%-? endif -?%\}/,
+      (_, inner: string) => (contact ? inner : ""),
+    )
     .replace(/\{% schema %\}[\s\S]*?\{% endschema %\}/, "")
     .replace(
       /\{%-? render 'guide-data'.*?%\}/,
@@ -34,6 +46,9 @@ function block(json: string, product = "Linen Wrap Top") {
       if (expr === "'guide.js' | asset_url")
         return "//cdn.example/assets/guide.js";
       if (expr === "p.title | escape") return escape(product);
+      if (expr === "pages.contact.url | escape") return escape(contact!.url);
+      if (expr === "pages.contact.title | escape")
+        return escape(contact!.title);
       if (expr === "title_id") return "fitted-title-1";
       throw new Error(`No test value for {{ ${expr} }}`);
     });
@@ -225,6 +240,53 @@ describe("loader", () => {
     );
     await tick();
     expect(body.querySelector("table")).not.toBeNull();
+  });
+
+  it("links the store's Contact page under the error, when it has one", async () => {
+    load.mockImplementation(fail);
+    const { link, body } = await mount();
+    link.click();
+    await tick();
+    const help = body.querySelector('[role="alert"] .fitted-help');
+    expect(help?.textContent).toBe(`${en.help} Contact.`);
+    expect(help?.querySelector("a")?.getAttribute("href")).toBe(
+      "/pages/contact",
+    );
+    document.body.innerHTML = block(valid, "Linen Wrap Top", null);
+    await tick();
+    document.querySelector<HTMLElement>(".fitted-link")!.click();
+    await tick();
+    expect(document.querySelector('[role="alert"]')).not.toBeNull();
+    expect(document.querySelector(".fitted-help")).toBeNull();
+  });
+
+  it("opens on the size the product form shows, every time", async () => {
+    const rows = [
+      { id: "m", cells: {} },
+      { id: "l", cells: {} },
+    ];
+    const json = JSON.stringify({
+      chart: {
+        ...chart,
+        tables: [{ ...chart.tables[0], rows }],
+        words: { "t1.m.size": "M", "t1.l.size": "L" },
+      },
+      country: "US",
+    });
+    document.body.innerHTML = `<div class="shopify-section"><input type="radio" name="Size" value="M" checked><input type="radio" name="Size" value="L"><form action="/cart/add"></form>${block(json)}</div>`;
+    await tick();
+    const link = document.querySelector<HTMLElement>(".fitted-link")!;
+    const dialog = document.querySelector("dialog")!;
+    const selected = () =>
+      dialog.querySelector(".fitted-foot strong")?.textContent;
+    link.click();
+    await tick();
+    expect(selected()).toBe("Selected: M");
+    dialog.close();
+    document.querySelector<HTMLInputElement>('[value="L"]')!.click();
+    link.click();
+    expect(selected()).toBe("Selected: L");
+    expect(load).toHaveBeenCalledTimes(1);
   });
 
   it("tries again on the next open after a failure", async () => {

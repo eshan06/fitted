@@ -1,6 +1,11 @@
 // @vitest-environment happy-dom
-import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseGuide, render } from "./guide";
+
+const en = JSON.parse(
+  readFileSync("extensions/size-guide/locales/en.default.json", "utf8"),
+).size_guide;
 
 // Loose on purpose: the tests write invalid charts into it.
 type Fixture = {
@@ -11,6 +16,8 @@ type Fixture = {
     id: string;
     columns: unknown[];
     rows: { id: string; cells: Record<string, unknown> }[];
+    merges?: unknown;
+    wrap?: unknown;
   }[];
   words: Record<string, unknown>;
 };
@@ -52,28 +59,37 @@ const chart = (): Fixture => ({
     tips: "Measure over light clothing.",
   },
 });
+// The toggle is off here, so headers name every unit; its tests turn it on.
 const data = (over: Record<string, unknown> = {}) =>
   JSON.stringify({
     chart: chart(),
     strings: {},
-    units: null,
+    units: { default: "country", toggle: false },
     country: "US",
     locale: "en",
     ...over,
   });
-const withChart = (edit: (c: ReturnType<typeof chart>) => void) => {
+const json = (
+  edit: (c: Fixture) => void,
+  over: Record<string, unknown> = {},
+) => {
   const c = chart();
   edit(c);
-  return data({ chart: c });
+  return data({ chart: c, ...over });
 };
-const draw = (json: string) => {
+const withChart = (edit: (c: Fixture) => void) => json(edit);
+// The extension's words, as the block passes them on .fitted-body.
+const show = (
+  json: string,
+  root: HTMLElement = document.createElement("div"),
+) => {
   const g = parseGuide(json);
   if (!g) throw new Error("expected a guide");
-  const root = document.createElement("div");
-  root.dataset.tChart = "Size chart";
-  render(root, g);
-  return root;
+  for (const [k, v] of Object.entries<string>(en))
+    root.dataset[`t${k[0].toUpperCase()}${k.slice(1)}`] = v;
+  return { root, sync: render(root, g) };
 };
+const draw = (json: string) => show(json).root;
 const texts = (root: Element, selector: string) =>
   [...root.querySelectorAll(selector)].map((el) => el.textContent);
 
@@ -91,6 +107,13 @@ describe("parseGuide", () => {
     expect(g?.words["t1.bust"]).toBe("Poitrine");
     // A translation that isn't text leaves the source word.
     expect(g?.words["t1.wt"]).toBe("Weight");
+  });
+
+  it("falls back to English for a locale Intl can't read", () => {
+    expect(parseGuide(data({ locale: "en_US!" }))?.locale).toBe("en");
+    expect(parseGuide(data({ locale: null }))?.locale).toBe("en");
+    expect(parseGuide(data({ locale: "pt-br" }))?.locale).toBe("pt-BR");
+    expect(() => draw(data({ locale: "en_US!" }))).not.toThrow();
   });
 
   it("picks units by the shopper's country unless settings fix them", () => {
@@ -214,6 +237,62 @@ describe("parseGuide", () => {
       "cells that aren't a map",
       withChart((c) => (c.tables[0].rows[0].cells = [] as never)),
     ],
+    [
+      "a merge past the last row",
+      withChart(
+        (c) =>
+          (c.tables[0].merges = [{ row: "m", col: "bust", rows: 2, cols: 1 }]),
+      ),
+    ],
+    [
+      "a merge past the last column",
+      withChart(
+        (c) =>
+          (c.tables[0].merges = [{ row: "s", col: "fit", rows: 1, cols: 2 }]),
+      ),
+    ],
+    [
+      "overlapping merges",
+      withChart(
+        (c) =>
+          (c.tables[0].merges = [
+            { row: "s", col: "bust", rows: 2, cols: 2 },
+            { row: "m", col: "wt", rows: 1, cols: 1 },
+          ]),
+      ),
+    ],
+    [
+      "a merge of a row the table doesn't have",
+      withChart(
+        (c) =>
+          (c.tables[0].merges = [{ row: "xl", col: "bust", rows: 1, cols: 1 }]),
+      ),
+    ],
+    [
+      "a merge of no rows",
+      withChart(
+        (c) =>
+          (c.tables[0].merges = [{ row: "s", col: "bust", rows: 0, cols: 1 }]),
+      ),
+    ],
+    [
+      "a merge of half a column",
+      withChart(
+        (c) =>
+          (c.tables[0].merges = [
+            { row: "s", col: "bust", rows: 1, cols: 1.5 },
+          ]),
+      ),
+    ],
+    [
+      "a merge that isn't an object",
+      withChart((c) => (c.tables[0].merges = ["s"])),
+    ],
+    ["merges that aren't a list", withChart((c) => (c.tables[0].merges = {}))],
+    [
+      "a wrap naming no column",
+      withChart((c) => (c.tables[0].wrap = ["chest"])),
+    ],
   ])("refuses %s, so nothing renders", (_, json) => {
     expect(parseGuide(json)).toBeNull();
   });
@@ -332,5 +411,381 @@ describe("render", () => {
       `${evil} (in)`,
     );
     expect(root.textContent).toContain(evil);
+  });
+});
+
+describe("the in/cm toggle", () => {
+  afterEach(() => document.body.replaceChildren());
+  const on = (over: Record<string, unknown> = {}) =>
+    data({ units: { default: "country", toggle: true }, ...over });
+  const units = (root: Element) =>
+    root.querySelector(`[role="group"][aria-label="${en.units}"]`);
+
+  it("names the shown unit once, in the toggle, and converts when pressed", () => {
+    const root = draw(on());
+    document.body.append(root);
+    expect(texts(units(root)!, "button")).toEqual([en.in, en.cm]);
+    expect(texts(units(root)!, '[aria-pressed="true"]')).toEqual([en.in]);
+    // Weight isn't the unit the toggle names; length as typed is.
+    expect(texts(root, "thead th")).toEqual([
+      "Size",
+      "US",
+      "Bust",
+      "Weight (lb)",
+      "Length (cm)",
+      "Fit",
+    ]);
+    const cm = units(root)!.querySelectorAll("button")[1];
+    cm.focus();
+    cm.click();
+    expect(document.activeElement).toBe(cm);
+    expect(texts(units(root)!, '[aria-pressed="true"]')).toEqual([en.cm]);
+    expect(texts(root, "thead th")).toEqual([
+      "Size",
+      "US",
+      "Bust",
+      "Weight (kg)",
+      "Length",
+      "Fit",
+    ]);
+    expect(texts(root, "tbody tr:first-child td").slice(1, 4)).toEqual([
+      "84–86.5",
+      "50",
+      "60",
+    ]);
+  });
+
+  it("shows unless settings turn it off", () => {
+    expect(units(draw(data({ units: null })))).not.toBeNull();
+    expect(units(draw(data()))).toBeNull();
+  });
+
+  it("hides when nothing converts, and headers keep their units", () => {
+    const root = draw(
+      json(
+        (c) =>
+          (c.tables[0].columns = c.tables[0].columns.map((col) =>
+            (col as { kind: string }).kind === "measure"
+              ? { ...(col as object), convert: false }
+              : col,
+          )),
+        { units: { default: "country", toggle: true } },
+      ),
+    );
+    expect(units(root)).toBeNull();
+    expect(texts(root, "thead th").slice(2, 5)).toEqual([
+      "Bust (in)",
+      "Weight (lb)",
+      "Length (cm)",
+    ]);
+  });
+
+  it("names the unit alone over a measurement without a label", () => {
+    const root = draw(withChart((c) => delete c.words["t1.bust"]));
+    expect(root.querySelector("thead th:nth-child(3)")?.textContent).toBe(
+      "(in)",
+    );
+  });
+});
+
+describe("the US/UK/EU/AU switch", () => {
+  afterEach(() => document.body.replaceChildren());
+  // Columns: size, us, uk, eu, then the measurements.
+  const regional = (over: Record<string, unknown> = {}) =>
+    json((c) => {
+      c.tables[0].columns.splice(
+        2,
+        0,
+        { id: "uk", kind: "country", country: "UK" },
+        { id: "eu", kind: "country", country: "EU" },
+      );
+      Object.assign(c.words, { "t1.s.uk": "8–10", "t1.s.eu": "36–38" });
+    }, over);
+  const group = (root: Element) =>
+    root.querySelector(`[role="group"][aria-label="${en.system}"]`);
+  const country = (root: Element) =>
+    root.querySelector("thead th:nth-child(2)")?.textContent;
+
+  it("shows one country column at a time, the shopper's system first", () => {
+    const root = draw(regional({ country: "GB" }));
+    expect(texts(group(root)!, "button")).toEqual(["US", "UK", "EU"]);
+    expect(texts(group(root)!, '[aria-pressed="true"]')).toEqual(["UK"]);
+    expect(texts(root, "thead th")).toHaveLength(6);
+    expect(texts(root, "tbody tr:first-child > *").slice(0, 2)).toEqual([
+      "S",
+      "8–10",
+    ]);
+    expect(country(draw(regional({ country: "DE" })))).toBe("EU");
+    expect(country(draw(regional({ country: "US" })))).toBe("US");
+    // Elsewhere, the table's first country column.
+    expect(country(draw(regional({ country: "CA" })))).toBe("US");
+  });
+
+  it("switches the column and keeps focus on the switch", () => {
+    const root = draw(regional());
+    document.body.append(root);
+    const eu = [...group(root)!.querySelectorAll("button")][2];
+    eu.focus();
+    eu.click();
+    expect(document.activeElement).toBe(eu);
+    expect(country(root)).toBe("EU");
+    expect(texts(group(root)!, '[aria-pressed="true"]')).toEqual(["EU"]);
+    expect(root.querySelector("tbody td")?.textContent).toBe("36–38");
+  });
+
+  it("shows a table without that system its first, and a one-system table as is", () => {
+    const root = draw(
+      json((c) => {
+        const [t1] = c.tables;
+        t1.columns.splice(2, 0, { id: "eu", kind: "country", country: "EU" });
+        c.tables.push(
+          { ...t1, id: "t2", columns: [...t1.columns] },
+          {
+            ...t1,
+            id: "t3",
+            columns: t1.columns.filter((x) => x !== t1.columns[2]),
+          },
+        );
+        c.tables[1].columns.splice(
+          1,
+          2,
+          { id: "au", kind: "country", country: "AU" },
+          { id: "uk", kind: "country", country: "UK" },
+        );
+      }),
+    );
+    expect(texts(group(root)!, "button")).toEqual(["US", "UK", "EU", "AU"]);
+    [...group(root)!.querySelectorAll("button")][2].click();
+    expect(texts(root, "thead th:nth-child(2)")).toEqual(["EU", "AU", "US"]);
+  });
+
+  it("isn't there when no table names two systems", () => {
+    const root = draw(data());
+    expect(group(root)).toBeNull();
+    expect(country(root)).toBe("US");
+  });
+
+  it("shows a merge across country columns in whichever is shown", () => {
+    const root = draw(
+      json((c) => {
+        c.tables[0].columns.splice(2, 0, {
+          id: "eu",
+          kind: "country",
+          country: "EU",
+        });
+        c.tables[0].merges = [{ row: "m", col: "us", rows: 1, cols: 2 }];
+        c.words["t1.m.us"] = "One size";
+      }),
+    );
+    const cell = () => root.querySelector("tbody tr:last-child td");
+    expect(cell()?.textContent).toBe("One size");
+    expect(cell()?.getAttribute("colspan")).toBe("1");
+    [...group(root)!.querySelectorAll("button")][1].click();
+    expect(cell()?.textContent).toBe("One size");
+    expect(texts(root, "tbody tr:last-child > *")).toHaveLength(6);
+  });
+});
+
+describe("merged and wrapping cells", () => {
+  it("spans a merge from its top-left cell and leaves out the cells it covers", () => {
+    const root = draw(
+      json((c) => {
+        c.tables[0].merges = [
+          { row: "s", col: "bust", rows: 2, cols: 1 },
+          { row: "s", col: "len", rows: 1, cols: 2 },
+        ];
+      }),
+    );
+    expect(texts(root, "tbody tr:first-child > *")).toEqual([
+      "S",
+      "4–6",
+      "33–34",
+      "110",
+      "60",
+    ]);
+    const [, , bust, , len] = root.querySelectorAll("tbody tr:first-child > *");
+    expect([
+      bust.getAttribute("rowspan"),
+      bust.getAttribute("colspan"),
+    ]).toEqual(["2", "1"]);
+    expect([len.getAttribute("rowspan"), len.getAttribute("colspan")]).toEqual([
+      "1",
+      "2",
+    ]);
+    expect(texts(root, "tbody tr:last-child > *")).toEqual([
+      "M",
+      "",
+      "",
+      "",
+      "",
+    ]);
+  });
+
+  it("makes rows merged in the size column one size", () => {
+    const root = draw(
+      json((c) => {
+        c.tables[0].merges = [{ row: "s", col: "size", rows: 2, cols: 1 }];
+        c.words["t1.s.size"] = "S/M";
+      }),
+    );
+    expect(root.querySelector("tbody th")?.getAttribute("rowspan")).toBe("2");
+    expect(root.querySelectorAll("tbody th")).toHaveLength(1);
+    root.querySelector<HTMLElement>("tbody tr:last-child td")!.click();
+    expect(root.querySelectorAll(".fitted-on")).toHaveLength(2);
+    expect(root.querySelector(".fitted-foot strong")?.textContent).toBe(
+      "Selected: S/M",
+    );
+  });
+
+  it("lets the columns in wrap wrap", () => {
+    const root = draw(withChart((c) => (c.tables[0].wrap = ["fit"])));
+    expect(root.querySelectorAll(".fitted-wrap")).toHaveLength(3);
+    expect(root.querySelector("thead th:last-child")?.className).toBe(
+      "fitted-wrap",
+    );
+  });
+});
+
+describe("row select", () => {
+  const two = () =>
+    json((c) => {
+      c.tables.push({ ...c.tables[0], id: "t2" });
+      Object.assign(c.words, {
+        "t2.title": "Garment",
+        "t2.s.size": " s ",
+        "t2.m.size": "M",
+      });
+    });
+  const pressed = (root: Element) =>
+    [...root.querySelectorAll(".fitted-pick")].map((b) =>
+      b.getAttribute("aria-pressed"),
+    );
+
+  it("lights up the size in every table and fills the footer", () => {
+    const root = draw(two());
+    const foot = root.querySelector<HTMLElement>(".fitted-foot")!;
+    expect(foot.hidden).toBe(true);
+    root.querySelector<HTMLElement>("tbody tr:last-child td")!.click();
+    expect(texts(root, ".fitted-on th")).toEqual(["M", "M"]);
+    expect(pressed(root)).toEqual(["false", "true", "false", "true"]);
+    expect(foot.hidden).toBe(false);
+    expect(foot.querySelector("strong")?.textContent).toBe("Selected: M");
+    expect(foot.querySelector("strong span")?.textContent).toBe("M");
+    // Without a product form there's nothing to select in.
+    expect(
+      foot.querySelector<HTMLElement>("[data-fitted-select]")?.hidden,
+    ).toBe(true);
+    // Labels match whatever their case and spacing.
+    root.querySelector<HTMLElement>(".fitted-pick")!.click();
+    expect(texts(root, ".fitted-on th")).toEqual(["S", " s "]);
+  });
+
+  it("keeps the pick, and focus on its button, as the switches redraw", () => {
+    const root = draw(data({ units: null }));
+    document.body.append(root);
+    const s = root.querySelector<HTMLElement>(".fitted-pick")!;
+    s.focus();
+    s.click();
+    expect(document.activeElement).toBe(s);
+    root.querySelectorAll<HTMLElement>(".fitted-seg button")[1].click();
+    expect(texts(root, ".fitted-on th")).toEqual(["S"]);
+    document.body.replaceChildren();
+  });
+
+  it("names each row's button with its size, as text", () => {
+    const evil = '<img src=x onerror="alert(1)">';
+    const root = draw(data({ strings: { "t1.s.size": evil } }));
+    const pick = root.querySelector(".fitted-pick")!;
+    expect(pick.getAttribute("aria-label")).toBe(`Choose size ${evil}`);
+    expect(pick.textContent).toBe(evil);
+    (pick as HTMLElement).click();
+    expect(root.querySelector(".fitted-foot strong")?.textContent).toBe(
+      `Selected: ${evil}`,
+    );
+    expect(root.querySelector("img")).toBeNull();
+  });
+});
+
+describe("the product form", () => {
+  afterEach(() => document.body.replaceChildren());
+  // A product section like Dawn's: size controls beside the form, the block
+  // after them.
+  const page = (controls: string, outside = "") => {
+    document.body.innerHTML = `${outside}<div class="shopify-section"><div>${controls}<form action="/cart/add"><input type="hidden" name="id" value="1"></form><div class="fitted-guide"><dialog><div class="fitted-body"></div></dialog></div></div></div>`;
+    const dialog = document.querySelector("dialog")!;
+    dialog.showModal();
+    const { root, sync } = show(
+      data(),
+      document.querySelector<HTMLElement>(".fitted-body")!,
+    );
+    const go = root.querySelector<HTMLButtonElement>("[data-fitted-select]")!;
+    return { root, sync, dialog, go };
+  };
+  const radio = (size: string, more = "") =>
+    `<input type="radio" name="Size-1" value="${size}" ${more}>`;
+  const picked = (root: Element) => texts(root, ".fitted-on th");
+
+  it("opens on the form's size; Select picks another and closes the guide", () => {
+    const { root, dialog, go } = page(
+      radio("S") + radio("M", "checked") + radio("L"),
+    );
+    expect(picked(root)).toEqual(["M"]);
+    expect([go.hidden, go.textContent]).toEqual([false, "Select M"]);
+    root.querySelector<HTMLElement>("tbody td")!.click();
+    expect(go.textContent).toBe("Select S");
+    const changed = vi.fn();
+    document.addEventListener("change", changed);
+    go.click();
+    document.removeEventListener("change", changed);
+    expect(dialog.open).toBe(false);
+    expect(
+      document.querySelector<HTMLInputElement>('[value="S"]')!.checked,
+    ).toBe(true);
+    expect(changed).toHaveBeenCalledOnce();
+  });
+
+  it("sets a select the way a shopper would", () => {
+    const { root, go } = page(
+      '<select name="options[Size]"><option>S</option><option selected>M</option></select>',
+    );
+    expect(picked(root)).toEqual(["M"]);
+    const events: string[] = [];
+    for (const type of ["input", "change"])
+      document.addEventListener(type, () => events.push(type), { once: true });
+    root.querySelector<HTMLElement>("tbody td")!.click();
+    go.click();
+    expect(document.querySelector("select")!.value).toBe("S");
+    expect(events).toEqual(["input", "change"]);
+  });
+
+  it("offers Select only for a size the form has", () => {
+    const { root, go } = page(radio("S", "checked") + radio("M", "disabled"));
+    expect([picked(root), go.hidden]).toEqual([["S"], false]);
+    root.querySelector<HTMLElement>("tbody tr:last-child td")!.click();
+    expect(root.querySelector(".fitted-foot strong")?.textContent).toBe(
+      "Selected: M",
+    );
+    expect(go.hidden).toBe(true);
+  });
+
+  it("follows the form when sync runs on the next open", () => {
+    const { root, sync } = page(radio("S", "checked") + radio("M"));
+    document.querySelector<HTMLInputElement>('[value="M"]')!.click();
+    sync();
+    expect(picked(root)).toEqual(["M"]);
+    // A form showing no size of the chart keeps the pick.
+    document.querySelector<HTMLInputElement>('[value="M"]')!.checked = false;
+    sync();
+    expect(picked(root)).toEqual(["M"]);
+  });
+
+  it("ignores controls outside the block's section, variant ids and quantities", () => {
+    const { root, go } = page(
+      '<select name="id"><option value="s">S</option></select><select name="quantity"><option value="m">M</option></select>',
+      `<div class="shopify-section">${radio("S", "checked")}</div>`,
+    );
+    expect(picked(root)).toEqual([]);
+    root.querySelector<HTMLElement>("tbody td")!.click();
+    expect(go.hidden).toBe(true);
   });
 });
