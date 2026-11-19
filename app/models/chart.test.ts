@@ -462,6 +462,20 @@ describe("validateChart", () => {
     ]);
   });
 
+  // CSV import refuses a file with a NUL byte, and Postgres json (versions,
+  // jobs) can't store one, so no text in a chart may hold it.
+  it.each<[(c: Draft) => void, string]>([
+    [(c) => (c.name = "Tops\0"), "name"],
+    [(c) => (c.importNote = "Check units\0"), "importNote"],
+    [
+      (c) => (c.content.videoUrl = "https://youtu.be/abc\0"),
+      "content.videoUrl",
+    ],
+    [(c) => (c.content.words["t1.title"] = "To\0ps"), "content.words.t1.title"],
+  ])("refuses a NUL character in chart text (%#)", (change, path) => {
+    expect(errorsAfter(change)).toHaveProperty([path]);
+  });
+
   it("refuses content of 100 KB or more, and accepts one byte less", () => {
     // Pads words until the content JSON is exactly `bytes` long.
     const sized = (bytes: number) => {
