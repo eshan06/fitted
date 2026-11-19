@@ -78,7 +78,8 @@ const VIDEO_HOST =
 const oneOf = (v: unknown, list: readonly unknown[]) => list.includes(v);
 
 export function validateChart(input: unknown): ChartInput {
-  const errs: FieldErrors = {};
+  // No prototype, so keys like "__proto__" or "constructor" are recorded too.
+  const errs: FieldErrors = Object.create(null);
   const fail = (path: string, message: string) => (errs[path] ??= message);
   const only = (o: Record<string, unknown>, allowed: string[], path: string) =>
     Object.keys(o).forEach(
@@ -140,6 +141,12 @@ export function validateChart(input: unknown): ChartInput {
     throw new ChartValidationError({
       ...errs,
       content: "Must be chart content",
+    });
+  // Checked first, so oversized input never gets walked key by key.
+  if (Buffer.byteLength(JSON.stringify(c)) >= 100 * 1024)
+    throw new ChartValidationError({
+      ...errs,
+      content: "The chart is too large; split it into smaller charts",
     });
   only(
     c,
@@ -217,7 +224,12 @@ export function validateChart(input: unknown): ChartInput {
       }
     });
     const covered = new Set<string>();
-    list(t.merges ?? [], `${p}.merges`, 0, 1200).forEach((m, mi) => {
+    list(
+      t.merges === undefined ? [] : t.merges,
+      `${p}.merges`,
+      0,
+      1200,
+    ).forEach((m, mi) => {
       const mp = `${p}.merges.${mi}`;
       const r0 = isObj(m) ? rows.indexOf(m.row as string) : -1;
       const c0 = isObj(m) ? cols.indexOf(m.col as string) : -1;
@@ -234,7 +246,7 @@ export function validateChart(input: unknown): ChartInput {
             return fail(mp, "Overlaps another merge");
           else covered.add(`${r},${k}`);
     });
-    list(t.wrap ?? [], `${p}.wrap`, 0, 20).forEach(
+    list(t.wrap === undefined ? [] : t.wrap, `${p}.wrap`, 0, 20).forEach(
       (w, wi) =>
         cols.includes(w as string) ||
         fail(`${p}.wrap.${wi}`, "Not a column of this table"),
@@ -332,8 +344,6 @@ export function validateChart(input: unknown): ChartInput {
         fail(`content.words.${k}`, `Must be text of at most ${max} characters`);
     }
 
-  if (Buffer.byteLength(JSON.stringify(c)) >= 100 * 1024)
-    fail("content", "The chart is too large; split it into smaller charts");
   if (Object.keys(errs).length) throw new ChartValidationError(errs);
   const out: ChartInput = {
     name,

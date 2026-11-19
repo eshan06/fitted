@@ -242,6 +242,104 @@ describe("validateChart", () => {
     expect(errs).toHaveProperty(["content.tables.0.merges.1"]);
   });
 
+  it.each(["merges", "wrap"])("refuses %s that is null", (key) => {
+    const errs = errorsAfter((c) => (table(c)[key] = null));
+    expect(errs).toHaveProperty([`content.tables.0.${key}`]);
+  });
+
+  it.each(["__proto__", "constructor", "toString"])(
+    "refuses the top-level key %s",
+    (key) => {
+      const input = JSON.parse(JSON.stringify(chart()));
+      Object.defineProperty(input, key, { value: 1, enumerable: true });
+      let errs = {};
+      try {
+        validateChart(input);
+      } catch (e) {
+        errs = (e as ChartValidationError).fieldErrors;
+      }
+      expect(Object.keys(errs)).toEqual([key]);
+    },
+  );
+
+  it.each([
+    [(c: Draft) => (table(c).extra = 1), "content.tables.0.extra"],
+    [
+      (c: Draft) => ((table(c).rows as Record<string, unknown>[])[0].x = 1),
+      "content.tables.0.rows.0.x",
+    ],
+    [
+      (c: Draft) => ((table(c).merges as Record<string, unknown>[])[0].x = 1),
+      "content.tables.0.merges.0.x",
+    ],
+    [
+      (c: Draft) => ((c.content.measure as Record<string, unknown>).x = 1),
+      "content.measure.x",
+    ],
+    [
+      (c: Draft) => ((c.content.fit as Record<string, unknown>).x = 1),
+      "content.fit.x",
+    ],
+    [
+      (c: Draft) =>
+        ((c.content.fit.questions[1] as Record<string, unknown>).x = 1),
+      "content.fit.questions.1.x",
+    ],
+    [
+      (c: Draft) =>
+        ((
+          c.content.fit.questions[3] as { options: Record<string, unknown>[] }
+        ).options[0].x = 1),
+      "content.fit.questions.3.options.0.x",
+    ],
+  ])("refuses unknown keys inside content (%#)", (change, path) => {
+    expect(errorsAfter(change)).toHaveProperty([path]);
+  });
+
+  it.each([
+    [
+      (c: Draft) =>
+        c.content.tables.push(
+          ...Array.from({ length: 4 }, (_, i) => ({
+            ...c.content.tables[0],
+            id: `t${i + 2}`,
+          })),
+        ),
+      "content.tables",
+    ],
+    [
+      (c: Draft) =>
+        (c.content.measure.steps = Array.from(
+          { length: 21 },
+          (_, i) => `s${i}`,
+        )),
+      "content.measure.steps",
+    ],
+    [
+      (c: Draft) => (table(c).wrap = Array(21).fill("fitnote")),
+      "content.tables.0.wrap",
+    ],
+    [
+      (c: Draft) => ((table(c).rows as { cells: unknown }[])[0].cells = []),
+      "content.tables.0.rows.0.cells",
+    ],
+    [
+      (c: Draft) => ((table(c).rows as unknown[])[0] = "s"),
+      "content.tables.0.rows.0",
+    ],
+    [
+      (c: Draft) => ((table(c).merges as { cols: number }[])[0].cols = 0.5),
+      "content.tables.0.merges.0",
+    ],
+    [(c: Draft) => (c.importNote = "two\nlines"), "importNote"],
+    [
+      (c: Draft) => (c.content.videoUrl = 5 as unknown as string),
+      "content.videoUrl",
+    ],
+  ])("refuses out-of-bounds structure (%#)", (change, path) => {
+    expect(errorsAfter(change)).toHaveProperty([path]);
+  });
+
   it("refuses wrap on a column the table doesn't have", () => {
     const errs = errorsAfter((c) => (table(c).wrap = ["nope"]));
     expect(errs).toHaveProperty(["content.tables.0.wrap.0"]);
@@ -285,6 +383,49 @@ describe("validateChart", () => {
         (f.questions = [{ id: "q1", kind: "age" }]),
       "content.fit.questions.0.kind",
     ],
+    [
+      (f: Record<string, unknown>) => (f.ease = { chest: "2" }),
+      "content.fit.ease.chest",
+    ],
+    [
+      (f: Record<string, unknown>) => (f.ease = { chest: 10000 }),
+      "content.fit.ease.chest",
+    ],
+    [
+      (f: Record<string, unknown>) =>
+        (f.questions = [
+          { id: "q1", kind: "measure", col: "chest", optional: "no" },
+        ]),
+      "content.fit.questions.0.optional",
+    ],
+    [
+      (f: Record<string, unknown>) =>
+        (f.questions = [
+          {
+            id: "q1",
+            kind: "choice",
+            options: [
+              { id: "a", rows: ["s"] },
+              { id: "a", rows: ["m"] },
+            ],
+          },
+        ]),
+      "content.fit.questions.0.options.1.id",
+    ],
+    [
+      (f: Record<string, unknown>) =>
+        (f.questions = [
+          { id: "q1", kind: "choice", options: [{ id: "note", rows: ["s"] }] },
+        ]),
+      "content.fit.questions.0.options.0.id",
+    ],
+    [
+      (f: Record<string, unknown>) =>
+        (f.questions = [
+          { id: "q1", kind: "choice", options: [{ id: "a", rows: [] }] },
+        ]),
+      "content.fit.questions.0.options.0.rows",
+    ],
   ])("refuses bad fit settings (%#)", (change, path) => {
     const errs = errorsAfter((c) => change(c.content.fit));
     expect(errs).toHaveProperty([path]);
@@ -307,20 +448,32 @@ describe("validateChart", () => {
     ]);
   });
 
-  it("refuses content of 100 KB or more", () => {
-    const errs = errorsAfter((c) => {
+  it("refuses content of 100 KB or more, and accepts one byte less", () => {
+    // Pads words until the content JSON is exactly `bytes` long.
+    const sized = (bytes: number) => {
+      const c = chart() as Draft;
       const t = table(c);
+      t.merges = [];
       const cols = t.columns as { id: string; kind: string }[];
       for (const id of ["n1", "n2", "n3"]) cols.push({ id, kind: "text" });
       const rows = t.rows as { id: string; cells: unknown }[];
       for (let i = 0; i < 57; i++) rows.push({ id: `x${i}`, cells: {} });
+      const words = c.content.words as Record<string, string>;
+      const size = () => Buffer.byteLength(JSON.stringify(c.content));
       for (const r of rows)
-        for (const col of ["us", "fitnote", "n1", "n2", "n3"])
-          (c.content.words as Record<string, string>)[`t1.${r.id}.${col}`] =
-            "y".repeat(400);
-      t.merges = [];
-    });
-    expect(errs).toEqual({ content: expect.any(String) });
+        for (const col of ["us", "fitnote", "n1", "n2", "n3"]) {
+          const key = `t1.${r.id}.${col}`;
+          words[key] = "";
+          if (size() > bytes) delete words[key];
+          else words[key] = "y".repeat(Math.min(500, bytes - size()));
+        }
+      expect(size()).toBe(bytes);
+      return c;
+    };
+    expect(() => validateChart(sized(100 * 1024 - 1))).not.toThrow();
+    expect(() => validateChart(sized(100 * 1024))).toThrow(
+      ChartValidationError,
+    );
   });
 
   it("reports every problem at once, by field path", () => {
