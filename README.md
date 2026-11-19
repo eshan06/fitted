@@ -93,7 +93,7 @@ For more information on the Shopify Dev MCP please read [the documentation](http
 
 ### Application Storage
 
-Fitted stores sessions and its app-only state with [Prisma](https://www.prisma.io/) in Postgres: on Railway in production, and from `docker-compose.yml` locally (docs/ARCHITECTURE.md §14). The schema is `prisma/schema.prisma`; `npm run setup` applies the migrations, using `DATABASE_URL`. `.env.example` lists every env var the app reads.
+Fitted stores sessions and its app-only state with [Prisma](https://www.prisma.io/) in Postgres: on Railway in production, and from `docker-compose.yml` locally (docs/ARCHITECTURE.md §14). The schema is `prisma/schema.prisma`; `npm run setup` applies the migrations, using `DATABASE_URL`. `.env.example` lists the env vars in ARCHITECTURE §17.
 
 ### Build
 
