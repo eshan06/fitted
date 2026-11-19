@@ -2,16 +2,23 @@ import type { ActionFunctionArgs } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { action } from "./webhooks.app.uninstalled";
 
-const { webhook, deleteMany } = vi.hoisted(() => ({
+const { webhook, deleteMany, updateMany } = vi.hoisted(() => ({
   webhook: vi.fn(),
   deleteMany: vi.fn(),
+  updateMany: vi.fn(),
 }));
 vi.mock("../shopify.server", () => ({ authenticate: { webhook } }));
-vi.mock("../db.server", () => ({ default: { session: { deleteMany } } }));
+vi.mock("../db.server", () => ({
+  default: { session: { deleteMany }, shop: { updateMany } },
+}));
 
 const shop = "fitted-test.myshopify.com";
 const topic = "APP_UNINSTALLED";
 const session = { id: `offline_${shop}`, shop };
+const clearPlanCache = {
+  where: { shop },
+  data: { planOnStore: null, planCheckedAt: null },
+};
 const webhookRequest = () =>
   new Request("https://fitted.test/webhooks/app/uninstalled", {
     method: "POST",
@@ -33,7 +40,15 @@ describe("app/uninstalled webhook", () => {
     expect(response.status).toBe(200);
   });
 
-  it("touches no database row and returns 200 once the sessions are gone", async () => {
+  it("clears the plan cache, so a reinstall checks the plan and writes it to the store again", async () => {
+    webhook.mockResolvedValue({ shop, session, topic });
+
+    await action({ request: webhookRequest() } as ActionFunctionArgs);
+
+    expect(updateMany).toHaveBeenCalledExactlyOnceWith(clearPlanCache);
+  });
+
+  it("still clears the plan cache once the sessions are gone, and returns 200", async () => {
     webhook.mockResolvedValue({ shop, session: undefined, topic });
 
     const response = await action({
@@ -41,6 +56,7 @@ describe("app/uninstalled webhook", () => {
     } as ActionFunctionArgs);
 
     expect(deleteMany).not.toHaveBeenCalled();
+    expect(updateMany).toHaveBeenCalledExactlyOnceWith(clearPlanCache);
     expect(response.status).toBe(200);
   });
 
@@ -52,11 +68,21 @@ describe("app/uninstalled webhook", () => {
       action({ request: webhookRequest() } as ActionFunctionArgs),
     ).rejects.toBe(unauthorized);
     expect(deleteMany).not.toHaveBeenCalled();
+    expect(updateMany).not.toHaveBeenCalled();
   });
 
   it("fails the request when the delete fails, so Shopify retries", async () => {
     webhook.mockResolvedValue({ shop, session, topic });
     deleteMany.mockRejectedValue(new Error("database unavailable"));
+
+    await expect(
+      action({ request: webhookRequest() } as ActionFunctionArgs),
+    ).rejects.toThrow("database unavailable");
+  });
+
+  it("fails the request when clearing the plan cache fails, so Shopify retries", async () => {
+    webhook.mockResolvedValue({ shop, session: undefined, topic });
+    updateMany.mockRejectedValue(new Error("database unavailable"));
 
     await expect(
       action({ request: webhookRequest() } as ActionFunctionArgs),

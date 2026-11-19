@@ -63,6 +63,16 @@ type = "single_line_text_field"
 [auth]
 redirect_urls = [ "https://example.com/api/auth" ]
 
+# The plan the storefront shows features for; only app/models/billing.server.ts writes it (ARCHITECTURE §7, §8).
+[shop.metafields.app.plan]
+type = "single_line_text_field"
+name = "Fitted plan"
+description = "Which Fitted plan the size guide follows. Fitted keeps it up to date."
+validations.choices = [ "free", "standard", "pro" ]
+
+  [shop.metafields.app.plan.access]
+  admin = "merchant_read"
+
 [build]
 include_config_on_deploy = true
 automatically_update_urls_on_dev = true
