@@ -10,6 +10,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const { shop } = await authenticate.webhook(request);
   await db.session.deleteMany({ where: { shop } });
   await db.shop.deleteMany({ where: { shop } });
+  await db.job.deleteMany({ where: { shop } });
   console.log(
     JSON.stringify({
       level: "info",

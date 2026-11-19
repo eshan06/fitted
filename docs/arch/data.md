@@ -67,7 +67,7 @@ Copy link (#24) gives `https://<shop>/apps/fitted/charts/<handle>`, an app proxy
 
 ## 6. Display rules
 
-Rules live in one shop metafield, `$app.rules` (json, at most 100 KB):
+Rules live in one shop metafield, `$app.rules` (json, under 100 KB):
 
 ```ts
 type Rules = {
@@ -100,14 +100,14 @@ Rules and settings are written whole with `metafieldsSet` and the `compareDigest
 
 Resolution is a pure function, `resolveChart(product, rules, activeChartIds)`, returning a chart GID or null, where `product` is `{ id, tags, productType, vendor, collectionIds, metafields }` and `metafields` maps each compared `namespace.key` to its values (every item of a list). Its result is written to the product metafield `$app.chart` (`metaobject_reference<$app:chart>`, `merchant_read`, `capabilities.admin_filterable = true`) only when it differs from the current value; null removes it with `metafieldsDelete`. Only the resolver writes it.
 
-When it runs (full resolve #73, webhooks and checks #74):
+When it runs (full resolve #73, started by the chart editor in #83, webhooks and checks #74):
 
-- Full resolve, as a `resolve` job (§13): after a rules save, after a chart is published, unpublished or deleted, and from the Home loader when the shop's last full resolve is over 24 hours old (this catches missed webhooks without a scheduler). A bulk query reads every product's facts and current chart; assignments go out in a bulk mutation of `metafieldsSet`, 25 metafields per line, and removals in `metafieldsDelete` batches of 25. A rules change while a resolve runs makes it run once more when it finishes.
+- Full resolve, as a `resolve` job (§13): after a rules save, after a chart is published, unpublished or deleted, and from the Home loader when the shop's last full resolve is over 24 hours old (this catches missed webhooks without a scheduler). A bulk query reads every product's facts and current chart; assignments go out in a bulk mutation of `metafieldsSet`, 25 metafields per line, and removals in `metafieldsDelete` batches of 25. A rules change while a resolve runs makes it run once more when it finishes. Which charts are Active comes from the chart list (§5), read in id order, so a ranked id that is deleted or not a chart never matches. A pass that applies every change it found sets `Shop.resolvedAt` to its start. `metafieldsSet` is atomic, so a line Shopify refuses (a product deleted mid-pass) leaves its products unchanged: the second pass redoes them, and refusals in the second pass fail the job. A bulk operation is polled every 3 seconds and given up after 2 hours.
 - One product: `products/create` and `products/update` resolve that product.
 - `collections/update` re-resolves that collection's products when a rule names the collection.
 - Charts with `auto: false` ("Apply to new products automatically" off) are assigned only by full resolves the merchant causes: a rules save, or a chart published, unpublished or deleted. Webhooks and the 24-hour reconcile neither add nor remove them: a product whose current chart is an `auto: false` chart is left alone, and other products resolve with `auto: false` charts left out of `activeChartIds`.
 
-Echoes: Fitted's own metafield writes and deletes do trigger `products/update`, about 5 seconds later, with an `updated_at` after the write (seen on the dev store in #26). The webhook subscribes with `include_fields = ["id", "updated_at"]`, which also keeps every delivery distinct, so Shopify never debounces a merchant edit away. A delivery whose `updated_at` is earlier than the start of the shop's latest resolve pass is skipped, because that pass read the product afterwards; every other delivery resolves normally, Fitted's own echoes included, so merchant edits are never dropped, and each product a resolve changes costs another rules and product read when its echo arrives (#74 weighs that). A full resolve ends with a second pass, which covers products edited during the first. Comparing before writing stops the loop.
+Echoes: Fitted's own metafield writes and deletes do trigger `products/update`, about 5 seconds later, with an `updated_at` after the write (seen on the dev store in #26). The webhook subscribes with `include_fields = ["id", "updated_at"]`, which also keeps every delivery distinct, so Shopify never debounces a merchant edit away. A delivery whose `updated_at` is earlier than `Shop.resolvedAt` is skipped, because the pass that set it read the product afterwards and applied what it found; every other delivery resolves normally, Fitted's own echoes included, so merchant edits are never dropped, and each product a resolve changes costs another rules and product read when its echo arrives (#74 weighs that). A full resolve ends with a second pass, which covers products edited during the first. Comparing before writing stops the loop.
 
 Counts: "Shown on 148 products" and "Products with a chart: 312 of 340" are `productsCount` queries on the metafield: `metafields.$app.chart:"<gid>"`, and `-metafields.$app.chart:*` for products without one. The `$app` form works in these queries (checked on the dev store in #26 against an `admin_filterable` metaobject reference); the index caught up within a minute of a write.
 
