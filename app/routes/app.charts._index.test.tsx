@@ -87,14 +87,14 @@ describe("loading the list", () => {
     m.chartPages.mockReturnValue(
       pages(
         [stored(1, "ACTIVE", "2026-11-14T10:00:00Z")],
-        [stored(2, "DRAFT", "2026-11-17T10:00:00Z", false)],
+        [{ ...stored(2, "DRAFT", "2026-11-17T10:00:00Z", false), name: "" }],
       ),
     );
     expect(await load()).toEqual({
       rows: [
         {
           id: "gid://shopify/Metaobject/2",
-          name: "Chart 2",
+          name: "Untitled chart",
           template: null,
           status: "DRAFT",
           products: { count: 7, atLeast: false },
@@ -184,9 +184,15 @@ describe("the screen", () => {
   (
     globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
   ).IS_REACT_ACT_ENVIRONMENT = true;
-  const show = async (list: Promise<List>) => {
+  // Each load streams the next list; the last one repeats.
+  const show = async (...lists: Promise<List>[]) => {
+    let calls = 0;
     const Stub = createRoutesStub([
-      { path: "/", Component: SizeCharts, loader: () => ({ list }) },
+      {
+        path: "/",
+        Component: SizeCharts,
+        loader: () => ({ list: lists[Math.min(calls++, lists.length - 1)] }),
+      },
     ]);
     const el = document.createElement("div");
     document.body.replaceChildren(el);
@@ -217,15 +223,41 @@ describe("the screen", () => {
     expect(el.querySelector("s-table")).toBeNull();
   });
 
-  it("shows the error state with Try again", async () => {
-    const el = await show(
-      Promise.resolve({ error: { code: "shopify", message: "x" } }),
-    );
-    expect(el.querySelector("s-banner")?.getAttribute("heading")).toBe(
-      "We couldn't load your size charts",
-    );
-    expect(el.textContent).toContain("Try again");
-    expect(el.querySelector("s-button[loading]")).toBeNull();
+  const button = (el: Element, label: string) =>
+    [...el.querySelectorAll("s-button")].find(
+      (b) => b.textContent === label,
+    ) as HTMLElement;
+
+  it.each([
+    [
+      "Shopify failed",
+      () => Promise.resolve({ error: { code: "shopify", message: "x" } }),
+    ],
+    ["the stream failed", () => Promise.reject(new Error("boom"))],
+  ])(
+    "shows the error state when %s, and Try again reloads",
+    async (_, failed) => {
+      const first = failed() as Promise<List>;
+      first.catch(() => {}); // Await sees the rejection; this only marks it handled
+      const el = await show(
+        first,
+        Promise.resolve({ rows: ROWS, limit: null }),
+      );
+      expect(el.querySelector("s-banner")?.getAttribute("heading")).toBe(
+        "We couldn't load your size charts",
+      );
+      expect(el.querySelector("s-button[loading]")).toBeNull();
+      await act(async () => button(el, "Try again").click());
+      await act(() => new Promise((r) => setTimeout(r, 10)));
+      expect(el.querySelector("s-banner")).toBeNull();
+      expect(el.querySelectorAll("s-table-row")).toHaveLength(3);
+    },
+  );
+
+  it("names the status when only the status filter matches nothing", async () => {
+    const el = await show(Promise.resolve({ rows: [ROWS[0]], limit: null }));
+    await type(el, "s-select", "DRAFT");
+    expect(el.textContent).toContain("No charts match “Draft”");
   });
 
   it("lists the charts, searches them and clears the search", async () => {
@@ -248,10 +280,7 @@ describe("the screen", () => {
 
     await type(el, "s-search-field", "linen");
     expect(text()).toContain("No charts match “linen”");
-    const clear = [...el.querySelectorAll("s-button")].find(
-      (b) => b.textContent === "Clear search",
-    ) as HTMLElement;
-    await act(async () => clear.click());
+    await act(async () => button(el, "Clear search").click());
     expect(el.querySelectorAll("s-table-row")).toHaveLength(3);
 
     await type(el, "s-select", "DRAFT");
