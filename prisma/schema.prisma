@@ -30,3 +30,12 @@ model Session {
   refreshToken        String?
   refreshTokenExpires DateTime?
 }
+
+// One row per shop (ARCHITECTURE §14): the plan cache (§8) and, from #26, the last full resolve (§6).
+model Shop {
+  shop          String    @id
+  plan          String
+  planCheckedAt DateTime?
+  planOnStore   String?
+  resolvedAt    DateTime?
+}

@@ -12,6 +12,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (session) {
     await db.session.deleteMany({ where: { shop } });
   }
+  // Every delivery, retries included: a reinstall then checks the plan and writes it to the store again (§8).
+  await db.shop.updateMany({
+    where: { shop },
+    data: { planOnStore: null, planCheckedAt: null },
+  });
 
   return new Response();
 };

@@ -60,6 +60,14 @@ validations.file_type_options = [ "Image" ]
 name = "Import note"
 type = "single_line_text_field"
 
+# The plan for the storefront: ARCHITECTURE §7, §8. Written only by app/models/billing.server.ts.
+[shop.metafields.app.plan]
+name = "Fitted plan"
+description = "Which Fitted plan the size guide follows. Fitted keeps it up to date."
+type = "single_line_text_field"
+validations.choices = [ "free", "standard", "pro" ]
+access.admin = "merchant_read"
+
 [auth]
 redirect_urls = [ "https://example.com/api/auth" ]
 
