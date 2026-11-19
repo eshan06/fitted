@@ -4,7 +4,7 @@ import { randomInt } from "node:crypto";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { data } from "react-router";
 import { authenticate } from "../shopify.server";
-import { AdminApiError } from "../models/admin.server";
+import { AdminApiError, canReadProducts } from "../models/admin.server";
 import {
   ChartConflictError,
   ChartNotFoundError,
@@ -18,6 +18,7 @@ import {
   validateChart,
 } from "../models/chart.server";
 import { canPublishChart, getPlan } from "../models/billing.server";
+import { startResolve } from "../models/rules.server";
 
 const ROUTE = "app.charts.$id";
 // Thrown as a Response (§15); the app's error boundary prints its text.
@@ -104,24 +105,35 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
     const saved = await updateChart(admin, id, body.chart, body.updatedAt);
     if (saved.status === status) return { ok: true as const };
-    try {
-      await (status === "ACTIVE" ? publishChart : unpublishChart)(admin, id);
-      return { ok: true as const };
-    } catch (err) {
-      if (!(err instanceof AdminApiError)) throw err;
-      logShopifyError(session.shop, err);
-      // A failed action doesn't reload the chart, so the next save needs the new updatedAt.
-      return data(
+    // A failed action doesn't reload the chart, so the next save needs the new updatedAt.
+    const still = (http: number, code: string, then: string) =>
+      data(
         {
           error: {
-            code: "status",
-            message: `Your edits were saved, but the chart is still ${saved.status === "ACTIVE" ? "Published" : "a Draft"}. Change its status and save again.`,
+            code,
+            message: `Your edits were saved, but the chart is still ${saved.status === "ACTIVE" ? "Published" : "a Draft"}. ${then}`,
           },
           updatedAt: saved.updatedAt,
         },
-        { status: 502 },
+        { status: http },
       );
+    try {
+      // The status moves products onto or off the chart, which the resolve job does with the offline token (§13).
+      if (!(await canReadProducts(admin)))
+        return still(
+          403,
+          "product_access",
+          "Publishing or unpublishing a chart changes which products show it, which needs the Products permission on your staff account. Ask the store owner to give you Products access in Settings › Users, then save again.",
+        );
+      await (status === "ACTIVE" ? publishChart : unpublishChart)(admin, id);
+    } catch (err) {
+      if (!(err instanceof AdminApiError)) throw err;
+      logShopifyError(session.shop, err);
+      return still(502, "status", "Change its status and save again.");
     }
+    // Every product follows, `auto: false` charts included (§6).
+    void startResolve(session.shop, true);
+    return { ok: true as const };
   } catch (err) {
     if (err instanceof ChartValidationError)
       return data({ fieldErrors: err.fieldErrors }, { status: 422 });

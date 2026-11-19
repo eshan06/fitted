@@ -4,6 +4,7 @@ import { AdminApiError } from "../models/admin.server";
 import {
   ChartConflictError,
   ChartNotFoundError,
+  ChartValidationError,
   type ChartInput,
 } from "../models/chart.server";
 
@@ -16,10 +17,17 @@ const m = vi.hoisted(() => ({
   publishChart: vi.fn(),
   unpublishChart: vi.fn(),
   countActiveCharts: vi.fn(),
+  canReadProducts: vi.fn(),
+  startResolve: vi.fn(),
 }));
 vi.mock("../shopify.server", () => ({
   authenticate: { admin: m.authenticate },
 }));
+vi.mock("../models/admin.server", async (orig) => ({
+  ...(await orig<typeof import("../models/admin.server")>()),
+  canReadProducts: m.canReadProducts,
+}));
+vi.mock("../models/rules.server", () => ({ startResolve: m.startResolve }));
 vi.mock("../models/billing.server", async (orig) => ({
   ...(await orig<typeof import("../models/billing.server")>()),
   getPlan: m.getPlan,
@@ -115,6 +123,8 @@ beforeEach(() => {
   m.countActiveCharts.mockResolvedValue(2);
   m.getChart.mockResolvedValue(stored("DRAFT"));
   m.updateChart.mockResolvedValue(stored("DRAFT"));
+  m.canReadProducts.mockResolvedValue(true);
+  m.startResolve.mockResolvedValue(undefined);
   redirect.mockImplementation(
     (url) => new Response(null, { status: 302, headers: { Location: url } }),
   );
@@ -269,6 +279,97 @@ describe("saving a chart", () => {
     expect(await save("DRAFT")).toEqual({ ok: true });
     expect(m.unpublishChart).toHaveBeenCalledWith(admin, ID);
     expect(m.getPlan).not.toHaveBeenCalled();
+  });
+
+  it("starts a merchant resolve for the session's shop once the status changes, so products follow (§6)", async () => {
+    let published = () => {};
+    m.publishChart.mockReturnValue(
+      new Promise<void>((r) => (published = () => r())),
+    );
+    // The job runs in the background: one that never ends can't hold the save.
+    m.startResolve.mockReturnValue(new Promise(() => {}));
+    const saving = save("ACTIVE", { shop: "other.myshopify.com" });
+    await vi.waitFor(() => expect(m.publishChart).toHaveBeenCalled());
+    expect(m.startResolve).not.toHaveBeenCalled();
+    published();
+    expect(await saving).toEqual({ ok: true });
+    expect(m.startResolve).toHaveBeenCalledExactlyOnceWith(SHOP, true);
+    m.startResolve.mockClear();
+    m.updateChart.mockResolvedValue(stored("ACTIVE"));
+    expect(await save("DRAFT")).toEqual({ ok: true });
+    expect(m.unpublishChart).toHaveBeenCalled();
+    expect(m.startResolve).toHaveBeenCalledExactlyOnceWith(SHOP, true);
+  });
+
+  it("starts no resolve when the status stays or doesn't change", async () => {
+    await save("DRAFT");
+    m.publishChart.mockRejectedValueOnce(new AdminApiError("x", "y"));
+    expect((await result(save("ACTIVE"))).status).toBe(502);
+    m.publishChart.mockRejectedValueOnce(
+      new ChartValidationError({ name: "Add a name" }),
+    );
+    expect((await result(save("ACTIVE"))).status).toBe(422);
+    m.countActiveCharts.mockResolvedValue(3);
+    expect((await result(save("ACTIVE"))).status).toBe(403);
+    expect(m.startResolve).not.toHaveBeenCalled();
+    // Only a status change needs product access.
+    expect(m.canReadProducts).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the status when the staff member can't read products, since the resolve runs with the offline token (403)", async () => {
+    m.canReadProducts.mockResolvedValue(false);
+    m.updateChart.mockResolvedValue({
+      ...stored("DRAFT"),
+      updatedAt: "2026-11-19T00:00:09Z",
+    });
+    expect(await result(save("ACTIVE"))).toEqual({
+      status: 403,
+      body: {
+        error: {
+          code: "product_access",
+          message:
+            "Your edits were saved, but the chart is still a Draft. Publishing or unpublishing a chart changes which products show it, which needs the Products permission on your staff account. Ask the store owner to give you Products access in Settings › Users, then save again.",
+        },
+        updatedAt: "2026-11-19T00:00:09Z",
+      },
+    });
+    expect(m.canReadProducts).toHaveBeenCalledWith(admin);
+    expect(m.updateChart).toHaveBeenCalled();
+    expect(m.publishChart).not.toHaveBeenCalled();
+    m.updateChart.mockResolvedValue(stored("ACTIVE"));
+    expect((await result(save("DRAFT"))).body).toMatchObject({
+      error: {
+        code: "product_access",
+        message: expect.stringMatching(
+          /^Your edits were saved, .* Published\./,
+        ),
+      },
+    });
+    expect(m.unpublishChart).not.toHaveBeenCalled();
+    expect(m.startResolve).not.toHaveBeenCalled();
+  });
+
+  it("says the status didn't change when product access can't be checked (502)", async () => {
+    m.canReadProducts.mockRejectedValueOnce(
+      new AdminApiError("Shopify request failed", "raw detail"),
+    );
+    const r = await result(save("ACTIVE"));
+    expect(r.status).toBe(502);
+    expect(r.body).toMatchObject({
+      error: {
+        code: "status",
+        message:
+          "Your edits were saved, but the chart is still a Draft. Change its status and save again.",
+      },
+    });
+    expect(JSON.stringify(r.body)).not.toContain("raw detail");
+    expect(JSON.parse(logs[0]).detail).toBe("raw detail");
+    // Re-auth passes through, as from any other Shopify call.
+    const reauth = new Response(null, { status: 401 });
+    m.canReadProducts.mockRejectedValueOnce(reauth);
+    await expect(save("ACTIVE")).rejects.toBe(reauth);
+    expect(m.publishChart).not.toHaveBeenCalled();
+    expect(m.startResolve).not.toHaveBeenCalled();
   });
 
   it("says so when the edits saved but the status didn't change (502)", async () => {
