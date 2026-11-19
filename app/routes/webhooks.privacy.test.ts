@@ -124,10 +124,10 @@ describe.each(routes)("%s webhook signature", (topic, action) => {
 });
 
 describe.each(routes.slice(0, 2))("%s webhook", (topic, action) => {
-  it("acknowledges a signed delivery with 200 and deletes nothing: Fitted stores no shopper data", async () => {
-    const response = await deliver(action, topic);
+  it("acknowledges a signed delivery and its repeat with 200, deleting nothing: Fitted stores no shopper data", async () => {
+    expect((await deliver(action, topic)).status).toBe(200);
+    expect((await deliver(action, topic)).status).toBe(200);
 
-    expect(response.status).toBe(200);
     for (const [table, { deleteMany }] of Object.entries(db)) {
       expect(deleteMany, table).not.toHaveBeenCalled();
     }
@@ -163,9 +163,18 @@ describe("shop/redact webhook", () => {
     }
   });
 
-  it("returns 200 again when Shopify repeats the delivery", async () => {
+  it("returns 200 again when Shopify repeats the delivery and the rows are already gone", async () => {
+    for (const { deleteMany } of Object.values(db)) {
+      deleteMany
+        .mockResolvedValueOnce({ count: 1 })
+        .mockResolvedValueOnce({ count: 0 });
+    }
+
     expect((await deliver(shopRedact, "shop/redact")).status).toBe(200);
     expect((await deliver(shopRedact, "shop/redact")).status).toBe(200);
+    for (const [table, { deleteMany }] of Object.entries(db)) {
+      expect(deleteMany, table).toHaveBeenCalledTimes(2);
+    }
   });
 
   it("fails the request when a delete fails, so Shopify retries", async () => {
