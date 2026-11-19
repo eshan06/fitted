@@ -59,9 +59,28 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    # The same Postgres as docker-compose.yml, so the migrations and the database tests run for real.
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: fitted
+          POSTGRES_PASSWORD: fitted
+          POSTGRES_DB: fitted
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U fitted"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      DATABASE_URL: postgresql://fitted:fitted@localhost:5432/fitted
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
+      - run: npx prisma migrate deploy
+      # Fails when schema.prisma changed without a migration.
+      - run: npx prisma migrate diff --from-url "$DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --exit-code
       - run: npm test
 
   build:

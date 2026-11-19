@@ -1,0 +1,23 @@
+# The local Postgres for development, on Railway's major version (ARCHITECTURE §14).
+# Start it with `docker compose up -d --wait`. The fixed project name makes every
+# worktree share this one server instead of fighting over the port (GOTCHAS).
+name: fitted
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: fitted
+      POSTGRES_PASSWORD: fitted
+      POSTGRES_DB: fitted
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres:/var/lib/postgresql
+    healthcheck:
+      # Over TCP, so it stays unhealthy while the first-run setup server, which listens only on a socket, is up.
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "fitted"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+volumes:
+  postgres:

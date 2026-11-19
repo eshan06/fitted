@@ -59,7 +59,7 @@ Uninstalling: Shopify deletes app-owned definitions at uninstall and keeps the v
 
 ## 14. App database
 
-Postgres on Railway (#8, `DATABASE_URL`), a local Postgres for development (#14), Prisma migrations applied by `npm run setup` (`prisma migrate deploy`). Each table arrives with the first step that needs it.
+Postgres 18 on Railway (#8, `DATABASE_URL`), and the same version locally from `docker-compose.yml` (README). Prisma migrations are applied by `npm run setup` (`prisma migrate deploy`) on Railway and by `npm run dev` locally. Each table arrives with the first step that needs it, with a migration made by `npx prisma migrate dev --name <change>` against the local Postgres. CI applies every migration to Postgres 18, fails when `schema.prisma` has no matching migration, and runs the database tests (`app/db.server.test.ts`) there.
 
 | Table          | Holds                                                                                                                     | Step     |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------- | -------- |
@@ -101,7 +101,7 @@ The template's demo `products/update` event subscription is removed in #13. Clea
 
 Railway project "Fitted", production environment: one app service (#46) and the Postgres database (#8). One instance only: jobs and the event rate limiter live in its memory. `shopify app deploy` ships the app config and the extension.
 
-Env vars, set on the Railway app service and in local `.env`, never committed: `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `SHOPIFY_APP_URL`, `SCOPES`, `DATABASE_URL`, `OPENAI_API_KEY` (a Railway shared variable, referenced as `${{shared.OPENAI_API_KEY}}`), and for the Partner API (§8) `SHOPIFY_PARTNER_ORG_ID`, `SHOPIFY_PARTNER_API_ACCESS_TOKEN` and `SHOPIFY_APP_GID`. #14 adds `.env.example`, listing them without values, with a `!.env.example` line so `.gitignore`'s `.env.*` doesn't hide it.
+Env vars, set on the Railway app service and in local `.env`, never committed: `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `SHOPIFY_APP_URL`, `SCOPES`, `DATABASE_URL`, `OPENAI_API_KEY` (a Railway shared variable, referenced as `${{shared.OPENAI_API_KEY}}`), and for the Partner API (§8) `SHOPIFY_PARTNER_ORG_ID`, `SHOPIFY_PARTNER_API_ACCESS_TOKEN` and `SHOPIFY_APP_GID`. `.env.example` lists them without values; a `!.env.example` line keeps `.gitignore`'s `.env.*` from hiding it.
 
 ## 18. Pipeline
 
