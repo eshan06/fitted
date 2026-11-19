@@ -668,7 +668,7 @@ async function resolvePass(
 type Queued = {
   again: boolean | null;
   // Product deliveries that came while it ran: the newest updated_at of each.
-  // ponytail: lost on a restart, like the job; the next full resolve reads every product.
+  // ponytail: lost on a restart, with the job, whose requeue (§13) reads every product.
   held: Map<string, Date>;
   done: Promise<void>;
 };
@@ -694,9 +694,10 @@ export function startResolve(shop: string, merchant: boolean) {
   };
   resolves.set(shop, entry);
   entry.done = (async () => {
+    let clean = false;
     try {
       for (let next: boolean | null = merchant; next !== null;) {
-        await runResolve(shop, next);
+        clean = await runResolve(shop, next);
         next = entry.again;
         entry.again = null;
       }
@@ -704,9 +705,13 @@ export function startResolve(shop: string, merchant: boolean) {
       resolves.delete(shop);
     }
     // Held deliveries meet the skip now: the passes read most of them since,
-    // the first pass's echoes included (§6).
+    // the first pass's echoes included (§6). They were answered already, so
+    // one that fails after a clean resolve starts another, which holds the
+    // rest; a failed resolve is on its job for the requeue (§13).
     for (const [id, at] of entry.held)
-      await productChanged(shop, id, at).catch(() => {}); // logged already
+      await productChanged(shop, id, at).catch(
+        () => clean && void startResolve(shop, false), // logged already
+      );
   })();
   return entry.done;
 }
@@ -720,6 +725,7 @@ const offlineAdmin = (shop: string): Admin => ({
     (await unauthenticated.admin(shop)).admin.graphql(query, options),
 });
 
+// Whether the job finished.
 async function runResolve(shop: string, merchant: boolean) {
   let id: string | undefined;
   try {
@@ -748,6 +754,7 @@ async function runResolve(shop: string, merchant: boolean) {
       data: { status: "done", result },
     });
     log("info", "Display rules applied", shop, result);
+    return true;
   } catch (err) {
     const known =
       err instanceof AdminApiError || err instanceof StoredRulesError;
@@ -764,6 +771,7 @@ async function runResolve(shop: string, merchant: boolean) {
             error: String(e),
           }),
         );
+    return false;
   }
 }
 

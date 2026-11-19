@@ -40,10 +40,10 @@ api_version = "2027-01"
   topics = [ "products/create", "products/update" ]
   include_fields = [ "id", "updated_at" ]
 
+  # The whole payload: a delete's holds no updated_at to include.
   [[webhooks.subscriptions]]
   uri = "/webhooks/collections"
   topics = [ "collections/update", "collections/delete" ]
-  include_fields = [ "id", "updated_at" ]
 
 # Size charts: ARCHITECTURE §5. Read and written only through app/models/chart.server.ts.
 [metaobjects.app.chart]

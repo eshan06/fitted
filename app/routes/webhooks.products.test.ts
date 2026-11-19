@@ -20,7 +20,7 @@ const h = vi.hoisted(() => {
     shop: { findUnique: vi.fn(), upsert: vi.fn() },
     job: {
       create: vi.fn(async ({ data }: { data: object }) => data),
-      update: vi.fn(async () => ({})),
+      update: vi.fn(async (q: { data: { status?: string } }) => q),
     },
   };
   return { secret, db, graphql: vi.fn() };
@@ -262,6 +262,8 @@ describe("the products/create and products/update webhook", () => {
   it.each([
     ["no id", { updated_at: edited.updated_at }],
     ["an id that isn't a number", { ...edited, id: "7" }],
+    ["an id of 0", { ...edited, id: 0 }],
+    ["a negative id", { ...edited, id: -7 }],
     ["an id too large to read exactly", { ...edited, id: 2 ** 53 }],
     ["no updated_at", { id: 7 }],
     ["an updated_at of null", { id: 7, updated_at: null }],
@@ -324,6 +326,24 @@ describe("the collections/update and collections/delete webhook", () => {
     },
   );
 
+  it("answers Shopify's repeat of a delivery with 200, resolving once more", async () => {
+    const delivery = { id: 21, updated_at: edited.updated_at };
+
+    for (let i = 0; i < 2; i++)
+      expect(
+        (await deliver(collections, "collections/update", delivery)).status,
+      ).toBe(200);
+
+    // A repeat while the first runs makes it run once more; after, it starts
+    // another. Either way two resolves, each finishing.
+    await vi.waitFor(() =>
+      expect(
+        h.db.job.update.mock.calls.filter(([q]) => q.data.status === "done"),
+      ).toHaveLength(2),
+    );
+    expect(h.db.job.create).toHaveBeenCalledTimes(2);
+  });
+
   it("only reads the rules when none names the collection", async () => {
     expect(
       (await deliver(collections, "collections/update", { id: 22 })).status,
@@ -336,6 +356,9 @@ describe("the collections/update and collections/delete webhook", () => {
   it.each([
     ["no id", {}],
     ["an id that isn't a number", { id: "21" }],
+    ["an id of 0", { id: 0 }],
+    ["a negative id", { id: -21 }],
+    ["an id too large to read exactly", { id: 2 ** 53 }],
   ])(
     "answers 400 to a payload with %s, calling Shopify for nothing",
     async (_, payload) => {
