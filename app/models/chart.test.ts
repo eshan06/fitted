@@ -1,5 +1,18 @@
-import { describe, expect, it } from "vitest";
-import { ChartValidationError, validateChart } from "./chart.server";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { type Admin, AdminApiError } from "./admin.server";
+import {
+  ChartConflictError,
+  ChartNotFoundError,
+  ChartValidationError,
+  createChart,
+  deleteChart,
+  getChart,
+  listCharts,
+  publishChart,
+  unpublishChart,
+  updateChart,
+  validateChart,
+} from "./chart.server";
 
 const chart = () => ({
   name: "Women's tops",
@@ -493,5 +506,358 @@ describe("validateChart", () => {
       c.content.unit = "mm";
     });
     expect(Object.keys(errs)).toEqual(["name", "content.unit"]);
+  });
+});
+
+// An in-memory store behind a mocked admin.graphql, answering each chart
+// operation the way the dev store did: json fields stored as JSON strings,
+// `values` replacing the whole record, missing records as RECORD_NOT_FOUND.
+const CHART = "app--448658636801--chart";
+type Rec = {
+  id: string;
+  handle: string;
+  type: string;
+  t: number;
+  status: "ACTIVE" | "DRAFT";
+  values: Record<string, string>;
+};
+function fakeShop() {
+  const recs = new Map<string, Rec>();
+  const hooks: { before?: (op: string) => void } = {};
+  let next = 1;
+  let clock = 0;
+  const node = (r: Rec) => {
+    const text = (k: string) => ({ value: r.values[k] ?? null });
+    return {
+      id: r.id,
+      handle: r.handle,
+      type: r.type,
+      updatedAt: `2026-11-19T00:00:${String(r.t).padStart(2, "0")}Z`,
+      capabilities: { publishable: { status: r.status } },
+      name: text("name"),
+      template: text("template"),
+      content: {
+        jsonValue: r.values.content ? JSON.parse(r.values.content) : null,
+      },
+      measureImage: text("measure_image"),
+      importNote: text("import_note"),
+    };
+  };
+  const notFound = { userErrors: [{ code: "RECORD_NOT_FOUND", message: "x" }] };
+  const graphql = vi.fn(
+    // Variables arrive in each operation's own shape; the fake trusts them.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    async (query: string, opts: { variables: Record<string, any> }) => {
+      const v = opts.variables;
+      const op = /(?:query|mutation) (\w+)/.exec(query)![1];
+      hooks.before?.(op);
+      const rec = recs.get(v.id);
+      const byHandle = [...recs.values()].find(
+        (r) => r.type === CHART && r.handle === v.handle?.handle,
+      );
+      let data: unknown;
+      if (op === "ChartList")
+        data = {
+          metaobjects: {
+            nodes: [...recs.values()]
+              .filter((r) => r.type === CHART)
+              .sort((a, b) => b.t - a.t)
+              .map(node),
+            pageInfo: { hasNextPage: false, endCursor: null },
+          },
+        };
+      else if (op === "ChartGet")
+        data = {
+          metaobject: rec ? node(rec) : null,
+          metaobjectDefinitionByType: { type: CHART },
+        };
+      else if (op === "ChartByHandle")
+        data = { metaobjectByHandle: byHandle ? node(byHandle) : null };
+      else if (op === "ChartCreate") {
+        const r: Rec = byHandle ?? {
+          id: `gid://shopify/Metaobject/${next++}`,
+          handle: v.handle.handle,
+          type: CHART,
+          t: 0,
+          status: "DRAFT",
+          values: {},
+        };
+        for (const f of v.fields) r.values[f.key] = f.value;
+        r.t = ++clock;
+        recs.set(r.id, r);
+        data = { metaobjectUpsert: { metaobject: node(r), userErrors: [] } };
+      } else if (op === "ChartUpdate") {
+        if (!rec)
+          data = { metaobjectUpdate: { metaobject: null, ...notFound } };
+        else {
+          if (v.metaobject.values) rec.values = { ...v.metaobject.values };
+          if (v.metaobject.capabilities)
+            rec.status = v.metaobject.capabilities.publishable.status;
+          rec.t = ++clock;
+          data = {
+            metaobjectUpdate: { metaobject: node(rec), userErrors: [] },
+          };
+        }
+      } else if (op === "ChartDelete") {
+        data = {
+          metaobjectDelete: rec
+            ? { deletedId: v.id, userErrors: [] }
+            : { deletedId: null, ...notFound },
+        };
+        recs.delete(v.id);
+      } else throw new Error(`unexpected operation ${op}`);
+      return new Response(JSON.stringify({ data }));
+    },
+  );
+  const opNames = () =>
+    graphql.mock.calls.map(([q]) => /(?:query|mutation) (\w+)/.exec(q)![1]);
+  return { admin: { graphql } as unknown as Admin, recs, hooks, opNames };
+}
+const HANDLE = "c-abc123def4";
+
+describe("chart reads and writes", () => {
+  let shop: ReturnType<typeof fakeShop>;
+  beforeEach(() => {
+    shop = fakeShop();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("creates a Draft that reads back as the same chart", async () => {
+    const created = await createChart(shop.admin, HANDLE, chart());
+    expect(created).toMatchObject({ handle: HANDLE, status: "DRAFT" });
+    const read = await getChart(shop.admin, created.id);
+    expect(read.chart).toEqual(validateChart(chart()));
+    expect(read.fieldErrors).toBeUndefined();
+    const stored = shop.recs.get(created.id)!.values;
+    expect(JSON.parse(stored.strings)).toEqual(chart().content.words);
+    expect(typeof stored.content).toBe("string");
+    expect(shop.opNames()).toEqual([
+      "ChartByHandle",
+      "ChartCreate",
+      "ChartGet",
+    ]);
+  });
+
+  it("answers a replayed create with the chart it made, without writing", async () => {
+    const first = await createChart(shop.admin, HANDLE, chart());
+    await publishChart(shop.admin, first.id);
+    const again = await createChart(shop.admin, HANDLE, chart());
+    expect(again).toMatchObject({ id: first.id, status: "ACTIVE" });
+    expect(shop.recs.size).toBe(1);
+    expect(shop.opNames().filter((o) => o === "ChartCreate")).toHaveLength(1);
+  });
+
+  it("refuses a create whose handle another chart has (409)", async () => {
+    await createChart(shop.admin, HANDLE, chart());
+    const other = { ...chart(), name: "Other" };
+    await expect(createChart(shop.admin, HANDLE, other)).rejects.toThrow(
+      ChartConflictError,
+    );
+  });
+
+  it("refuses a malformed handle or invalid chart before calling Shopify", async () => {
+    for (const handle of ["c-short", "x-abc123def4", "C-ABC123DEF4", 7]) {
+      const err = await createChart(shop.admin, handle, chart()).catch(
+        (e) => e,
+      );
+      expect(err).toBeInstanceOf(ChartValidationError);
+      expect(err.fieldErrors).toHaveProperty("handle");
+    }
+    const bad = { ...chart(), name: "" };
+    await expect(createChart(shop.admin, HANDLE, bad)).rejects.toThrow(
+      ChartValidationError,
+    );
+    expect(shop.opNames()).toEqual([]);
+  });
+
+  it("lists charts, keeping one that fails validation with its errors", async () => {
+    await createChart(shop.admin, HANDLE, chart());
+    shop.recs.set("gid://shopify/Metaobject/99", {
+      id: "gid://shopify/Metaobject/99",
+      handle: "c-broken0000",
+      type: CHART,
+      t: 50,
+      status: "ACTIVE",
+      values: { name: "Broken", template: "tops", content: '{"v":2}' },
+    });
+    const { charts, next } = await listCharts(shop.admin);
+    expect(next).toBeNull();
+    expect(charts.map((c) => c.name)).toEqual(["Broken", "Women's tops"]);
+    expect(charts[0].chart).toBeUndefined();
+    expect(charts[0].fieldErrors).toHaveProperty(["content.v"]);
+    expect(charts[1].chart).toBeDefined();
+  });
+
+  it("passes the list cursor through and reports the next one", async () => {
+    const graphql = vi.fn(async () =>
+      Response.json({
+        data: {
+          metaobjects: {
+            nodes: [],
+            pageInfo: { hasNextPage: true, endCursor: "abc" },
+          },
+        },
+      }),
+    );
+    const admin = { graphql } as unknown as Admin;
+    expect((await listCharts(admin, "prev")).next).toBe("abc");
+    expect(graphql).toHaveBeenCalledWith(expect.any(String), {
+      variables: { after: "prev" },
+    });
+  });
+
+  it("treats malformed, missing and other-type ids as not found", async () => {
+    shop.recs.set("gid://shopify/Metaobject/5", {
+      id: "gid://shopify/Metaobject/5",
+      handle: HANDLE,
+      type: "app--999--chart",
+      t: 1,
+      status: "DRAFT",
+      values: {},
+    });
+    for (const id of [
+      "gid://shopify/Product/1",
+      "1",
+      undefined,
+      "gid://shopify/Metaobject/404",
+      "gid://shopify/Metaobject/5",
+    ]) {
+      await expect(getChart(shop.admin, id)).rejects.toThrow(
+        ChartNotFoundError,
+      );
+      await expect(deleteChart(shop.admin, id)).rejects.toThrow(
+        ChartNotFoundError,
+      );
+      await expect(publishChart(shop.admin, id)).rejects.toThrow(
+        ChartNotFoundError,
+      );
+      await expect(
+        updateChart(shop.admin, id, chart(), "2026-11-19T00:00:01Z"),
+      ).rejects.toThrow(ChartNotFoundError);
+    }
+    expect(shop.recs.has("gid://shopify/Metaobject/5")).toBe(true);
+    expect(shop.opNames().every((o) => o === "ChartGet")).toBe(true);
+  });
+
+  it("updates a chart saved from what the editor loaded", async () => {
+    const c = { ...chart(), importNote: "Check units" };
+    const created = await createChart(shop.admin, HANDLE, c);
+    const edited = chart();
+    edited.content.words["t1.title"] = "Shirts";
+    const saved = await updateChart(
+      shop.admin,
+      created.id,
+      edited,
+      created.updatedAt,
+    );
+    expect(saved.updatedAt).not.toBe(created.updatedAt);
+    expect(saved.chart?.content.words["t1.title"]).toBe("Shirts");
+    // Omitted from the save, so cleared.
+    expect(saved.chart?.importNote).toBeUndefined();
+    const stored = shop.recs.get(created.id)!.values;
+    expect(JSON.parse(stored.strings)["t1.title"]).toBe("Shirts");
+    expect(stored).not.toHaveProperty("import_note");
+  });
+
+  it("refuses a save over a newer one (409) and leaves the chart alone", async () => {
+    const created = await createChart(shop.admin, HANDLE, chart());
+    await updateChart(shop.admin, created.id, chart(), created.updatedAt);
+    const before = { ...shop.recs.get(created.id)!.values };
+    const stale = { ...chart(), name: "Stale" };
+    await expect(
+      updateChart(shop.admin, created.id, stale, created.updatedAt),
+    ).rejects.toThrow("This chart changed since you opened it");
+    expect(shop.recs.get(created.id)!.values).toEqual(before);
+  });
+
+  it("validates an update before reading or writing", async () => {
+    const created = await createChart(shop.admin, HANDLE, chart());
+    const calls = shop.opNames().length;
+    await expect(
+      updateChart(shop.admin, created.id, { name: "x" }, created.updatedAt),
+    ).rejects.toThrow(ChartValidationError);
+    expect(shop.opNames()).toHaveLength(calls);
+  });
+
+  it("keeps the measure image through a save that sends it", async () => {
+    const img = "gid://shopify/MediaImage/12";
+    const created = await createChart(shop.admin, HANDLE, {
+      ...chart(),
+      measureImage: img,
+    });
+    expect(created.chart?.measureImage).toBe(img);
+    const saved = await updateChart(
+      shop.admin,
+      created.id,
+      { ...chart(), measureImage: img },
+      created.updatedAt,
+    );
+    expect(saved.chart?.measureImage).toBe(img);
+  });
+
+  it("publishes and unpublishes", async () => {
+    const created = await createChart(shop.admin, HANDLE, chart());
+    expect((await publishChart(shop.admin, created.id)).status).toBe("ACTIVE");
+    expect((await unpublishChart(shop.admin, created.id)).status).toBe("DRAFT");
+    // Status changes leave the fields alone.
+    expect((await getChart(shop.admin, created.id)).chart).toEqual(
+      created.chart,
+    );
+  });
+
+  it("never publishes a stored chart that fails validation", async () => {
+    const id = "gid://shopify/Metaobject/7";
+    shop.recs.set(id, {
+      id,
+      handle: HANDLE,
+      type: CHART,
+      t: 1,
+      status: "ACTIVE",
+      values: { name: "Broken", template: "nope", content: "{}" },
+    });
+    await expect(publishChart(shop.admin, id)).rejects.toThrow(
+      ChartValidationError,
+    );
+    expect((await unpublishChart(shop.admin, id)).status).toBe("DRAFT");
+  });
+
+  it("deletes, and counts a chart deleted meanwhile as deleted", async () => {
+    const a = await createChart(shop.admin, HANDLE, chart());
+    await deleteChart(shop.admin, a.id);
+    expect(shop.recs.size).toBe(0);
+    const b = await createChart(shop.admin, "c-0000000001", chart());
+    shop.hooks.before = (op) => op === "ChartDelete" && shop.recs.clear();
+    await expect(deleteChart(shop.admin, b.id)).resolves.toBeUndefined();
+  });
+
+  it("reports a chart deleted between read and write as not found", async () => {
+    const a = await createChart(shop.admin, HANDLE, chart());
+    shop.hooks.before = (op) => op === "ChartUpdate" && shop.recs.clear();
+    await expect(publishChart(shop.admin, a.id)).rejects.toThrow(
+      ChartNotFoundError,
+    );
+    const b = await createChart(shop.admin, HANDLE, chart());
+    await expect(
+      updateChart(shop.admin, b.id, chart(), b.updatedAt),
+    ).rejects.toThrow(ChartNotFoundError);
+  });
+
+  it("surfaces other Shopify refusals as AdminApiError (502)", async () => {
+    const graphql = vi.fn(async () =>
+      Response.json({
+        data: {
+          metaobjectByHandle: null,
+          metaobjectUpsert: {
+            metaobject: null,
+            userErrors: [{ code: "INVALID", message: "Bad value" }],
+          },
+        },
+      }),
+    );
+    const admin = { graphql } as unknown as Admin;
+    await expect(createChart(admin, HANDLE, chart())).rejects.toThrow(
+      AdminApiError,
+    );
   });
 });

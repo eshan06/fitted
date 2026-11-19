@@ -1,6 +1,8 @@
 // Size charts as `$app:chart` metaobjects (ARCHITECTURE §5). Every write goes
 // through validateChart: the editor, imports, restores, templates, duplicates
 // and OpenAI output.
+import { isDeepStrictEqual } from "node:util";
+import { type Admin, AdminApiError, adminGraphql } from "./admin.server";
 
 export const TEMPLATES = [
   "blank",
@@ -360,4 +362,277 @@ export function validateChart(input: unknown): ChartInput {
   if (input.measureImage) out.measureImage = input.measureImage as string;
   if (input.importNote) out.importNote = input.importNote as string;
   return out;
+}
+
+// Reads and writes (§5, §15). Each error maps to one status: ChartNotFoundError
+// 404, ChartConflictError 409, ChartValidationError 422, AdminApiError 502.
+export class ChartNotFoundError extends Error {
+  constructor() {
+    super("Chart not found");
+  }
+}
+export class ChartConflictError extends Error {}
+
+export type ChartStatus = "ACTIVE" | "DRAFT";
+// A stored chart that fails validation keeps its row, with fieldErrors in
+// place of chart, so screens can show the error on it instead of dropping it.
+export type StoredChart = {
+  id: string;
+  handle: string;
+  status: ChartStatus;
+  updatedAt: string;
+  name: string;
+} & (
+  | { chart: ChartInput; fieldErrors?: undefined }
+  | { chart?: undefined; fieldErrors: FieldErrors }
+);
+
+const TYPE = "$app:chart";
+const GID = /^gid:\/\/shopify\/Metaobject\/\d+$/;
+// Minted by the new-chart screen (§5); imports add their own form with #26.
+const HANDLE = /^c-[a-z0-9]{10}$/;
+const FIELDS = `#graphql
+  fragment ChartFields on Metaobject {
+    id
+    handle
+    type
+    updatedAt
+    capabilities { publishable { status } }
+    name: field(key: "name") { value }
+    template: field(key: "template") { value }
+    content: field(key: "content") { jsonValue }
+    measureImage: field(key: "measure_image") { value }
+    importNote: field(key: "import_note") { value }
+  }`;
+const UPDATE = `#graphql
+  ${FIELDS}
+  mutation ChartUpdate($id: ID!, $metaobject: MetaobjectUpdateInput!) {
+    metaobjectUpdate(id: $id, metaobject: $metaobject) {
+      metaobject { ...ChartFields }
+      userErrors { field message code }
+    }
+  }`;
+
+type Field = { value?: string | null; jsonValue?: unknown } | null;
+type Node = {
+  id: string;
+  handle: string;
+  type: string;
+  updatedAt: string;
+  capabilities: { publishable: { status: ChartStatus } | null };
+  name: Field;
+  template: Field;
+  content: Field;
+  measureImage: Field;
+  importNote: Field;
+};
+
+function fromNode(n: Node): StoredChart {
+  const raw: Record<string, unknown> = {};
+  const put = (k: string, v: unknown) => {
+    if (v != null) raw[k] = v;
+  };
+  put("name", n.name?.value);
+  put("template", n.template?.value);
+  put("content", n.content?.jsonValue);
+  put("measureImage", n.measureImage?.value);
+  put("importNote", n.importNote?.value);
+  const meta = {
+    id: n.id,
+    handle: n.handle,
+    status: n.capabilities.publishable?.status ?? "DRAFT",
+    updatedAt: n.updatedAt,
+    name: n.name?.value ?? "",
+  };
+  try {
+    return { ...meta, chart: validateChart(raw) };
+  } catch (err) {
+    if (err instanceof ChartValidationError)
+      return { ...meta, fieldErrors: err.fieldErrors };
+    throw err;
+  }
+}
+
+// json fields take a JSON string; metaobjectUpdate's `values` replaces the
+// whole record, so an omitted measure_image or import_note is cleared.
+const values = (c: ChartInput) => ({
+  name: c.name,
+  template: c.template,
+  content: JSON.stringify(c.content),
+  strings: JSON.stringify(c.content.words),
+  ...(c.measureImage && { measure_image: c.measureImage }),
+  ...(c.importNote && { import_note: c.importNote }),
+});
+
+const notFound = (err: unknown) =>
+  err instanceof AdminApiError &&
+  err.userErrors.some((e) => e.code === "RECORD_NOT_FOUND");
+
+// A chart deleted between our read and our write comes back as a user error.
+async function write(admin: Admin, variables: Record<string, unknown>) {
+  try {
+    const data = await adminGraphql<{
+      metaobjectUpdate: { metaobject: Node };
+    }>(admin, UPDATE, variables);
+    return fromNode(data.metaobjectUpdate.metaobject);
+  } catch (err) {
+    throw notFound(err) ? new ChartNotFoundError() : err;
+  }
+}
+
+export async function listCharts(admin: Admin, after?: string) {
+  const data = await adminGraphql<{
+    metaobjects: {
+      nodes: Node[];
+      pageInfo: { hasNextPage: boolean; endCursor: string | null };
+    };
+  }>(
+    admin,
+    `#graphql
+    ${FIELDS}
+    query ChartList($after: String) {
+      metaobjects(type: "${TYPE}", first: 50, after: $after, sortKey: "updated_at", reverse: true) {
+        nodes { ...ChartFields }
+        pageInfo { hasNextPage endCursor }
+      }
+    }`,
+    { after: after ?? null },
+    { retry: true },
+  );
+  const { nodes, pageInfo } = data.metaobjects;
+  return {
+    charts: nodes.map(fromNode),
+    next: pageInfo.hasNextPage ? pageInfo.endCursor : null,
+  };
+}
+
+// The id comes from a browser: it must be a metaobject of this app's chart
+// type, or it is not found.
+export async function getChart(admin: Admin, id: unknown) {
+  if (typeof id !== "string" || !GID.test(id)) throw new ChartNotFoundError();
+  const data = await adminGraphql<{
+    metaobject: Node | null;
+    metaobjectDefinitionByType: { type: string } | null;
+  }>(
+    admin,
+    `#graphql
+    ${FIELDS}
+    query ChartGet($id: ID!) {
+      metaobject(id: $id) { ...ChartFields }
+      metaobjectDefinitionByType(type: "${TYPE}") { type }
+    }`,
+    { id },
+    { retry: true },
+  );
+  const n = data.metaobject;
+  if (!n || n.type !== data.metaobjectDefinitionByType?.type)
+    throw new ChartNotFoundError();
+  return fromNode(n);
+}
+
+// Created as a Draft by handle, so a retried create lands on the same chart.
+export async function createChart(
+  admin: Admin,
+  handle: unknown,
+  input: unknown,
+) {
+  if (typeof handle !== "string" || !HANDLE.test(handle))
+    throw new ChartValidationError({ handle: "Reload the page and try again" });
+  const chart = validateChart(input);
+  const key = { type: TYPE, handle };
+  const { metaobjectByHandle: existing } = await adminGraphql<{
+    metaobjectByHandle: Node | null;
+  }>(
+    admin,
+    `#graphql
+    ${FIELDS}
+    query ChartByHandle($handle: MetaobjectHandleInput!) {
+      metaobjectByHandle(handle: $handle) { ...ChartFields }
+    }`,
+    { handle: key },
+    { retry: true },
+  );
+  if (existing) {
+    const stored = fromNode(existing);
+    // Compared as stored JSON, so keys holding undefined don't count.
+    if (isDeepStrictEqual(stored.chart, JSON.parse(JSON.stringify(chart))))
+      return stored;
+    throw new ChartConflictError("Another chart already uses this handle");
+  }
+  const data = await adminGraphql<{
+    metaobjectUpsert: { metaobject: Node };
+  }>(
+    admin,
+    `#graphql
+    ${FIELDS}
+    mutation ChartCreate($handle: MetaobjectHandleInput!, $fields: [MetaobjectFieldInput!]!) {
+      metaobjectUpsert(handle: $handle, metaobject: { fields: $fields, capabilities: { publishable: { status: DRAFT } } }) {
+        metaobject { ...ChartFields }
+        userErrors { field message code }
+      }
+    }`,
+    {
+      handle: key,
+      fields: Object.entries(values(chart)).map(([k, value]) => ({
+        key: k,
+        value,
+      })),
+    },
+    { retry: true },
+  );
+  return fromNode(data.metaobjectUpsert.metaobject);
+}
+
+// ponytail: read-then-write, and updatedAt has whole-second precision, so two
+// saves in the same second can both pass. Shopify has no compare-and-swap for
+// metaobjects; a version counter in content would close it if it ever bites.
+export async function updateChart(
+  admin: Admin,
+  id: unknown,
+  input: unknown,
+  loadedUpdatedAt: unknown,
+) {
+  const chart = validateChart(input);
+  const current = await getChart(admin, id);
+  if (current.updatedAt !== loadedUpdatedAt)
+    throw new ChartConflictError("This chart changed since you opened it");
+  return write(admin, {
+    id: current.id,
+    metaobject: { values: values(chart) },
+  });
+}
+
+async function setStatus(admin: Admin, id: unknown, status: ChartStatus) {
+  const current = await getChart(admin, id);
+  // A chart that fails validation never reaches shoppers.
+  if (status === "ACTIVE" && current.fieldErrors)
+    throw new ChartValidationError(current.fieldErrors);
+  return write(admin, {
+    id: current.id,
+    metaobject: { capabilities: { publishable: { status } } },
+  });
+}
+export const publishChart = (admin: Admin, id: unknown) =>
+  setStatus(admin, id, "ACTIVE");
+export const unpublishChart = (admin: Admin, id: unknown) =>
+  setStatus(admin, id, "DRAFT");
+
+export async function deleteChart(admin: Admin, id: unknown) {
+  const current = await getChart(admin, id);
+  try {
+    await adminGraphql(
+      admin,
+      `#graphql
+      mutation ChartDelete($id: ID!) {
+        metaobjectDelete(id: $id) {
+          deletedId
+          userErrors { field message code }
+        }
+      }`,
+      { id: current.id },
+    );
+  } catch (err) {
+    // Deleted by someone else in the meantime: it is gone either way.
+    if (!notFound(err)) throw err;
+  }
 }
