@@ -66,7 +66,7 @@ Postgres 18 on Railway (#8, `DATABASE_URL`), and the same version locally from `
 | `Session`      | The template's sessions: offline, plus online ones with the staff member's name and email from #24 (§3)                   | exists   |
 | `Shop`         | `shop` (key), `plan`, `planCheckedAt`, `planOnStore` (last value written to `$app.plan`), `resolvedAt`                    | #17      |
 | `ChartVersion` | `shop`, `chartId`, `createdAt`, `by` (display name or source), `summary`, `snapshot` (json)                               | #24      |
-| `Job`          | `shop`, `kind` (`import` or `resolve`), `status` (`running`, `done`, `failed`), `progress`, `result`, `error`, timestamps | #26, #34 |
+| `Job`          | `shop`, `kind` (`import` or `resolve`), `status` (`running`, `done`, `failed`), `progress`, `result`, `error`, timestamps | #73, #34 |
 | `Event`        | `shop`, `id`, `type`, `chartId`, `productId`, `size`, `createdAt`; unique on `(shop, id)`                                 | #44      |
 | `AiUsage`      | `shop`, `day`, `count`; key `(shop, day)`                                                                                 | #38      |
 
@@ -92,8 +92,8 @@ Subscribed in `shopify.app.toml`, handled in `app/routes/webhooks.*` (§3):
 | `app/scopes_update`                          | Updates the session's scopes                              | exists |
 | `customers/data_request`, `customers/redact` | Acknowledge (no shopper data stored)                      | #16    |
 | `shop/redact`                                | Deletes every app database row for the shop               | #16    |
-| `products/create`, `products/update`         | Resolve that product's chart (§6)                         | #26    |
-| `collections/update`                         | Re-resolve the collection's products when a rule names it | #26    |
+| `products/create`, `products/update`         | Resolve that product's chart (§6)                         | #74    |
+| `collections/update`                         | Re-resolve the collection's products when a rule names it | #74    |
 
 The template's demo `products/update` event subscription is removed in #13. Clearing the plan cache at uninstall arrives with the `Shop` table (#17). App Pricing sends no billing webhooks (§8).
 
