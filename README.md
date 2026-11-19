@@ -24,6 +24,20 @@ shopify app init --template=https://github.com/Shopify/shopify-app-template-reac
 
 ### Local Development
 
+The app database is Postgres. Start the local one (needs Docker):
+
+```shell
+docker compose up -d --wait
+```
+
+Add this line to `.env` once (git ignores the file):
+
+```
+DATABASE_URL=postgresql://fitted:fitted@localhost:5432/fitted
+```
+
+Then run the app; it applies the migrations before it starts:
+
 ```shell
 shopify app dev
 ```
@@ -79,21 +93,7 @@ For more information on the Shopify Dev MCP please read [the documentation](http
 
 ### Application Storage
 
-This template uses [Prisma](https://www.prisma.io/) to store session data, by default using an [SQLite](https://www.sqlite.org/index.html) database.
-The database is defined as a Prisma schema in `prisma/schema.prisma`.
-
-This use of SQLite works in production if your app runs as a single instance.
-The database that works best for you depends on the data your app needs and how it is queried.
-Here’s a short list of databases providers that provide a free tier to get started:
-
-| Database   | Type             | Hosters                                                                                                                                                                                                                                    |
-| ---------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| MySQL      | SQL              | [Digital Ocean](https://www.digitalocean.com/products/managed-databases-mysql), [Planet Scale](https://planetscale.com/), [Amazon Aurora](https://aws.amazon.com/rds/aurora/), [Google Cloud SQL](https://cloud.google.com/sql/docs/mysql) |
-| PostgreSQL | SQL              | [Digital Ocean](https://www.digitalocean.com/products/managed-databases-postgresql), [Amazon Aurora](https://aws.amazon.com/rds/aurora/), [Google Cloud SQL](https://cloud.google.com/sql/docs/postgres)                                   |
-| Redis      | Key-value        | [Digital Ocean](https://www.digitalocean.com/products/managed-databases-redis), [Amazon MemoryDB](https://aws.amazon.com/memorydb/)                                                                                                        |
-| MongoDB    | NoSQL / Document | [Digital Ocean](https://www.digitalocean.com/products/managed-databases-mongodb), [MongoDB Atlas](https://www.mongodb.com/atlas/database)                                                                                                  |
-
-To use one of these, you can use a different [datasource provider](https://www.prisma.io/docs/reference/api-reference/prisma-schema-reference#datasource) in your `schema.prisma` file, or a different [SessionStorage adapter package](https://github.com/Shopify/shopify-api-js/blob/main/packages/shopify-api/docs/guides/session-storage.md).
+Fitted stores sessions and its app-only state with [Prisma](https://www.prisma.io/) in Postgres: on Railway in production, and from `docker-compose.yml` locally (docs/ARCHITECTURE.md §14). The schema is `prisma/schema.prisma`; `npm run setup` applies the migrations, using `DATABASE_URL`. `.env.example` lists the env vars in ARCHITECTURE §17.
 
 ### Build
 
@@ -135,10 +135,10 @@ When you reach the step for [setting up environment variables](https://shopify.d
 If you get an error like:
 
 ```
-The table `main.Session` does not exist in the current database.
+The table `public.Session` does not exist in the current database.
 ```
 
-Create the database for Prisma. Run the `setup` script in `package.json` using `npm`, `yarn` or `pnpm`.
+Start the local Postgres (`docker compose up -d --wait`), check `DATABASE_URL` in `.env`, then run `npm run setup` to apply the migrations.
 
 ### Navigating/redirecting breaks an embedded app
 
