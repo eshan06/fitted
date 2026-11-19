@@ -10,14 +10,15 @@ export type UserError = {
   code?: string | null;
 };
 
-// A failed Shopify call: routes answer 502 and log, never show, the message.
+// A failed Shopify call. Routes answer 502 and log `detail`, Shopify's raw
+// text, as a §15 JSON line with their shop and route; it is never shown.
 export class AdminApiError extends Error {
   constructor(
     message: string,
+    readonly detail: string,
     readonly userErrors: UserError[] = [],
-    options?: { cause?: unknown },
   ) {
-    super(message, options);
+    super(message);
   }
 }
 
@@ -43,8 +44,7 @@ export async function adminGraphql<T>(
         await sleep(BACKOFF_MS[attempt]);
         continue;
       }
-      console.error("Admin API request failed", err);
-      throw new AdminApiError("Shopify request failed", [], { cause: err });
+      throw new AdminApiError("Shopify request failed", String(err));
     }
     const userErrors = Object.values(body.data).flatMap((v) =>
       v &&
@@ -53,10 +53,12 @@ export async function adminGraphql<T>(
         ? (v as { userErrors: UserError[] }).userErrors
         : [],
     );
-    if (userErrors.length) {
-      console.error("Admin API user errors", userErrors);
-      throw new AdminApiError("Shopify refused the change", userErrors);
-    }
+    if (userErrors.length)
+      throw new AdminApiError(
+        "Shopify refused the change",
+        JSON.stringify(userErrors),
+        userErrors,
+      );
     return body.data as T;
   }
 }

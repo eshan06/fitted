@@ -619,7 +619,6 @@ describe("chart reads and writes", () => {
   let shop: ReturnType<typeof fakeShop>;
   beforeEach(() => {
     shop = fakeShop();
-    vi.spyOn(console, "error").mockImplementation(() => {});
   });
   afterEach(() => vi.restoreAllMocks());
 
@@ -841,6 +840,53 @@ describe("chart reads and writes", () => {
     await expect(
       updateChart(shop.admin, b.id, chart(), b.updatedAt),
     ).rejects.toThrow(ChartNotFoundError);
+  });
+
+  it("retries a create lost in transit, but never an update or delete", async () => {
+    vi.useFakeTimers();
+    let failures = 1;
+    shop.hooks.before = (op) => {
+      if (op === "ChartCreate" && failures-- > 0) throw new Error("hang up");
+    };
+    const pending = createChart(shop.admin, HANDLE, chart());
+    await vi.runAllTimersAsync();
+    const a = await pending;
+    vi.useRealTimers();
+    shop.hooks.before = (op) => {
+      if (op === "ChartUpdate" || op === "ChartDelete")
+        throw new Error("hang up");
+    };
+    await expect(
+      updateChart(shop.admin, a.id, chart(), a.updatedAt),
+    ).rejects.toThrow(AdminApiError);
+    await expect(publishChart(shop.admin, a.id)).rejects.toThrow(AdminApiError);
+    await expect(deleteChart(shop.admin, a.id)).rejects.toThrow(AdminApiError);
+    expect(
+      shop.opNames().filter((o) => o !== "ChartGet" && o !== "ChartByHandle"),
+    ).toEqual([
+      "ChartCreate",
+      "ChartCreate",
+      "ChartUpdate",
+      "ChartUpdate",
+      "ChartDelete",
+    ]);
+  });
+
+  it("treats every id as not found when the chart definition is missing", async () => {
+    const created = await createChart(shop.admin, HANDLE, chart());
+    const { graphql } = shop.admin as unknown as {
+      graphql: (q: string, o: object) => Promise<Response>;
+    };
+    const admin = {
+      graphql: async (q: string, o: object) => {
+        const body = await (await graphql(q, o)).json();
+        body.data.metaobjectDefinitionByType = null;
+        return Response.json(body);
+      },
+    } as unknown as Admin;
+    await expect(getChart(admin, created.id)).rejects.toThrow(
+      ChartNotFoundError,
+    );
   });
 
   it("surfaces other Shopify refusals as AdminApiError (502)", async () => {

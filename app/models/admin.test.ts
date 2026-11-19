@@ -23,7 +23,6 @@ async function run<T>(p: Promise<T>) {
 
 beforeEach(() => {
   vi.useFakeTimers();
-  vi.spyOn(console, "error").mockImplementation(() => {});
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -31,6 +30,21 @@ afterEach(() => {
 });
 
 describe("adminGraphql", () => {
+  it("leaves logging to the caller, who knows the shop and route (§15)", async () => {
+    const logs = (["log", "error", "warn"] as const).map((k) =>
+      vi.spyOn(console, k).mockImplementation(() => {}),
+    );
+    const failed = adminWith(new Error("socket hang up"));
+    const e1 = (await run(adminGraphql(failed.admin, "q"))).error;
+    const refused = adminWith({
+      data: { m: { userErrors: [{ message: "Value is bad" }] } },
+    });
+    const e2 = (await run(adminGraphql(refused.admin, "m"))).error;
+    expect((e1 as AdminApiError).detail).toContain("socket hang up");
+    expect((e2 as AdminApiError).detail).toContain("Value is bad");
+    for (const spy of logs) expect(spy).not.toHaveBeenCalled();
+  });
+
   it("returns data and sends the variables", async () => {
     const { admin, graphql } = adminWith({ data: { shop: { name: "A" } } });
     const r = await run(
