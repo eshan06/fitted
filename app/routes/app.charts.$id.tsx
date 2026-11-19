@@ -17,12 +17,7 @@ import {
   updateChart,
   validateChart,
 } from "../models/chart.server";
-import {
-  FREE_ACTIVE_CHARTS,
-  canPublishChart,
-  getPlan,
-  plansUrl,
-} from "../models/billing.server";
+import { canPublishChart, getPlan } from "../models/billing.server";
 import { startResolve } from "../models/rules.server";
 import { Editor } from "../components/chart-table/Editor";
 import { blankDraft, toDraft } from "../components/chart-table/model";
@@ -103,21 +98,11 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       (await getChart(admin, id)).status !== "ACTIVE"
     ) {
       const { plan, checkFailed } = await getPlan(session.shop);
-      const published = await countActiveCharts(admin);
-      if (!canPublishChart(plan, published))
-        return data(
-          {
-            error: {
-              code: "plan_limit",
-              message: `${checkFailed ? "Fitted couldn't check your plan just now, so it counts as Free. " : ""}Free includes ${FREE_ACTIVE_CHARTS} published charts. Nothing was saved: set this chart to Draft to save your changes, or upgrade to Standard to publish more.`,
-              // The banner's numbers and its See plans link.
-              limit: FREE_ACTIVE_CHARTS,
-              published,
-              checkFailed,
-              plansUrl: plansUrl(session.shop),
-            },
-          },
-          { status: 403 },
+      if (!canPublishChart(plan, await countActiveCharts(admin)))
+        return fail(
+          403,
+          "plan_limit",
+          `${checkFailed ? "Fitted couldn't check your plan just now, so it counts as Free. " : ""}Free includes 3 published charts. Nothing was saved: set this chart to Draft to save your changes, or upgrade to Standard to publish more.`,
         );
     }
     const saved = await updateChart(admin, id, body.chart, body.updatedAt);

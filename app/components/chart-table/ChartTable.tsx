@@ -2,61 +2,53 @@ import type { FieldErrors } from "../../models/chart.server";
 import { type Draft, type Problem, setCell, setWord } from "./model";
 
 // The first table as an editable sheet. Headers and size, country and text
-// cells are words; measure cells are typed numbers (model.ts). Every input has
-// an id the banner's list links to.
-export function ChartTable({
-  draft,
-  errors,
-  problems,
-  onChange,
-}: {
+// cells are words; measure cells are typed numbers (model.ts). Each input's id
+// is the one the banner links to (model.problems).
+export function ChartTable(props: {
   draft: Draft;
   errors: FieldErrors;
   problems: Problem[];
   onChange: (d: Draft) => void;
 }) {
+  const { draft, errors, onChange } = props;
   const t = draft.content.tables[0];
   const words = draft.content.words;
-  const cell = (
+  const word = (key: string) => ({
+    value: words[key] ?? "",
+    set: (v: string) => setWord(draft, key, v),
+    error: errors[`content.words.${key}`],
+  });
+  const input = (
     id: string,
-    value: string,
-    set: (v: string) => Draft,
     label: string,
-    error?: string,
+    f: { value: string; set: (v: string) => Draft; error?: string },
   ) => (
     <input
       id={id}
-      className={error ? "field cell bad" : "field cell"}
+      className={f.error ? "field cell bad" : "field cell"}
       aria-label={label}
-      aria-invalid={error ? true : undefined}
-      aria-describedby={error ? `${id}-err` : undefined}
-      value={value}
-      onChange={(e) => onChange(set(e.target.value))}
+      aria-invalid={f.error ? true : undefined}
+      aria-describedby={f.error ? `${id}-err` : undefined}
+      value={f.value}
+      onChange={(e) => onChange(f.set(e.target.value))}
     />
   );
-  const colName = (id: string, i: number) =>
-    words[`${t.id}.${id}`] || (i === 0 ? "Size" : "Measurement");
-  const listed = problems.filter((p) => p.id?.startsWith("cell-"));
+  const listed = props.problems.filter((p) => p.id?.startsWith("cell-"));
   return (
     <>
-      <div style={{ overflowX: "auto" }}>
+      <div className="scroll">
         <table className="sheet">
           <thead>
             <tr>
-              {t.columns.map((col, i) => {
-                const key = `${t.id}.${col.id}`;
-                return (
-                  <th scope="col" key={col.id}>
-                    {cell(
-                      `cell-h-${col.id}`,
-                      words[key] ?? "",
-                      (v) => setWord(draft, key, v),
-                      `Column ${i + 1} name`,
-                      errors[`content.words.${key}`],
-                    )}
-                  </th>
-                );
-              })}
+              {t.columns.map((col, i) => (
+                <th scope="col" key={col.id}>
+                  {input(
+                    `cell-h-${col.id}`,
+                    `Column ${i + 1} name`,
+                    word(`${t.id}.${col.id}`),
+                  )}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
@@ -67,33 +59,23 @@ export function ChartTable({
               return (
                 <tr key={row.id}>
                   {t.columns.map((col, i) => {
-                    const id = `cell-${row.id}-${col.id}`;
-                    const label = i ? `${size}, ${colName(col.id, i)}` : size;
-                    if (col.kind === "measure") {
-                      const k = `${row.id}.${col.id}`;
-                      return (
-                        <td key={col.id}>
-                          {cell(
-                            id,
-                            draft.cells[k] ?? "",
-                            (v) => setCell(draft, row.id, col.id, v),
-                            label,
-                            errors[
-                              `content.tables.0.rows.${ri}.cells.${col.id}`
-                            ],
-                          )}
-                        </td>
-                      );
-                    }
-                    const key = `${t.id}.${row.id}.${col.id}`;
+                    const k = `${row.id}.${col.id}`;
+                    const name = words[`${t.id}.${col.id}`] || "Measurement";
                     return (
                       <td key={col.id}>
-                        {cell(
-                          id,
-                          words[key] ?? "",
-                          (v) => setWord(draft, key, v),
-                          i ? label : `Size ${ri + 1}`,
-                          errors[`content.words.${key}`],
+                        {input(
+                          `cell-${row.id}-${col.id}`,
+                          i ? `${size}, ${name}` : `Size ${ri + 1}`,
+                          col.kind === "measure"
+                            ? {
+                                value: draft.cells[k] ?? "",
+                                set: (v) => setCell(draft, row.id, col.id, v),
+                                error:
+                                  errors[
+                                    `content.tables.0.rows.${ri}.cells.${col.id}`
+                                  ],
+                              }
+                            : word(`${t.id}.${k}`),
                         )}
                       </td>
                     );
@@ -105,7 +87,7 @@ export function ChartTable({
         </table>
       </div>
       {listed.length > 0 && (
-        <ul className="err">
+        <ul className="list err">
           {listed.map((p) => (
             <li key={p.id} id={`${p.id}-err`}>
               <strong>{p.where}:</strong> {p.long}

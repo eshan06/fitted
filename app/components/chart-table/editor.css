@@ -1,4 +1,4 @@
-/* The Editor board's look (Fitted canvas). Sizes in rem so large text grows. */
+/* The Editor board's look (Fitted canvas), in rem so large text grows. */
 .editor {
   display: flex;
   flex-direction: column;
@@ -8,16 +8,16 @@
 }
 .editor a {
   color: #2448a8;
-  font-size: 0.8125rem;
   font-weight: 600;
 }
 .editor h1 {
   margin: 0;
   font-size: 1.5rem;
 }
-.editor h2 {
-  margin: 0;
-  font-size: 1rem;
+.editor label {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 600;
 }
 .editor .row {
   display: flex;
@@ -26,17 +26,8 @@
   align-items: center;
   justify-content: space-between;
 }
-.editor .start {
-  justify-content: flex-start;
-}
-.editor .top {
-  align-items: flex-start;
-}
-.editor .grow2 {
-  flex: 2 1 220px;
-}
-.editor .grow1 {
-  flex: 1 1 160px;
+.editor .grow {
+  flex: 1 1 200px;
 }
 .editor .card {
   background: #fff;
@@ -49,40 +40,34 @@
 }
 .editor .field {
   font: inherit;
-  color: inherit;
+  font-weight: 400;
   background: #fff;
   border: 1px solid #c9cccf;
   border-radius: 8px;
-  min-height: 36px;
+  min-height: 2.25rem;
+  margin-top: 6px;
   padding: 0 10px;
   box-sizing: border-box;
   width: 100%;
 }
+.editor textarea.field {
+  padding: 8px 10px;
+}
 .editor .auto {
   width: auto;
-}
-.editor .note {
-  padding: 8px 10px;
+  margin: 0;
 }
 .editor .bad {
   border-color: #8e1f0b;
   box-shadow: inset 0 0 0 1px #8e1f0b;
   background: #fee9e8;
 }
-.editor .lbl {
-  display: block;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  margin-bottom: 6px;
-}
 .editor .help {
   margin: 0;
   font-size: 0.8125rem;
   color: #5c5f62;
-  line-height: 1.5;
 }
 .editor .err {
-  margin: 0;
   color: #8e1f0b;
 }
 .editor .list {
@@ -95,22 +80,23 @@
   background: #ecedee;
   border-radius: 8px;
 }
-.editor .seg {
-  min-height: 32px;
+.editor .segs button {
+  min-height: 2rem;
   padding: 0 12px;
   border: 0;
+  border-radius: 6px;
   background: transparent;
   font: inherit;
-  font-size: 0.8125rem;
   font-weight: 600;
   color: #45484b;
-  border-radius: 6px;
-  cursor: pointer;
 }
-.editor .seg[aria-pressed="true"] {
+.editor .segs [aria-pressed="true"] {
   background: #fff;
   color: #202223;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+.editor .scroll {
+  overflow-x: auto;
 }
 .editor .sheet {
   border-collapse: collapse;
@@ -125,17 +111,20 @@
 .editor .sheet th {
   background: #f7f7f8;
 }
+.editor .sheet .cell {
+  margin: 0;
+  min-width: 72px;
+}
+.editor .sheet .cell:not(.bad) {
+  border-color: transparent;
+}
 .editor .sheet th .cell,
 .editor .sheet td:first-child .cell {
   font-weight: 600;
 }
-.editor .cell:not(.bad) {
-  border-color: transparent;
-}
-.editor .cell {
-  min-width: 72px;
-}
 .editor .blank {
+  margin: 0;
+  font-size: 1rem;
   border: 1px dashed #b5b8bb;
   border-radius: 10px;
   padding: 40px 20px;

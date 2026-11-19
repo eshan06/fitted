@@ -6,32 +6,15 @@ import { Link, useFetcher, useRevalidator } from "react-router";
 import { SaveBar } from "@shopify/app-bridge-react";
 import type { FieldErrors, Template } from "../../models/chart.server";
 import { ChartTable } from "./ChartTable";
-import {
-  type Draft,
-  MAX_COLUMNS,
-  MAX_ROWS,
-  addMeasurement,
-  addSize,
-  problems,
-  setUnit,
-  setWord,
-  toInput,
-} from "./model";
+import * as model from "./model";
 import "./editor.css";
 
 /** What the action answers (ARCHITECTURE §15). */
-export type Answer = {
+type Answer = {
   ok?: true;
   fieldErrors?: FieldErrors;
+  error?: { code: string; message: string };
   updatedAt?: string;
-  error?: {
-    code: string;
-    message: string;
-    limit?: number;
-    published?: number;
-    checkFailed?: boolean;
-    plansUrl?: string;
-  };
 };
 
 const TEMPLATES: Record<Template, string> = {
@@ -48,43 +31,39 @@ const TEMPLATES: Record<Template, string> = {
   necklaces: "Necklaces",
 };
 
-export function Editor({
-  initial,
-  updatedAt,
-  handle,
-}: {
+export function Editor(props: {
   /** The stored chart; the route remounts the editor when it reloads. */
-  initial: Draft;
+  initial: model.Draft;
   updatedAt?: string;
   /** Set for a new chart: the handle its create lands on. */
   handle?: string;
 }) {
+  const { initial, handle } = props;
   const fetcher = useFetcher<Answer>();
   const revalidator = useRevalidator();
   const [draft, setDraft] = useState(initial);
-  // The editor's own check, or the action's last answer until dismissed.
+  // The editor's own check, or the action's answer until it's dismissed.
   const [local, setLocal] = useState<Answer | null>(null);
   const [dismissed, setDismissed] = useState<Answer>();
   // A save that fails after writing hands back the chart's new updatedAt.
-  const [stamp, setStamp] = useState(updatedAt);
-  const answer = fetcher.state === "idle" ? fetcher.data : undefined;
+  const [stamp, setStamp] = useState(props.updatedAt);
+  const saving = fetcher.state !== "idle";
+  const answer = saving ? undefined : fetcher.data;
   if (answer?.updatedAt && answer.updatedAt !== stamp)
     setStamp(answer.updatedAt);
-  const notice = local ?? (answer !== dismissed ? answer : undefined);
-  const saving = fetcher.state !== "idle";
-  const dirty = JSON.stringify(draft) !== JSON.stringify(initial);
+  const notice = local ?? (answer === dismissed ? undefined : answer);
   const errors = notice?.fieldErrors ?? {};
-  const listed = problems(draft, errors);
+  const listed = model.problems(draft, errors);
   const t = draft.content.tables[0];
+  const set = (patch: Partial<model.Draft>) => setDraft({ ...draft, ...patch });
 
-  const save = (d = draft) => {
-    setDraft(d);
-    const r = toInput(d);
+  const save = () => {
+    const r = model.toInput(draft);
     if ("fieldErrors" in r) return setLocal(r);
     setLocal(null);
     const body = handle
       ? { handle, chart: r.input }
-      : { chart: r.input, status: d.status, updatedAt: stamp };
+      : { chart: r.input, status: draft.status, updatedAt: stamp };
     fetcher.submit(body as never, {
       method: "post",
       encType: "application/json",
@@ -94,145 +73,106 @@ export function Editor({
     setLocal(null);
     setDismissed(answer);
   };
-  const button = (label: string, onClick: () => void) => (
+  const err = notice?.error;
+  const still = `Edits saved, but the chart is still ${initial.status === "ACTIVE" ? "Published" : "a Draft"}`;
+  const headings: Record<string, string> = {
+    conflict: "Chart changed since you opened it",
+    plan_limit: `${initial.name} wasn't published`,
+    status: still,
+    product_access: still,
+  };
+  const lines =
+    err?.code === "conflict"
+      ? [
+          "Your edits weren't saved, so nothing was overwritten.",
+          "Reload latest shows the newest version and discards your edits.",
+        ]
+      : err?.code === "shopify"
+        ? [
+            "Shopify didn't respond in time, so the chart on your store hasn't changed. Your edits are still here.",
+          ]
+        : [err?.message];
+  const action = (label: string, onClick: () => void) => (
     <s-button slot="secondary-actions" onClick={onClick}>
       {label}
     </s-button>
   );
-  const banner = (heading: string, lines: string[], actions?: JSX.Element) => (
-    <s-banner tone="critical" heading={heading}>
-      {lines.map((l) => (
-        <s-paragraph key={l}>{l}</s-paragraph>
-      ))}
-      {actions}
-    </s-banner>
-  );
-
-  const err = notice?.error;
-  const still = `Edits saved, but the chart is still ${initial.status === "ACTIVE" ? "Published" : "a Draft"}`;
-  const publishing = draft.status === "ACTIVE";
-  const tryStatus = button(
-    `Try ${publishing ? "publishing" : "unpublishing"} again`,
-    () => save(),
-  );
-  let shown: JSX.Element | null = null;
-  if (notice?.fieldErrors) {
-    const cells = listed.every((p) => p.short);
-    shown = (
-      <s-banner
-        tone="critical"
-        heading={`Fix ${listed.length} ${cells ? "cell" : "field"}${listed.length === 1 ? "" : "s"} to save`}
-      >
-        <s-paragraph>
-          Nothing was saved, so your store hasn't changed.
-        </s-paragraph>
-        <ul className="list">
-          {listed.map((p) => (
-            <li key={p.id ?? p.long}>
-              {p.id ? (
-                <a
-                  href={`#${p.id}`}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    document.getElementById(p.id!)?.focus();
-                  }}
-                >
-                  {p.where}
-                </a>
-              ) : (
-                p.where
-              )}
-              {p.short ? ` ${p.short}` : `${p.where ? ": " : ""}${p.long}`}
-            </li>
-          ))}
-        </ul>
-      </s-banner>
-    );
-  } else if (err?.code === "conflict")
-    shown = banner(
-      "Chart changed since you opened it",
-      [
-        "Your edits weren't saved, so nothing was overwritten.",
-        "Reload latest shows the newest version and discards your edits.",
-      ],
-      <>
-        {button("Reload latest", () => revalidator.revalidate())}
-        {button("Cancel", dismiss)}
-      </>,
-    );
-  else if (err?.code === "plan_limit")
-    shown = banner(
-      `${initial.name} wasn't published`,
-      [
-        ...(err.checkFailed
-          ? ["Couldn't check your plan, so Fitted counts it as Free."]
-          : []),
-        `The Free plan allows ${err.limit} published charts and you have ${err.published}, so nothing was saved.`,
-        "Save it as a Draft, or see plans to publish more.",
-      ],
-      <>
-        <s-button slot="secondary-actions" href={err.plansUrl} target="_top">
-          See plans
-        </s-button>
-        {button("Save as Draft", () => save({ ...draft, status: "DRAFT" }))}
-      </>,
-    );
-  else if (err?.code === "status")
-    shown = banner(
-      still,
-      [
-        publishing
-          ? `Shopify didn't publish ${initial.name}, so shoppers can't see it yet.`
-          : `Shopify didn't unpublish ${initial.name}, so shoppers still see it.`,
-      ],
-      tryStatus,
-    );
-  else if (err?.code === "product_access")
-    // The Rules board's "No access to products" wording.
-    shown = banner(
-      still,
-      [
-        `You need Products access to ${publishing ? "publish" : "unpublish"} charts, since that also updates your products.`,
-        "Ask the store owner to add Products access to your account in Settings › Users.",
-      ],
-      tryStatus,
-    );
-  else if (err)
-    shown = banner(
-      "Your changes weren't saved",
-      [
-        err.code === "shopify"
-          ? "Shopify didn't respond in time, so the chart on your store hasn't changed. Your edits are still here."
-          : err.message,
-      ],
-      button("Try saving again", () => save()),
-    );
 
   return (
     <s-page>
-      <SaveBar id="chart-save-bar" open={dirty || saving}>
+      <SaveBar
+        id="chart-save-bar"
+        open={saving || JSON.stringify(draft) !== JSON.stringify(initial)}
+      >
         <button
           variant="primary"
-          onClick={() => save()}
+          onClick={save}
           loading={saving ? "" : undefined}
         >
           Save
         </button>
         <button
+          disabled={saving}
           onClick={() => {
             setDraft(initial);
             dismiss();
           }}
-          disabled={saving}
         >
           Discard
         </button>
       </SaveBar>
       <div className="editor">
-        {!saving && shown}
+        {notice?.fieldErrors && (
+          <s-banner
+            tone="critical"
+            heading={`Fix ${listed.length} ${listed.every((p) => p.short) ? "cell" : "field"}${listed.length === 1 ? "" : "s"} to save`}
+          >
+            <s-paragraph>
+              Nothing was saved, so your store hasn&apos;t changed.
+            </s-paragraph>
+            <ul className="list">
+              {listed.map((p) => (
+                <li key={p.id ?? p.long}>
+                  {p.id ? (
+                    <a
+                      href={`#${p.id}`}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        document.getElementById(p.id!)?.focus();
+                      }}
+                    >
+                      {p.where}
+                    </a>
+                  ) : (
+                    p.where
+                  )}
+                  {p.short ? ` ${p.short}` : `${p.where && ": "}${p.long}`}
+                </li>
+              ))}
+            </ul>
+          </s-banner>
+        )}
+        {err && (
+          <s-banner
+            tone="critical"
+            heading={headings[err.code] ?? "Your changes weren't saved"}
+          >
+            {lines.map((l) => (
+              <s-paragraph key={l}>{l}</s-paragraph>
+            ))}
+            {err.code === "conflict" ? (
+              <>
+                {action("Reload latest", () => revalidator.revalidate())}
+                {action("Cancel", dismiss)}
+              </>
+            ) : (
+              err.code !== "plan_limit" && action("Try saving again", save)
+            )}
+          </s-banner>
+        )}
         <div>
           <Link to="/app/charts">Size charts</Link>
-          <div className="row start">
+          <div className="row">
             <h1>{handle ? "New chart" : initial.name}</h1>
             {!handle && (
               <select
@@ -240,10 +180,7 @@ export function Editor({
                 aria-label="Chart status"
                 value={draft.status}
                 onChange={(e) =>
-                  setDraft({
-                    ...draft,
-                    status: e.target.value as Draft["status"],
-                  })
+                  set({ status: e.target.value as model.Draft["status"] })
                 }
               >
                 <option value="ACTIVE">Published</option>
@@ -253,31 +190,24 @@ export function Editor({
           </div>
         </div>
         <section className="card" aria-label="Chart content">
-          <div className="row top">
-            <div className="grow2">
-              <label className="lbl" htmlFor="name">
-                Chart name
-              </label>
+          <div className="row">
+            <label className="grow">
+              Chart name
               <input
                 id="name"
                 className={errors.name ? "field bad" : "field"}
                 placeholder="For example, Women's tops"
                 aria-invalid={errors.name ? true : undefined}
                 value={draft.name}
-                onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+                onChange={(e) => set({ name: e.target.value })}
               />
-            </div>
-            <div className="grow1">
-              <label className="lbl" htmlFor="tpl">
-                Template
-              </label>
+            </label>
+            <label className="grow">
+              Template
               <select
-                id="tpl"
                 className="field"
                 value={draft.template}
-                onChange={(e) =>
-                  setDraft({ ...draft, template: e.target.value as Template })
-                }
+                onChange={(e) => set({ template: e.target.value as Template })}
               >
                 {Object.entries(TEMPLATES).map(([v, label]) => (
                   <option key={v} value={v}>
@@ -285,7 +215,7 @@ export function Editor({
                   </option>
                 ))}
               </select>
-            </div>
+            </label>
           </div>
           <div className="row">
             <div role="group" aria-label="Units" className="segs">
@@ -293,9 +223,8 @@ export function Editor({
                 <button
                   key={u}
                   type="button"
-                  className="seg"
                   aria-pressed={draft.content.unit === u}
-                  onClick={() => setDraft(setUnit(draft, u))}
+                  onClick={() => setDraft(model.setUnit(draft, u))}
                 >
                   {u}
                 </button>
@@ -303,14 +232,14 @@ export function Editor({
             </div>
             <s-button-group>
               <s-button
-                disabled={t.rows.length >= MAX_ROWS}
-                onClick={() => setDraft(addSize(draft))}
+                disabled={t.rows.length >= model.MAX_ROWS}
+                onClick={() => setDraft(model.addSize(draft))}
               >
                 Add size
               </s-button>
               <s-button
-                disabled={t.columns.length >= MAX_COLUMNS}
-                onClick={() => setDraft(addMeasurement(draft))}
+                disabled={t.columns.length >= model.MAX_COLUMNS}
+                onClick={() => setDraft(model.addMeasurement(draft))}
               >
                 Add measurement
               </s-button>
@@ -324,41 +253,23 @@ export function Editor({
               onChange={setDraft}
             />
           ) : (
-            <div className="blank">
-              <svg
-                width="56"
-                height="56"
-                viewBox="0 0 48 48"
-                fill="none"
-                stroke="#2448A8"
-                strokeLinecap="square"
-                aria-hidden="true"
-              >
-                <path d="M10 40V10h30" strokeWidth="3" strokeDasharray="4 3" />
-                <path d="M17 40V17h23" strokeWidth="6" />
-                <path d="M24 40V24h16" strokeWidth="3" />
-              </svg>
-              <h2>A blank chart, ready for sizes</h2>
-            </div>
+            <h2 className="blank">A blank chart, ready for sizes</h2>
           )}
           <p className="help">
             Type in inches or centimeters. Fitted converts the other unit for
             shoppers automatically.
           </p>
-          <div>
-            <label className="lbl" htmlFor="note">
-              Note under the table
-            </label>
+          <label>
+            Note under the table
             <textarea
-              id="note"
-              className="field note"
+              className="field"
               rows={2}
               value={draft.content.words[`${t.id}.note`] ?? ""}
               onChange={(e) =>
-                setDraft(setWord(draft, `${t.id}.note`, e.target.value))
+                setDraft(model.setWord(draft, `${t.id}.note`, e.target.value))
               }
             />
-          </div>
+          </label>
         </section>
       </div>
     </s-page>
