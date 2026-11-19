@@ -38,7 +38,16 @@ type Question =
   | { id: string; kind: "choice"; options: { id: string; rows: string[] }[] }; // each answer narrows the sizes
 ```
 
-Question texts are `words` keys (§5). #40 may add question kinds (age, for the Basic type); it records them here.
+Question texts are `words` keys (§5). There are no other kinds: Basic asks height and weight as `measure` questions, and `askAge` adds a `choice` question whose options narrow the rows.
+
+`findSize(chart, answers)` takes answers by question id (a measure as `{ value, unit }` in the unit the shopper typed, converted to the column's unit; a row id; `snug`/`regular`/`relaxed`; an option id) and ignores any it can't use. The rules, in order:
+
+- Choice answers narrow the rows; sizes keep table order, smallest first.
+- Each measurement plus `ease` falls in a row's range (on length columns, stretch lets a row fit 3% past its top value for `some`, 6% for `high`), between two rows, or off the chart. Between sizes takes the larger, or the smaller for snug. With several measurements the largest pick wins, a between pick on a tie; any past the largest size recommends nothing, and one below the smallest is ignored unless all are.
+- No usable measurement: the usual size, if choices left it. Neither: the one row left by choices, else nothing.
+- Snug moves an in-range or usual pick one size down, relaxed one up, never past either end.
+
+Reason keys are `fit.reason.` plus `in`, `in.up`, `in.down`, `between`, `small`, `large`, `usual`, `usual.up`, `usual.down`, `choice` or `none`. Their values: `col`, `value` and `unit` as typed for measurements; `size` (the pick, or the nearest size when off the chart), `from` (before the fit move), `below` and `above` as row ids; `fit` when answered, except on `none`. Fit bars score each remaining row per measured column: 50 at its midpoint (stretch included), 25 more per size step looser.
 
 Fitted never sends or stores the answers: no request carries one, and nothing reaches a server. They sit only in `sessionStorage` under `fitted:answers:<chart handle>`, so another product with the same chart reuses them until the tab closes. Other scripts on the store can read the page, so the measurements note (#48) promises only what Fitted does. Events (§12) carry only a size row id. The storefront shows Find my size only when `$app.plan` is `pro` and the chart has `fit`.
 
