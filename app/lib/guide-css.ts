@@ -26,7 +26,7 @@ export const css = [
   ".fitted-table tbody th{font-weight:600}",
   ".fitted-table .fitted-wrap{white-space:normal}",
   ".fitted-table tr[data-size]{cursor:pointer}",
-  ".fitted-table .fitted-on>*{background:var(--fitted-tint);color:var(--fitted-accent);font-weight:600}",
+  ".fitted-table .fitted-on>*,.fitted-table .fitted-lit{background:var(--fitted-tint);color:var(--fitted-accent);font-weight:600}",
   ".fitted-dialog .fitted-pick{padding:4px 0;border:0;background:none;color:inherit;font-weight:inherit;text-align:inherit;text-decoration:underline dotted;text-underline-offset:4px}",
   ".fitted-part{display:contents}",
   // The US/UK/EU/AU and in/cm switches.

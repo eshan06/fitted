@@ -637,6 +637,19 @@ describe("merged and wrapping cells", () => {
     );
   });
 
+  it("lights up a cell merged across rows for any size it spans", () => {
+    const root = draw(
+      withChart((c) => {
+        c.tables[0].merges = [{ row: "s", col: "fit", rows: 2, cols: 1 }];
+      }),
+    );
+    const fit = root.querySelector("tbody td:last-child")!;
+    root.querySelector<HTMLElement>("tbody tr:last-child th button")!.click();
+    expect(fit.classList.contains("fitted-lit")).toBe(true);
+    root.querySelector<HTMLElement>("tbody tr:first-child th button")!.click();
+    expect(fit.classList.contains("fitted-lit")).toBe(true);
+  });
+
   it("lets the columns in wrap wrap", () => {
     const root = draw(withChart((c) => (c.tables[0].wrap = ["fit"])));
     expect(root.querySelectorAll(".fitted-wrap")).toHaveLength(3);

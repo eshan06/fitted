@@ -209,6 +209,7 @@ export function render(root: HTMLElement, g: Guide) {
   let sys = g.sys;
   let pick = ""; // the picked size, as a key of labels
   const labels = new Map<string, string>(); // size key to its label as written
+  const across = new Map<Element, string[]>(); // cells merged across rows: their sizes
 
   const table = (tb: Grid): Kid[] => {
     const own = systems(tb);
@@ -285,6 +286,7 @@ export function render(root: HTMLElement, g: Guide) {
         const el = cell(i, tb.columns[span.c], span.c);
         el.setAttribute("rowspan", `${span.rows}`);
         el.setAttribute("colspan", `${span.cols}`);
+        across.set(el, keys.slice(i, i + span.rows).map(norm));
         return el;
       });
       return h("tr", { "data-size": key || undefined }, ...tds);
@@ -350,6 +352,9 @@ export function render(root: HTMLElement, g: Guide) {
       tr.classList.toggle("fitted-on", on);
       tr.querySelector(".fitted-pick")?.setAttribute("aria-pressed", `${on}`);
     });
+    across.forEach((ks, el) =>
+      el.classList.toggle("fitted-lit", ks.includes(pick)),
+    );
     const label = labels.get(pick) ?? "";
     foot.hidden = !pick;
     said.replaceChildren(...around("selected", h("span", {}, label)));
@@ -368,6 +373,7 @@ export function render(root: HTMLElement, g: Guide) {
     } else if (el && !el.checked) el.click();
   };
   const draw = () => {
+    across.clear();
     const kids = [...g.tables.flatMap(table), note("tips")];
     part.replaceChildren(...kids.filter((k): k is Node => !!k));
     choose(pick);
