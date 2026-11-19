@@ -22,10 +22,13 @@ vi.mock("../models/chart.server", async (orig) => ({
   chartPages: m.chartPages,
   countChartProducts: m.countChartProducts,
 }));
+vi.mock("../models/admin.server", async (orig) => ({
+  ...(await orig<typeof import("../models/admin.server")>()),
+  pricingPlansUrl: m.pricingPlansUrl,
+}));
 vi.mock("../models/billing.server", async (orig) => ({
   ...(await orig<typeof import("../models/billing.server")>()),
   getPlan: m.getPlan,
-  pricingPlansUrl: m.pricingPlansUrl,
 }));
 const {
   default: SizeCharts,

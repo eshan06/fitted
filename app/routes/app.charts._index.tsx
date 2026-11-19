@@ -4,7 +4,11 @@ import { Suspense, useState } from "react";
 import type { LoaderFunctionArgs } from "react-router";
 import { Await, useLoaderData, useRevalidator } from "react-router";
 import { authenticate } from "../shopify.server";
-import { type Admin, AdminApiError } from "../models/admin.server";
+import {
+  type Admin,
+  AdminApiError,
+  pricingPlansUrl,
+} from "../models/admin.server";
 import {
   chartPages,
   countChartProducts,
@@ -12,11 +16,7 @@ import {
   type StoredChart,
   type Template,
 } from "../models/chart.server";
-import {
-  FREE_ACTIVE_CHARTS,
-  getPlan,
-  pricingPlansUrl,
-} from "../models/billing.server";
+import { FREE_ACTIVE_CHARTS, getPlan } from "../models/billing.server";
 
 export type Row = {
   id: string;
