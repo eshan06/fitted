@@ -204,7 +204,7 @@ describe("the screen", () => {
     const input = el.querySelector(selector) as HTMLElement & { value: string };
     input.value = value;
     await act(async () => {
-      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("input")); // Polaris fields don't bubble it
     });
   };
 

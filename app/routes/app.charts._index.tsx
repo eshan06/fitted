@@ -69,12 +69,8 @@ async function loadList(admin: Admin, shop: string): Promise<ChartList> {
         detail: err.detail,
       }),
     );
-    return {
-      error: {
-        code: "shopify",
-        message: "Fitted didn't get an answer from your store.",
-      },
-    };
+    const message = "Fitted didn't get an answer from your store.";
+    return { error: { code: "shopify", message } };
   }
 }
 
@@ -100,14 +96,11 @@ const TEMPLATES: Record<Template, string> = {
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const products = ({ count, atLeast }: Row["products"]) =>
   `${count.toLocaleString("en-US")}${atLeast ? "+" : ""}`;
-// ponytail: UTC, not the shop's time zone; read shop.ianaTimezone if a day off ever matters.
-const day = (iso: string) =>
-  new Date(iso).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    timeZone: "UTC",
-  });
+// "Nov 14, 2026". ponytail: UTC, not the shop's time zone; read shop.ianaTimezone if a day off ever matters.
+const DAY = new Intl.DateTimeFormat("en-US", {
+  dateStyle: "medium",
+  timeZone: "UTC",
+});
 const STATUSES = { all: "All", ACTIVE: "Active", DRAFT: "Draft" };
 export const filterRows = (rows: Row[], q: string, status: string) =>
   rows.filter(
@@ -328,7 +321,9 @@ export function Charts({ rows, limit }: Extract<ChartList, { rows: unknown }>) {
                       <Status status={r.status} />
                     </s-table-cell>
                     <s-table-cell>{products(r.products)}</s-table-cell>
-                    <s-table-cell>{day(r.updatedAt)}</s-table-cell>
+                    <s-table-cell>
+                      {DAY.format(new Date(r.updatedAt))}
+                    </s-table-cell>
                   </s-table-row>
                 ))}
               </s-table-body>
