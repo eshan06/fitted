@@ -55,6 +55,9 @@ describe("privacy policy", () => {
     expect(policy).toContain("The last 30 versions of each chart");
     expect(policy).toContain("older ones for 7 days");
     expect(policy).toContain("About 48 hours later");
+    expect(policy).toContain(
+      "plan record Until about 48 hours after you uninstall",
+    );
   });
 
   it("names every service that receives data and what it gets", () => {
@@ -72,7 +75,7 @@ describe("privacy policy", () => {
 
   it("doesn't claim charts never reach our database (§14 keeps versions)", () => {
     expect(policy).not.toContain("not on our servers");
-    expect(policy).toContain("We keep only past versions of charts");
+    expect(policy).toContain("We keep a copy of each saved chart version");
   });
 
   it("lists every placeholder a contact section needs", () => {
@@ -84,5 +87,10 @@ describe("privacy policy", () => {
 describe("support page", () => {
   it("gives the support email", () => {
     expect(text(support)).toContain("[SUPPORT EMAIL]");
+    // Shopify Files aren't app-owned, so they outlive an uninstall (§4).
+    for (const page of [privacy, support])
+      expect(text(page)).toContain(
+        "Images and fonts you uploaded through Fitted stay",
+      );
   });
 });

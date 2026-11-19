@@ -29,7 +29,8 @@ export default function Privacy() {
       <ul>
         <li>
           Your live charts, display rules and settings are saved in your own
-          Shopify store. We keep only past versions of charts, for history.
+          Shopify store. We keep a copy of each saved chart version, for
+          history.
         </li>
         <li>
           Fitted collects no personal data about your shoppers. Fit finder
