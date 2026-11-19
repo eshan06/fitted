@@ -471,9 +471,20 @@ describe("validateChart", () => {
       return c;
     };
     expect(() => validateChart(sized(100 * 1024 - 1))).not.toThrow();
-    expect(() => validateChart(sized(100 * 1024))).toThrow(
-      ChartValidationError,
-    );
+    const big = sized(100 * 1024) as Draft;
+    big.name = "";
+    big.content.unit = "mm"; // never reached: size is checked first
+    expect(errorsAfter((c) => Object.assign(c, big))).toEqual({
+      name: expect.any(String),
+      content: expect.any(String),
+    });
+  });
+
+  it("refuses content nested too deep to serialize", () => {
+    let deep: unknown[] = [];
+    for (let i = 0; i < 200000; i++) deep = [deep];
+    const errs = errorsAfter((c) => (table(c).wrap = deep));
+    expect(errs).toEqual({ content: expect.any(String) });
   });
 
   it("reports every problem at once, by field path", () => {

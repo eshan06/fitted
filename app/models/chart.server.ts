@@ -142,8 +142,15 @@ export function validateChart(input: unknown): ChartInput {
       ...errs,
       content: "Must be chart content",
     });
-  // Checked first, so oversized input never gets walked key by key.
-  if (Buffer.byteLength(JSON.stringify(c)) >= 100 * 1024)
+  // Checked first, so oversized input never gets walked key by key. Nesting
+  // too deep to serialize throws RangeError, which counts as too large.
+  let bytes = Infinity;
+  try {
+    bytes = Buffer.byteLength(JSON.stringify(c));
+  } catch {
+    // stays Infinity
+  }
+  if (bytes >= 100 * 1024)
     throw new ChartValidationError({
       ...errs,
       content: "The chart is too large; split it into smaller charts",
