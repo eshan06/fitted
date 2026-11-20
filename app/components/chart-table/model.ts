@@ -818,3 +818,56 @@ export function replaceTable(d: Draft, p: Pasted): Draft {
   });
   return { ...filled, cells, content: { ...filled.content, words } };
 }
+
+const SYSTEMS: Country[] = ["US", "UK", "EU", "AU"];
+const countries = (d: Draft) =>
+  table(d).columns.flatMap((c) => (c.kind === "country" ? [c] : []));
+/**
+ * The Country sizes select: "all" once the first table's country columns
+ * name two or more systems, as the size guide's switch does (§9), else "us".
+ */
+export const regions = (d: Draft) =>
+  new Set(countries(d).map((c) => c.country)).size > 1 ? "all" : "us";
+const missing = (d: Draft) =>
+  SYSTEMS.filter((s) => !countries(d).some((c) => c.country === s));
+/** The columns US, UK, EU, AU adds fit under the cap, like Add measurement. */
+export const canAll = (d: Draft) =>
+  table(d).columns.length + missing(d).length <= MAX_COLUMNS;
+/** US only loses no sizes: the UK, EU and AU columns are empty (#167). */
+export const canUsOnly = (d: Draft) =>
+  countries(d).every(
+    (c) =>
+      c.country === "US" || table(d).rows.every((r) => !valueAt(d, r.id, c.id)),
+  );
+/**
+ * "all" adds the missing systems' columns, named like "UK size", after the
+ * last country column; "us" removes the UK, EU and AU columns and keeps or
+ * adds a US one where they were.
+ */
+export function setRegions(d: Draft, to: "all" | "us"): Draft {
+  const t = table(d);
+  const add = (from: Draft, list: Country[], at: number) => {
+    const fresh = idMaker(from.content);
+    const cols = list.map((country) => ({
+      id: fresh("c"),
+      kind: "country" as const,
+      country,
+    }));
+    const c = table(from).columns;
+    let next = withTable(from, {
+      columns: [...c.slice(0, at), ...cols, ...c.slice(at)],
+    });
+    for (const col of cols)
+      next = setWord(next, `${t.id}.${col.id}`, `${col.country} size`);
+    return next;
+  };
+  if (to === "all") {
+    const last = t.columns.map((c) => c.kind).lastIndexOf("country");
+    return add(d, missing(d), last < 0 ? 1 : last + 1);
+  }
+  const first = t.columns.findIndex((c) => c.kind === "country");
+  let next = d;
+  for (const c of countries(d))
+    if (c.country !== "US") next = remove(next, { col: c.id });
+  return countries(next).length ? next : add(next, ["US"], Math.max(first, 1));
+}

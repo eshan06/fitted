@@ -1345,3 +1345,54 @@ describe("Paste whole chart", () => {
     expect(c.words["t1.c3"]).toBe("Waist");
   });
 });
+
+describe("Country sizes", () => {
+  const countries = () =>
+    [
+      ...document.querySelectorAll<HTMLSelectElement>(
+        '[role="toolbar"] select',
+      ),
+    ].find((s) =>
+      s.closest("label")!.textContent!.startsWith("Country sizes"),
+    )!;
+  const option = (label: string) =>
+    [...countries().options].find((o) => o.textContent === label)!;
+  const chartSent = (b: Record<string, unknown>) =>
+    validateChart(b.chart).content;
+
+  it("adds UK, EU and AU columns, and takes them out for US only once they're empty", async () => {
+    const s = stored();
+    const t = s.stored.chart.content.tables[0];
+    t.columns.splice(1, 0, { id: "us", kind: "country", country: "US" });
+    s.stored.chart.content.words["t1.us"] = "US size";
+    const { sent } = await open([s]);
+    // After Round to, as drawn.
+    expect(
+      [...document.querySelectorAll('[role="toolbar"] label')].map(
+        (l) => l.firstChild!.textContent,
+      ),
+    ).toEqual(["Round to", "Country sizes"]);
+    expect(countries().value).toBe("us");
+    expect(text()).not.toContain("Shoppers see one country's sizes");
+    await type(countries(), "all");
+    expect(
+      [2, 3, 4, 5, 6].map((n) => byLabel(`Column ${n} name`).value),
+    ).toEqual(["US size", "UK size", "EU size", "AU size", "Bust"]);
+    expect(text()).toContain(
+      "Shoppers see one country's sizes at a time, with a US, UK, EU, AU switch.",
+    );
+    expect(countries().value).toBe("all");
+    // A UK size would be lost, so US only is greyed out until it's cleared.
+    await type(byLabel("XS, UK size"), "4–6");
+    expect(option("US only").disabled).toBe(true);
+    await click("Save");
+    expect(chartSent(sent[0]).words["t1.xs.c1"]).toBe("4–6");
+    await type(byLabel("XS, UK size"), "");
+    expect(option("US only").disabled).toBe(false);
+    await type(countries(), "us");
+    expect(byLabel("Column 2 name").value).toBe("US size");
+    expect(byLabel("Column 3 name").value).toBe("Bust");
+    expect(countries().value).toBe("us");
+    expect(text()).not.toContain("Shoppers see one country's sizes");
+  });
+});

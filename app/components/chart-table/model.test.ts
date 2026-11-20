@@ -30,6 +30,10 @@ import {
   readPaste,
   found,
   replaceTable,
+  regions,
+  setRegions,
+  canAll,
+  canUsOnly,
 } from "./model";
 
 const chart = (): ChartInput =>
@@ -872,5 +876,67 @@ describe("Paste whole chart", () => {
     expect(c.tables[0].rows).toHaveLength(3);
     expect(c.words["t1.r1.size"]).toBe("XXS");
     expect(c.words["t1.c3"]).toBe("Hips");
+  });
+});
+
+describe("Country sizes", () => {
+  const usOnly = () => toDraft(chart(), "DRAFT");
+
+  it("reads US only until two systems are named, then adds the missing ones after the last", () => {
+    const d = usOnly();
+    expect(regions(d)).toBe("us");
+    const all = setRegions(d, "all");
+    expect(regions(all)).toBe("all");
+    const c = validateChart(input(all)).content;
+    expect(c.tables[0].columns.map((x) => x.id)).toEqual([
+      "size",
+      "us",
+      // c1 is a How to measure step's.
+      "c2",
+      "c3",
+      "c4",
+      "bust",
+    ]);
+    expect(["c2", "c3", "c4"].map((id) => c.words[`t1.${id}`])).toEqual([
+      "UK size",
+      "EU size",
+      "AU size",
+    ]);
+    // No country column yet: all four go after the sizes.
+    const none = remove(d, { col: "us" });
+    expect(
+      setRegions(none, "all").content.tables[0].columns.map((x) => x.kind),
+    ).toEqual(["size", "country", "country", "country", "country", "measure"]);
+  });
+
+  it("takes out empty UK, EU and AU columns for US only, and keeps or adds a US one", () => {
+    const all = setRegions(usOnly(), "all");
+    expect(canUsOnly(all)).toBe(true);
+    const back = setRegions(all, "us");
+    expect(back.content.tables[0].columns.map((x) => x.id)).toEqual([
+      "size",
+      "us",
+      "bust",
+    ]);
+    expect(back.content.words["t1.xs.us"]).toBe("0–2");
+    // Without a US column, one takes their place.
+    const noUs = remove(all, { col: "us" });
+    const added = setRegions(noUs, "us").content;
+    expect(added.tables[0].columns.map((x) => x.kind)).toEqual([
+      "size",
+      "country",
+      "measure",
+    ]);
+    expect(added.words[`t1.${added.tables[0].columns[1].id}`]).toBe("US size");
+  });
+
+  it("keeps US only greyed out while UK, EU or AU hold sizes, and US, UK, EU, AU past 20 columns", () => {
+    const all = setRegions(usOnly(), "all");
+    expect(canUsOnly(setWord(all, "t1.s.c2", "38"))).toBe(false);
+    let full = usOnly();
+    while (full.content.tables[0].columns.length < 18)
+      full = addMeasurement(full);
+    expect(canAll(full)).toBe(false);
+    expect(canAll(addSize(usOnly()))).toBe(true);
   });
 });
