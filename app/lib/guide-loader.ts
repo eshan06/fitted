@@ -28,8 +28,9 @@ const ratio = (a: number, b: number) =>
   (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
 // The theme's text color where the block sits, and the nearest opaque
 // background behind it (rgba() and "/ a" carry an alpha below 1). A section
-// painted with a gradient has no background color, so the one found can sit
-// under text it doesn't read with: then white or near-black, whichever reads.
+// painted with a gradient has no background color, so the text can come from
+// one look and the background from another: if they don't read 4.5:1, the
+// text becomes near-black or white, whichever reads on that background.
 function themeColors(block: HTMLElement) {
   let bg = WHITE;
   for (let el: Element | null = block; el; el = el.parentElement) {
@@ -39,11 +40,11 @@ function themeColors(block: HTMLElement) {
       break;
     }
   }
-  const text = getComputedStyle(block).color;
-  const ink = luminance(text);
-  if (ink >= 0 && luminance(bg) >= 0 && ratio(ink, luminance(bg)) < 4.5)
-    bg = ratio(ink, 1) > ratio(ink, luminance(BLACK)) ? WHITE : BLACK;
-  return { text, accent: luminance(bg) >= 0.65 ? ACCENT : text, bg };
+  let text = getComputedStyle(block).color;
+  const [ink, paper] = [luminance(text), luminance(bg)];
+  if (ink >= 0 && paper >= 0 && ratio(ink, paper) < 4.5)
+    text = ratio(paper, luminance(BLACK)) > ratio(paper, 1) ? BLACK : WHITE;
+  return { text, accent: paper >= 0.65 ? ACCENT : text, bg };
 }
 // Fitted's styles, the uploaded font, then the merchant's CSS as written, so
 // it wins ties with Fitted's rules.

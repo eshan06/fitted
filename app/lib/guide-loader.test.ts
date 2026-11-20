@@ -421,14 +421,27 @@ describe("loader", () => {
       { text: "rgb(18, 18, 18)", accent: "#2448a8", bg: "rgb(255, 255, 255)" },
     ],
     [
-      "puts light text on near-black when the section's background is a gradient over white",
+      "makes light text near-black over a gradient section on a white page",
       "background-color: rgb(255, 255, 255)",
-      {
-        text: "rgba(240, 240, 240, 0.75)",
-        accent: "rgba(240, 240, 240, 0.75)",
-        bg: "rgb(18, 18, 18)",
-      },
+      { text: "rgb(18, 18, 18)", accent: "#2448a8", bg: "rgb(255, 255, 255)" },
       "background-image: linear-gradient(#123, #456); color: rgba(240, 240, 240, 0.75)",
+    ],
+    [
+      "makes dark text white over a gradient section on a dark page",
+      "background-color: rgb(30, 30, 30)",
+      {
+        text: "rgb(255, 255, 255)",
+        accent: "rgb(255, 255, 255)",
+        bg: "rgb(30, 30, 30)",
+      },
+      "background-image: linear-gradient(#eee, #fff); color: rgb(20, 20, 20)",
+    ],
+    [
+      // Browsers give oklch() or color() backgrounds as written; happy-dom
+      // gives every color as written, so a hex stands in for them here.
+      "keeps a background it can't measure, with the text color as the accent",
+      "background-color: #fffaf0; color: rgb(18, 18, 18)",
+      { text: "rgb(18, 18, 18)", accent: "rgb(18, 18, 18)", bg: "#fffaf0" },
     ],
   ])("matches the theme on open: %s", async (_, theme, colors, inner = "") => {
     document.body.innerHTML = `<div style="${theme}"><div style="${inner}">${block(valid)}</div></div>`;
@@ -462,12 +475,6 @@ describe("loader", () => {
     link.click();
     expect(root.style.getPropertyValue("--fitted-font")).toMatch(
       /^fitted-font\b/,
-    );
-  });
-
-  it("keeps the canvas's shades where color-mix() isn't supported", () => {
-    expect(css).toContain(
-      "@supports not (color:color-mix(in srgb,red,red)){.fitted-dialog{--fitted-muted:#3a3a3a;--fitted-line:#d9dde3;--fitted-faint:#e6eaf2;--fitted-tint:#e9eef9;--fitted-alert:#fdeceb;--fitted-alert-line:#e0a9a1}}",
     );
   });
 

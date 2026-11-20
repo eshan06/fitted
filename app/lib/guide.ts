@@ -202,8 +202,13 @@ const FORM = 'form[action*="/cart/add"]';
  * form has selected; the loader calls it on every open.
  */
 export function render(root: HTMLElement, g: Guide) {
-  if (!document.getElementById("fitted-table-css"))
-    document.head.append(h("style", { id: "fitted-table-css" }, tableCss));
+  // Before the loader's styles, whose merchant CSS must win ties with these.
+  if (!document.getElementById("fitted-table-css")) {
+    const style = h("style", { id: "fitted-table-css" }, tableCss);
+    const loader = document.getElementById("fitted-css");
+    if (loader) loader.before(style);
+    else document.head.append(style);
+  }
   const t = (k: string) =>
     root.dataset[`t${k[0].toUpperCase()}${k.slice(1)}`] ?? "";
   // An extension word with {size} in it, split around the size.

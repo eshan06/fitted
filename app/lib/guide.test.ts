@@ -388,6 +388,18 @@ describe("render", () => {
     expect(styles[0].textContent).toBe(tableCss);
   });
 
+  it("puts the tables' styles before the loader's, so the merchant's CSS there wins ties", () => {
+    document.getElementById("fitted-table-css")?.remove();
+    const loader = document.createElement("style");
+    loader.id = "fitted-css";
+    document.head.append(loader);
+    draw(data());
+    expect(document.getElementById("fitted-table-css")?.nextSibling).toBe(
+      loader,
+    );
+    loader.remove();
+  });
+
   it("draws the table with each measurement's units in its header", () => {
     const root = draw(data());
     expect(texts(root, "thead th")).toEqual([
