@@ -18,7 +18,7 @@ import {
   AdminApiError,
   themeEditorUrl,
 } from "../models/admin.server";
-import { readFile, uploadFont } from "../models/files.server";
+import { uploadFont } from "../models/font.server";
 import { FONT_MAX, FONT_WORDS, fontType } from "../lib/font-file";
 import { useFontUpload } from "../components/appearance/FontUpload";
 import {
@@ -89,11 +89,23 @@ const EDITED = [...SECTIONS, "colors", "css"] as const;
 // is checked by its name and bytes, and it goes on to Shopify Files.
 const FONT_BODY = FONT_MAX + 64 * 1024;
 async function upload(request: Request, admin: Admin, shop: string) {
-  const file = await readFile(request, FONT_BODY);
+  let seen = 0;
+  const cap = new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, c) {
+      seen += chunk.byteLength;
+      if (seen > FONT_BODY) c.error(new Error("Too large"));
+      else c.enqueue(chunk);
+    },
+  });
+  const headers = { "content-type": request.headers.get("content-type")! };
+  const form = await new Response(request.body?.pipeThrough(cap), { headers })
+    .formData()
+    .catch(() => null);
+  const file = form?.get("file");
   const refuse = (k: "type" | "size") =>
     data({ fieldErrors: { "popup.font": FONT_WORDS[k] } }, { status: 422 });
-  if (file === "size") return refuse("size");
-  if (!file) return refuse("type");
+  if (seen > FONT_BODY) return refuse("size");
+  if (!(file instanceof File)) return refuse("type");
   const bytes = new Uint8Array(await file.arrayBuffer());
   const mime = fontType(file.name, bytes);
   if (!mime) return refuse("type");

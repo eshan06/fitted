@@ -515,15 +515,12 @@
   gap: 8px;
   min-width: 0;
 }
-/* Large text wraps the drawing above the steps. */
+/* How to measure's columns stack when large text leaves no room. */
 .editor .measure {
   display: flex;
   flex-wrap: wrap;
   gap: 20px;
   align-items: flex-start;
-}
-.editor .measure > .col {
-  flex: 1 1 200px;
 }
 .editor .measure > .col.wide {
   flex: 2 1 300px;
@@ -586,52 +583,5 @@
   box-sizing: border-box;
   border: 1px dashed #b5b8bb;
   border-radius: 10px;
-  background: transparent;
-  font: inherit;
   text-align: center;
-}
-.editor .drop.bad {
-  border-color: #8e1f0b;
-  background: #fee9e8;
-  color: #8e1f0b;
-}
-.editor .drop .bar {
-  width: 70%;
-  height: 6px;
-  border-radius: 999px;
-  background: #e4e5e7;
-  overflow: hidden;
-}
-/* How long Shopify takes isn't known, so the bar moves without a value. */
-.editor .drop .bar span {
-  display: block;
-  width: 60%;
-  height: 100%;
-  background: #2448a8;
-  animation: drop-bar 1.4s ease-in-out infinite alternate;
-}
-@keyframes drop-bar {
-  from {
-    transform: translateX(-40%);
-  }
-  to {
-    transform: translateX(110%);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .editor .drop .bar span {
-    animation: none;
-  }
-}
-.editor .drawing {
-  display: flex;
-  justify-content: center;
-  padding: 12px;
-  border: 1px solid #e1e3e5;
-  border-radius: 10px;
-  background: #f7f7f8;
-}
-.editor .drawing img {
-  max-width: 100%;
-  max-height: 240px;
 }
