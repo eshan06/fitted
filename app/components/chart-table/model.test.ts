@@ -27,6 +27,9 @@ import {
   setWord,
   toDraft,
   toInput,
+  readPaste,
+  found,
+  replaceTable,
 } from "./model";
 
 const chart = (): ChartInput =>
@@ -638,5 +641,168 @@ describe("table tools", () => {
     // Not a measurement: nothing changes.
     expect(setMeasure(d, "fit", { convert: false })).toEqual(d);
     expect(toggleWrap(d, "fit").content.tables[0].wrap).toEqual([]);
+  });
+});
+
+describe("Paste whole chart", () => {
+  const sheet = [
+    "Size\tBust\tWaist\tHips",
+    "XXS\t29–30\t22–23\t32–33",
+    "XS\t31–32\t24–25\t34–35",
+    "S\t33–34\t26–27\t36–37",
+  ].join("\n");
+  const pasted = (text: string) => {
+    const p = readPaste(text);
+    if (!p) throw new Error("no table");
+    return p;
+  };
+
+  it("reads a spreadsheet's rows and tabs, and names what it found", () => {
+    const p = pasted(sheet);
+    expect(p.head).toEqual(["Size", "Bust", "Waist", "Hips"]);
+    expect(p.rows[2]).toEqual(["S", "33–34", "26–27", "36–37"]);
+    expect(p.columns.map((c) => c.kind)).toEqual([
+      "size",
+      "measure",
+      "measure",
+      "measure",
+    ]);
+    expect(found(p)).toBe(
+      "Found 3 sizes and 3 measurements: Bust, Waist and Hips",
+    );
+    expect(found(pasted("Size\tBust\nM\t35"))).toBe(
+      "Found 1 size and 1 measurement: Bust",
+    );
+  });
+
+  it("takes a web page's copy: line ends, stray spaces, blank lines and padding columns", () => {
+    const p = pasted(
+      "\r\n\tSize \t Bust (cm)\t\t\u00a0Fit\t\r\n\tXS\t 80 \t\tRelaxed\r\n\t\t\t\t\r\n\tS\t84-88\t\tRegular\r",
+    );
+    expect(p.head).toEqual(["Size", "Bust", "Fit"]);
+    expect(p.rows).toEqual([
+      ["XS", "80", "Relaxed"],
+      ["S", "84-88", "Regular"],
+    ]);
+    expect(p.columns).toEqual([
+      { id: "", kind: "size" },
+      { id: "", kind: "measure", unit: "cm", convert: true },
+      { id: "", kind: "text" },
+    ]);
+  });
+
+  it("reads country columns and a unit at a label's end", () => {
+    const p = pasted(
+      "Size\tUS\tUK size\tEU\tWaist in\tLength (inches)\nS\t4\t8\t36\t26\t25",
+    );
+    expect(p.columns.slice(1)).toEqual([
+      { id: "", kind: "country", country: "US" },
+      { id: "", kind: "country", country: "UK" },
+      { id: "", kind: "country", country: "EU" },
+      { id: "", kind: "measure", unit: "in", convert: true },
+      { id: "", kind: "measure", unit: "in", convert: true },
+    ]);
+    expect(p.head.slice(4)).toEqual(["Waist", "Length"]);
+    expect(found(p)).toBe("Found 1 size and 2 measurements: Waist and Length");
+  });
+
+  it("finds no table in prose, one line, or one column", () => {
+    for (const t of [
+      "",
+      "  \n \n",
+      "Our autumn tops run a little small through the shoulders.\nSize up if you're between sizes.",
+      "Size\tBust\tWaist",
+      "Size\nXS\nS",
+    ])
+      expect(readPaste(t)).toBeNull();
+  });
+
+  it("reads a huge hostile paste in linear time", () => {
+    const start = performance.now();
+    readPaste(`Size\t${"(".repeat(50000)}in\n${"9\t".repeat(50000)}`);
+    readPaste(`${" ".repeat(200000)}\n${"US".repeat(100000)}\tx`);
+    expect(performance.now() - start).toBeLessThan(1000);
+  });
+
+  it("replaces the table, keeps its note, and marks the cells it can't read", () => {
+    const d = toDraft(chart(), "DRAFT");
+    const next = replaceTable(
+      d,
+      pasted("Size\tBust\tWaist\nXS\t31–32\t24\nM\tabout 35\t28"),
+    );
+    const t = next.content.tables[0];
+    expect(t.id).toBe("t1");
+    // XS and Bust are named as before, so they keep their ids.
+    expect(t.rows.map((r) => r.id)).toEqual(["xs", "r2"]);
+    expect(t.columns.map((c) => c.id)).toEqual(["size", "bust", "c2"]);
+    expect(next.content.words["t1.note"]).toBe("Between sizes? Size up.");
+    expect(next.content.words).not.toHaveProperty(["t1.us"]);
+    expect(next.content.words).not.toHaveProperty(["t1.s.size"]);
+    // The second table rides along.
+    expect(next.content.tables[1]).toEqual(chart().content.tables[1]);
+    const r = toInput(next);
+    expect("fieldErrors" in r && r.fieldErrors).toEqual({
+      "content.tables.0.rows.1.cells.bust":
+        "Type a number, or a range like 31–32.",
+    });
+    const fixed = validateChart(
+      input(setCell(next, "r2", "bust", "35")),
+    ).content;
+    expect(fixed.tables[0].rows).toEqual([
+      { id: "xs", cells: { bust: [31, 32], c2: [24] } },
+      { id: "r2", cells: { bust: [35], c2: [28] } },
+    ]);
+    expect(fixed.words["t1.c2"]).toBe("Waist");
+  });
+
+  it("keeps the fit finder's columns and sizes by name, and its only measurement when the paste lacks it", () => {
+    const c = chart();
+    c.content.tables[0].merges = [{ row: "xs", col: "us", rows: 2, cols: 1 }];
+    c.content.tables[0].wrap = ["us", "bust"];
+    c.content.fit = {
+      table: "t1",
+      stretch: "none",
+      ease: { bust: 1 },
+      questions: [
+        { id: "qb", kind: "measure", col: "bust", optional: false },
+        {
+          id: "qf",
+          kind: "choice",
+          options: [{ id: "a", rows: ["xs", "s"] }],
+        },
+      ],
+    };
+    Object.assign(c.content.words, { "fit.qb": "Bust", "fit.qf": "Fit" });
+    const d = toDraft(validateChart(c), "DRAFT");
+    // Renamed: the fit finder's Bust stays, at the end, with XS's value.
+    const kept = replaceTable(d, pasted("Size\tChest\nxs\t30\nL\t40"));
+    const k = validateChart(input(kept)).content;
+    expect(k.tables[0].columns.map((x) => x.id)).toEqual([
+      "size",
+      "c2",
+      "bust",
+    ]);
+    expect(k.tables[0].rows[0].cells).toEqual({ c2: [30], bust: [31, 32] });
+    expect(k.tables[0].merges).toBeUndefined();
+    expect(k.tables[0].wrap).toEqual(["bust"]);
+    expect(k.fit?.questions[1]).toEqual({
+      id: "qf",
+      kind: "choice",
+      options: [{ id: "a", rows: ["xs"] }],
+    });
+    // Named as before: the fit finder asks the pasted column.
+    const same = validateChart(
+      input(replaceTable(d, pasted("Size\tBUST\nXS\t30\nS\t34"))),
+    ).content;
+    expect(same.tables[0].columns.map((x) => x.id)).toEqual(["size", "bust"]);
+    expect(same.fit?.ease).toEqual({ bust: 1 });
+  });
+
+  it("fills a blank chart", () => {
+    const next = replaceTable(blankDraft(), pasted(sheet));
+    const c = validateChart({ ...input({ ...next, name: "Tops" }) }).content;
+    expect(c.tables[0].rows).toHaveLength(3);
+    expect(c.words["t1.r1.size"]).toBe("XXS");
+    expect(c.words["t1.c3"]).toBe("Hips");
   });
 });

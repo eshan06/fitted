@@ -124,12 +124,62 @@
   font-weight: 600;
 }
 .editor .blank {
-  margin: 0;
-  font-size: 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
   border: 1px dashed #b5b8bb;
   border-radius: 10px;
   padding: 40px 20px;
   text-align: center;
+}
+.editor .blank h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+.editor .blank .help {
+  max-width: 420px;
+}
+/* Paste a whole chart (Editor board). */
+.confirm.paste {
+  max-width: 600px;
+  margin-top: 100px;
+}
+.paste textarea.field {
+  min-height: 150px;
+  resize: vertical;
+  font:
+    0.8125rem ui-monospace,
+    Menlo,
+    monospace;
+  line-height: 1.5;
+  white-space: pre;
+  tab-size: 10;
+}
+.paste .found {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #e9eef9;
+  color: #1f3d8f;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+.paste .found strong {
+  font-size: 0.875rem;
+}
+.paste .err {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+.paste .err svg {
+  flex: none;
+  margin-top: 2px;
 }
 .editor .sk {
   display: block;

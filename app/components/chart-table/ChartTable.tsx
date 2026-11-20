@@ -17,6 +17,8 @@ export function ChartTable(props: {
   dropped: string[];
   onChange: (d: model.Draft) => void;
   onRemove: (sel: model.Selected) => void;
+  /** Opens Paste a whole chart. */
+  onPaste: () => void;
 }) {
   const { draft, errors, onChange } = props;
   const [sel, setSel] = useState<model.Selected>();
@@ -187,6 +189,9 @@ export function ChartTable(props: {
           onClick={() => onChange(model.toggleWrap(draft, wrapCol!))}
         >
           Wrap text
+        </button>
+        <button type="button" className="btn2" onClick={props.onPaste}>
+          Paste whole chart
         </button>
         <label>
           Round to
