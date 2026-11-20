@@ -9,6 +9,7 @@ import {
   type Admin,
   AdminApiError,
   pricingPlansUrl,
+  themeEditorUrl,
 } from "../models/admin.server";
 import {
   chartPages,
@@ -66,12 +67,10 @@ async function loadHome(admin: Admin, shop: string): Promise<HomeData> {
     ]);
     const live = charts.filter((c) => c.status === "ACTIVE");
     const active = live.length;
-    const store = shop.replace(/\.myshopify\.com$/, "");
-    const block = `${process.env.SHOPIFY_API_KEY}/size-guide`;
     return {
       plan,
       plansUrl,
-      themeUrl: `https://admin.shopify.com/store/${store}/themes/current/editor?template=product&addAppBlockId=${block}&target=mainSection`,
+      themeUrl: themeEditorUrl(shop),
       charts: charts.length,
       active,
       limit:

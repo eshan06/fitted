@@ -9,7 +9,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App, { action, loader, shouldRevalidate } from "./app";
 import Import from "./app.import";
 import FitFinder from "./app.fit-finder";
-import Appearance from "./app.appearance";
 
 const m = vi.hoisted(() => ({
   admin: vi.fn(),
@@ -306,7 +305,6 @@ describe("placeholder screens", () => {
   it.each([
     ["Import charts", Import],
     ["Fit finder", FitFinder],
-    ["Appearance & languages", Appearance],
   ])("%s is an empty page with the canvas's title", (title, Screen) => {
     expect(render(<Screen />)).toBe(`<s-page heading="${title}"></s-page>`);
   });

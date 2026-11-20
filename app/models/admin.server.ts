@@ -117,3 +117,10 @@ export async function pricingPlansUrl(admin: Admin, shop: string) {
   const store = shop.replace(/\.myshopify\.com$/, "");
   return `https://admin.shopify.com/store/${store}/charges/${data.currentAppInstallation.app.handle}/pricing_plans`;
 }
+
+/** The live theme's editor on the product template, adding the size guide block. */
+export function themeEditorUrl(shop: string) {
+  const store = shop.replace(/\.myshopify\.com$/, "");
+  const block = `${process.env.SHOPIFY_API_KEY}/size-guide`;
+  return `https://admin.shopify.com/store/${store}/themes/current/editor?template=product&addAppBlockId=${block}&target=mainSection`;
+}

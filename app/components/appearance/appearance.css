@@ -1,0 +1,61 @@
+/* The Appearance board's look (Fitted canvas), on top of the editor's shared
+   styles. Scoped to .appearance: imported CSS stays loaded on other screens. */
+.appearance h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+.appearance fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 24px;
+}
+.appearance legend {
+  padding: 0;
+  margin-bottom: 6px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+.appearance label.choice {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  font-size: 0.875rem;
+  font-weight: 400;
+}
+.appearance .choice input {
+  margin: 3px 0 0;
+  flex: none;
+  accent-color: #2448a8;
+}
+.appearance .choice strong,
+.appearance .choice .help {
+  display: block;
+}
+.appearance .fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  align-items: flex-start;
+}
+.appearance .fields > * {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+.appearance .fields > .wide {
+  flex: 2 1 220px;
+}
+.appearance p.err {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin-top: 6px;
+}
+.appearance textarea.field {
+  min-height: 5rem;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 0.8125rem;
+  resize: vertical;
+}
