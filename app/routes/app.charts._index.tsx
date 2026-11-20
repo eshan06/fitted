@@ -1,21 +1,43 @@
-// The size charts list (ARCHITECTURE §2, §5, §8): status, product counts, search, Free's limit.
-import { Suspense, useState } from "react";
-import type { LoaderFunctionArgs } from "react-router";
-import { Await, useLoaderData, useRevalidator } from "react-router";
+// The size charts list (ARCHITECTURE §2, §5, §6, §8): status, product counts, search, Free's limit, delete.
+import { Suspense, useEffect, useRef, useState } from "react";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import {
+  Await,
+  data,
+  useFetcher,
+  useLoaderData,
+  useRevalidator,
+} from "react-router";
 import { authenticate } from "../shopify.server";
 import {
   type Admin,
   AdminApiError,
+  canReadProducts,
   pricingPlansUrl,
 } from "../models/admin.server";
 import {
+  ChartNotFoundError,
   chartPages,
   countChartProducts,
+  deleteChart,
   type ChartStatus,
   type StoredChart,
   type Template,
 } from "../models/chart.server";
 import { FREE_ACTIVE_CHARTS, getPlan } from "../models/billing.server";
+import { startResolve } from "../models/rules.server";
+
+const ROUTE = "app.charts._index";
+const logShopifyError = (shop: string, err: AdminApiError) =>
+  console.log(
+    JSON.stringify({
+      level: "error",
+      msg: err.message,
+      shop,
+      route: ROUTE,
+      detail: err.detail,
+    }),
+  );
 
 export type Row = {
   id: string;
@@ -59,15 +81,7 @@ async function loadList(admin: Admin, shop: string): Promise<ChartList> {
     return { rows, limit };
   } catch (err) {
     if (!(err instanceof AdminApiError)) throw err;
-    console.log(
-      JSON.stringify({
-        level: "error",
-        msg: err.message,
-        shop,
-        route: "app.charts._index",
-        detail: err.detail,
-      }),
-    );
+    logShopifyError(shop, err);
     const message = "Fitted didn't get an answer from your store.";
     return { error: { code: "shopify", message } };
   }
@@ -77,6 +91,48 @@ async function loadList(admin: Admin, shop: string): Promise<ChartList> {
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   return { list: loadList(admin, session.shop) };
+};
+
+const fail = (status: number, code: string, message: string) =>
+  data({ error: { code, message } }, { status });
+
+// Deletes one chart, then moves its products to the next matching chart (§6).
+export const action = async ({ request }: ActionFunctionArgs) => {
+  const { admin, session } = await authenticate.admin(request);
+  const id = (await request.formData().catch(() => null))?.get("id");
+  if (typeof id !== "string" || !/^gid:\/\/shopify\/Metaobject\/\d+$/.test(id))
+    return data(
+      {
+        fieldErrors: {
+          id: "Fitted couldn't tell which chart to delete, so nothing was deleted. Reload the page and try again.",
+        },
+      },
+      { status: 422 },
+    );
+  try {
+    // The resolve job that moves its products runs with the offline token (§13).
+    if (!(await canReadProducts(admin)))
+      return fail(
+        403,
+        "product_access",
+        "Deleting a chart changes which products show a size guide, which needs the Products permission on your staff account. Nothing was deleted. Ask the store owner to give you Products access in Settings › Users, then try again.",
+      );
+    await deleteChart(admin, id);
+  } catch (err) {
+    // Already gone (a repeated delete, or someone else's): the delete is done.
+    if (!(err instanceof ChartNotFoundError)) {
+      if (!(err instanceof AdminApiError)) throw err;
+      logShopifyError(session.shop, err);
+      return fail(
+        502,
+        "shopify",
+        "Fitted didn't get an answer from your store, so the chart may not be deleted. If it's still in your list, products still show it.",
+      );
+    }
+  }
+  // Every product leaves the deleted chart, `auto: false` charts included (§6).
+  void startResolve(session.shop, true);
+  return { ok: true as const };
 };
 
 const TEMPLATES: Record<Template, string> = {
@@ -140,6 +196,9 @@ const HEADERS = (
       Products
     </s-table-header>
     <s-table-header listSlot="labeled">Last edited</s-table-header>
+    <s-table-header listSlot="secondary">
+      <s-text accessibilityVisibility="exclusive">Actions</s-text>
+    </s-table-header>
   </s-table-header-row>
 );
 
@@ -210,9 +269,73 @@ const listen = (set: (v: string) => void) => (el: HTMLElement | null) => {
   if (el) el.oninput = () => set((el as HTMLInputElement).value ?? "");
 };
 
+type Deleted =
+  | { ok: true }
+  | { error: { code: string; message: string } }
+  | { fieldErrors: { id: string } };
+
+// The "Delete chart" confirmation; Delete becomes Try again after a failure (§15).
+function DeleteChart({ target }: { target: Row | null }) {
+  // One fetcher per chart, so another chart's failure never shows here.
+  const fetcher = useFetcher<Deleted>({ key: `delete-${target?.id}` });
+  const modal = useRef<HTMLElementTagNameMap["s-modal"]>(null);
+  const busy = fetcher.state !== "idle";
+  const answer = busy ? undefined : fetcher.data;
+  useEffect(() => {
+    if (answer && "ok" in answer) modal.current?.hideOverlay?.();
+  }, [answer]);
+  const failed =
+    answer && "error" in answer
+      ? answer.error.message
+      : answer && "fieldErrors" in answer
+        ? answer.fieldErrors.id
+        : null;
+  const n = target?.products;
+  return (
+    <s-modal
+      ref={modal}
+      id="delete-chart"
+      heading={target ? `Delete ${target.name}?` : "Delete chart"}
+    >
+      <s-stack gap="base">
+        {failed && (
+          <s-banner tone="critical" heading="We couldn't delete this chart">
+            <s-paragraph>{failed}</s-paragraph>
+          </s-banner>
+        )}
+        <s-paragraph>
+          {!n || n.count === 0
+            ? "No products show it."
+            : `It shows on ${products(n)} ${n.count === 1 && !n.atLeast ? "product" : "products"}. They'll show the next chart that matches them, or no size guide.`}
+        </s-paragraph>
+      </s-stack>
+      <s-button
+        slot="primary-action"
+        variant="primary"
+        tone="critical"
+        {...(busy && { loading: true })}
+        onClick={() =>
+          target && fetcher.submit({ id: target.id }, { method: "post" })
+        }
+      >
+        {failed ? "Try again" : "Delete"}
+      </s-button>
+      <s-button
+        slot="secondary-actions"
+        {...(busy && { disabled: true })}
+        commandFor="delete-chart"
+        command="--hide"
+      >
+        Cancel
+      </s-button>
+    </s-modal>
+  );
+}
+
 export function Charts({ rows, limit }: Extract<ChartList, { rows: unknown }>) {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("all");
+  const [target, setTarget] = useState<Row | null>(null);
   if (!rows.length)
     return (
       <s-section accessibilityLabel="No size charts yet">
@@ -320,6 +443,27 @@ export function Charts({ rows, limit }: Extract<ChartList, { rows: unknown }>) {
                     <s-table-cell>
                       {DAY.format(new Date(r.updatedAt))}
                     </s-table-cell>
+                    <s-table-cell>
+                      <s-button
+                        icon="menu-horizontal"
+                        variant="tertiary"
+                        accessibilityLabel={`Actions for ${r.name}`}
+                        commandFor={`actions-${r.id.split("/").pop()}`}
+                      />
+                      <s-menu
+                        id={`actions-${r.id.split("/").pop()}`}
+                        accessibilityLabel={`Actions for ${r.name}`}
+                      >
+                        <s-button
+                          tone="critical"
+                          commandFor="delete-chart"
+                          command="--show"
+                          onClick={() => setTarget(r)}
+                        >
+                          Delete
+                        </s-button>
+                      </s-menu>
+                    </s-table-cell>
                   </s-table-row>
                 ))}
               </s-table-body>
@@ -352,6 +496,7 @@ export function Charts({ rows, limit }: Extract<ChartList, { rows: unknown }>) {
           </s-stack>
         )}
       </s-section>
+      <DeleteChart target={target} />
     </>
   );
 }
