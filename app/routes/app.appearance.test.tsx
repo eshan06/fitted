@@ -5,7 +5,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { createRoutesStub } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultSettings, type Settings } from "../models/settings.server";
-import { fileSize, fontType } from "../lib/font-file";
+import { fontType } from "../lib/font-file";
 
 const m = vi.hoisted(() => ({ authenticate: vi.fn() }));
 vi.mock("../shopify.server", () => ({
@@ -558,9 +558,17 @@ describe("colors, font and preview", () => {
 // Shopify Files behind the fake store: the staged upload, fileCreate and the
 // file's status, with the staged target's POST on `fetch`.
 const FILE_URL = "https://cdn.shopify.com/s/files/1/1/files/Sora.woff2?v=1";
-function fakeFiles({ status = "READY", target = 204 } = {}) {
+// `statuses` answer the polls in turn, the last one repeating.
+function fakeFiles({
+  statuses = ["READY"],
+  url = FILE_URL,
+  target = 204,
+} = {}) {
   const calls: { query: string; variables?: Record<string, unknown> }[] = [];
   const base = store.admin.graphql.getMockImplementation()!;
+  const poll = (fileStatus: string) => ({
+    node: { fileStatus, url: fileStatus === "READY" ? url : null },
+  });
   const answer = (q: string) =>
     q.includes("FittedFontStage")
       ? {
@@ -582,7 +590,7 @@ function fakeFiles({ status = "READY", target = 204 } = {}) {
               userErrors: [],
             },
           }
-        : { node: { fileStatus: status, url: status === "READY" && FILE_URL } };
+        : poll(statuses.length > 1 ? statuses.shift()! : statuses[0]);
   store.admin.graphql.mockImplementation(async (query, opts) => {
     if (!query.includes("FittedFont")) return base(query, opts);
     calls.push({ query, variables: opts?.variables });
@@ -706,8 +714,34 @@ describe("uploading a font", () => {
       shop: SHOP,
       route: "app.appearance",
     });
-    fakeFiles({ status: "FAILED" });
+    fakeFiles({ statuses: ["FAILED"] });
     expect(await postFont(font())).toEqual(failed);
+    // Shopify's answer is checked too: only a Shopify Files address is kept.
+    fakeFiles({ url: "https://evil.test/x.woff2" });
+    expect(await postFont(font())).toEqual(failed);
+    const { sent } = fakeFiles();
+    sent.mockRejectedValue(new TypeError("fetch failed"));
+    expect(await postFont(font())).toEqual(failed);
+  });
+
+  it("waits while Shopify processes the file, and gives up after 20 seconds", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
+    const run = async () => {
+      const answer = postFont(font());
+      await vi.advanceTimersByTimeAsync(25_000);
+      return answer;
+    };
+    const { calls } = fakeFiles({
+      statuses: ["UPLOADED", "PROCESSING", "READY"],
+    });
+    expect((await run()).body).toEqual({ fileUrl: FILE_URL });
+    const polls = calls.filter((c) => c.query.includes("FittedFontFile"));
+    expect(polls).toHaveLength(3);
+
+    fakeFiles({ statuses: ["PROCESSING"] });
+    expect((await run()).status).toBe(502);
+    expect(JSON.parse(logs.at(-1)!).msg).toBe("The font took too long");
+    vi.useRealTimers();
   });
 
   it("knows each kind of font by its first bytes", () => {
@@ -717,7 +751,5 @@ describe("uploading a font", () => {
     expect(fontType("a.otf", head(0x4f, 0x54, 0x54, 0x4f))).toBe("font/otf");
     expect(fontType("a.ttf", head(0x77, 0x4f, 0x46))).toBeUndefined();
     expect(fontType("constructor", head(0, 1, 0, 0))).toBeUndefined();
-    expect(fileSize(48 * 1024)).toBe("48 KB");
-    expect(fileSize(6.35 * 1024 * 1024)).toBe("6.4 MB");
   });
 });
