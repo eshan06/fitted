@@ -15,17 +15,12 @@ export const LABELS: Record<Field, string> = {
   product: "Specific products",
   all: "Everything else",
 };
-const EXAMPLE: Record<string, string> = {
-  tag: "a tag, like women-top",
-  type: "a product type, like Shirts",
-  vendor: "a vendor, like North Linen",
-  metafield: "a value to compare",
-};
-const NOUN: Record<string, string> = {
-  tag: "tag",
-  type: "product type",
-  vendor: "vendor",
-  metafield: "value",
+// What each text field holds, and an example.
+const NOUN: Record<string, [string, string]> = {
+  tag: ["tag", ", like women-top"],
+  type: ["product type", ", like Shirts"],
+  vendor: ["vendor", ", like North Linen"],
+  metafield: ["value", " to compare"],
 };
 export const FIELDS = Object.keys(LABELS) as Field[];
 export const opsFor = (f: Field): string[] =>
@@ -82,10 +77,10 @@ export function check(rules: Rules): FieldErrors {
             errs[`${p}.key`] = "Use namespace.key, like custom.fit.";
         }
         if ("value" in c && !c.value.trim())
-          errs[`${p}.value`] = `Enter ${EXAMPLE[c.field]}.`;
+          errs[`${p}.value`] = `Enter a ${NOUN[c.field].join("")}.`;
         else if ("value" in c && c.value.length > 255)
           errs[`${p}.value`] =
-            `This is ${c.value.length} characters; the most is 255. Put one ${NOUN[c.field]} in each condition.`;
+            `This is ${c.value.length} characters; the most is 255. Put one ${NOUN[c.field][0]} in each condition.`;
         if ("ids" in c && !c.ids.length)
           errs[`${p}.ids`] = "Pick at least one.";
       });
