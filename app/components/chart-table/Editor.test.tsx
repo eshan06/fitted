@@ -654,7 +654,10 @@ describe("chart editor screen", () => {
   });
 
   it("links a stored step's finding to its field on the How to measure tab", async () => {
-    const b = broken({ "content.words.m.m1.name": "Too long" });
+    const b = broken({
+      "content.words.m.m1.name": "Too long",
+      "content.words.tips": "Too long",
+    });
     b.stored.raw.content.measure.steps = ["m1"];
     b.stored.raw.content.words["m.m1.name"] = "Bust";
     await open([b]);
@@ -666,6 +669,18 @@ describe("chart editor screen", () => {
     await settle();
     expect(document.activeElement).toBe(byLabel("Step 1 name"));
     expect(byLabel("Step 1 name").value).toBe("Bust");
+    // The tips' finding opens Fit tips, and a cell's goes back to the table.
+    const follow = async (where: string) => {
+      const a = [...document.querySelectorAll("s-banner a")].find(
+        (x) => x.textContent === where,
+      ) as HTMLAnchorElement;
+      await act(async () => a.click());
+      await settle();
+    };
+    await follow("Fit tips");
+    expect(document.activeElement?.id).toBe("tips");
+    await follow("XS, Bust");
+    expect(document.activeElement).toBe(byLabel("XS, Bust"));
   });
 
   it("shows only the banner when a finding is outside what the editor can change", async () => {
