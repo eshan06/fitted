@@ -11,19 +11,27 @@ export type Load = (url: string) => Promise<{ render: typeof render }>;
 // The canvas's accent. "Match my theme" keeps it where it reads 4.5:1 on the
 // theme's background and on its tint, and takes the theme's text color elsewhere.
 const ACCENT = "#2448a8";
-// WCAG relative luminance of an rgb() color, and 0 for any other syntax.
+const WHITE = "rgb(255, 255, 255)";
+const BLACK = "rgb(18, 18, 18)";
+// WCAG relative luminance of an rgb() or rgba() color (its alpha aside), and
+// -1 for any other syntax.
 const luminance = (c: string) => {
-  const rgb = /^rgb\(([\d.]+), ([\d.]+), ([\d.]+)\)$/.exec(c)?.slice(1) ?? [];
-  const [r = 0, g = 0, b = 0] = rgb.map((n) => {
+  const rgb = /^rgba?\(([\d.]+), ([\d.]+), ([\d.]+)/.exec(c)?.slice(1);
+  if (!rgb) return -1;
+  const [r, g, b] = rgb.map((n) => {
     const s = +n / 255;
     return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
   });
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 };
+const ratio = (a: number, b: number) =>
+  (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
 // The theme's text color where the block sits, and the nearest opaque
-// background behind it (rgba() and "/ a" carry an alpha below 1).
+// background behind it (rgba() and "/ a" carry an alpha below 1). A section
+// painted with a gradient has no background color, so the one found can sit
+// under text it doesn't read with: then white or near-black, whichever reads.
 function themeColors(block: HTMLElement) {
-  let bg = "rgb(255, 255, 255)";
+  let bg = WHITE;
   for (let el: Element | null = block; el; el = el.parentElement) {
     const c = getComputedStyle(el).backgroundColor;
     if (c && !/rgba|\/|transparent/.test(c)) {
@@ -32,9 +40,13 @@ function themeColors(block: HTMLElement) {
     }
   }
   const text = getComputedStyle(block).color;
+  const ink = luminance(text);
+  if (ink >= 0 && luminance(bg) >= 0 && ratio(ink, luminance(bg)) < 4.5)
+    bg = ratio(ink, 1) > ratio(ink, luminance(BLACK)) ? WHITE : BLACK;
   return { text, accent: luminance(bg) >= 0.65 ? ACCENT : text, bg };
 }
-// Fitted's styles, the uploaded font and the merchant's CSS, kept to the guide.
+// Fitted's styles, the uploaded font, then the merchant's CSS as written, so
+// it wins ties with Fitted's rules.
 const styles = (g: Guide) =>
   h(
     "style",
@@ -42,7 +54,7 @@ const styles = (g: Guide) =>
     css,
     g.font &&
       `@font-face{font-family:fitted-font;src:url("${g.font}");font-display:swap}`,
-    g.css && `@scope (.fitted-guide){${g.css}}`,
+    g.css,
   );
 
 function setup(block: HTMLElement, load: Load) {

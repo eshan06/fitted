@@ -15,7 +15,7 @@ export const CSS_WORDS = {
   lt: `Custom CSS can't contain "<"`,
   slash: `Custom CSS can't contain "\\". Type the character itself instead.`,
   import: "Custom CSS can't use @import",
-  load: "Custom CSS can load files only from Shopify Files (https://cdn.shopify.com/)",
+  load: "Custom CSS can load files only through url() with a Shopify Files address (https://cdn.shopify.com/…)",
 };
 
 /**
@@ -30,7 +30,7 @@ export function cssProblem(v: unknown): keyof typeof CSS_WORDS | undefined {
   if (v.includes("<")) return "lt";
   if (v.includes("\\")) return "slash";
   if (/@import/i.test(v)) return "import";
-  // image-set(), image() and src() load from a quoted URL with no url(.
-  if (/url\(|image-set\(|image\(|src\(/i.test(v.replace(FILE_URL, "")))
+  // image-set(), image(), src() and filter() can load from a quoted URL with no url(.
+  if (/url\(|image-set\(|image\(|src\(|filter\(/i.test(v.replace(FILE_URL, "")))
     return "load";
 }

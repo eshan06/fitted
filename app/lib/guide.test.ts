@@ -189,6 +189,15 @@ describe("parseGuide", () => {
       css: "</style><script>",
     });
     bad({ text: "Fit guide", popup: { font: "theme" }, css: 42 });
+    // Three valid colors under "Match my theme" still leave the theme's.
+    bad({
+      colors: {
+        mode: "theme",
+        text: "#202223",
+        accent: "#b3301c",
+        background: "#fffaf0",
+      },
+    });
   });
 
   it.each([

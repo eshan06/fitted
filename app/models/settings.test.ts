@@ -340,6 +340,15 @@ describe("validateSettings", () => {
     ],
     ["css", '.fitted-link{background:image-set("https://evil.example/t" 1x)}'],
     ["css", '.fitted-link{background:src("https://evil.example/t")}'],
+    [
+      "css",
+      '.fitted-link{background:filter("https://evil.example/t", blur(1px))}',
+    ],
+    // Shopify Files only through plain url(), so image-set() is refused too.
+    [
+      "css",
+      ".fitted-link{background:image-set(url(https://cdn.shopify.com/a.png) 1x)}",
+    ],
     ["css", ".fitted-link{background:u\\72l(https://evil.example/t)}"],
     ["css", '.fitted-link::after{content:"\\201C"}'],
     ["v", 2],

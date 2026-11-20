@@ -420,22 +420,32 @@ describe("loader", () => {
       "background-color: rgba(0, 0, 0, 0.5); color: rgb(18, 18, 18)",
       { text: "rgb(18, 18, 18)", accent: "#2448a8", bg: "rgb(255, 255, 255)" },
     ],
-  ])("matches the theme on open: %s", async (_, theme, colors) => {
-    document.body.innerHTML = `<div style="${theme}"><div>${block(valid)}</div></div>`;
+    [
+      "puts light text on near-black when the section's background is a gradient over white",
+      "background-color: rgb(255, 255, 255)",
+      {
+        text: "rgba(240, 240, 240, 0.75)",
+        accent: "rgba(240, 240, 240, 0.75)",
+        bg: "rgb(18, 18, 18)",
+      },
+      "background-image: linear-gradient(#123, #456); color: rgba(240, 240, 240, 0.75)",
+    ],
+  ])("matches the theme on open: %s", async (_, theme, colors, inner = "") => {
+    document.body.innerHTML = `<div style="${theme}"><div style="${inner}">${block(valid)}</div></div>`;
     await tick();
     const root = document.querySelector<HTMLElement>(".fitted-guide")!;
     root.querySelector<HTMLElement>(".fitted-link")!.click();
     expect(painted(root)).toEqual(colors);
   });
 
-  it("adds the uploaded font and the custom CSS once, kept to the guide", async () => {
+  it("adds the uploaded font and the custom CSS once, after Fitted's styles", async () => {
     document.getElementById("fitted-css")?.remove();
     const font = "https://cdn.shopify.com/s/files/1/0001/font.woff2?v=1";
+    // As written: inside @scope (.fitted-guide), a selector naming the guide
+    // itself or an ancestor would match nothing.
+    const custom = "body .fitted-guide .fitted-link { letter-spacing: .1em }";
     const { root, link } = await mount(
-      withSettings({
-        popup: { font: { fileUrl: font } },
-        css: ".fitted-link { letter-spacing: .1em }",
-      }),
+      withSettings({ popup: { font: { fileUrl: font } }, css: custom }),
     );
     document.body.insertAdjacentHTML("beforeend", block(valid));
     await tick();
@@ -446,15 +456,18 @@ describe("loader", () => {
     expect(text).toContain(
       `@font-face{font-family:fitted-font;src:url("${font}");font-display:swap}`,
     );
-    expect(
-      text.endsWith(
-        "@scope (.fitted-guide){.fitted-link { letter-spacing: .1em }}",
-      ),
-    ).toBe(true);
+    expect(text.endsWith(custom)).toBe(true);
+    expect(text).not.toContain("@scope");
     expect(root.style.getPropertyValue("--fitted-font")).toBe("");
     link.click();
     expect(root.style.getPropertyValue("--fitted-font")).toMatch(
       /^fitted-font\b/,
+    );
+  });
+
+  it("keeps the canvas's shades where color-mix() isn't supported", () => {
+    expect(css).toContain(
+      "@supports not (color:color-mix(in srgb,red,red)){.fitted-dialog{--fitted-muted:#3a3a3a;--fitted-line:#d9dde3;--fitted-faint:#e6eaf2;--fitted-tint:#e9eef9;--fitted-alert:#fdeceb;--fitted-alert-line:#e0a9a1}}",
     );
   });
 
