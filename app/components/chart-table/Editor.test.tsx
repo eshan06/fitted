@@ -965,6 +965,9 @@ describe("chart editor screen", () => {
     );
     expect(byLabel("XS, Bust").value).toBe("30–32");
     expect(text()).not.toContain("Left for");
+    // Trying again asks again.
+    await follow("Size charts");
+    expect(bridge.saveBar.leaveConfirmation).toHaveBeenCalledTimes(2);
   });
 
   it("leaves without asking when nothing is unsaved", async () => {
