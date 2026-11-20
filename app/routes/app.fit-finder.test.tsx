@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { createRoutesStub } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { STRETCH } from "../lib/fit-finder";
 import { defaultSettings, type Settings } from "../models/settings.server";
 
 const m = vi.hoisted(() => ({ authenticate: vi.fn(), getPlan: vi.fn() }));
@@ -26,13 +27,64 @@ const SHOP = "fitted-dev.myshopify.com";
 const PLANS =
   "https://admin.shopify.com/store/fitted-dev/charges/fitted/pricing_plans";
 const json = (body: unknown) => new Response(JSON.stringify(body));
+const TYPE = "app--1--chart";
 const chart = {
   id: "gid://shopify/Metaobject/1",
+  type: TYPE,
   handle: "womens-tops",
   updatedAt: "2026-11-01T00:00:00Z",
   name: { value: "Women's tops" },
   capabilities: { publishable: { status: "ACTIVE" } },
 };
+// A chart with questions: the FitFinder board's Women's tops.
+const fitted = (n: number, name: string, ease: object = { bust: 2 }) => ({
+  ...chart,
+  id: `gid://shopify/Metaobject/${n}`,
+  handle: `c-fitted000${n}`,
+  name: { value: name },
+  template: { value: "tops" },
+  content: {
+    jsonValue: {
+      v: 1,
+      unit: "in",
+      roundTo: 0.5,
+      tables: [
+        {
+          id: "t1",
+          columns: [
+            { id: "size", kind: "size" },
+            { id: "bust", kind: "measure", convert: true },
+          ],
+          rows: ["xs", "s", "m", "l", "xl"].map((id, i) => ({
+            id,
+            cells: { bust: [33 + 2 * i, 34 + 2 * i] },
+          })),
+        },
+      ],
+      measure: { steps: [] },
+      fit: {
+        table: "t1",
+        questions: [
+          { id: "q1", kind: "measure", col: "bust", optional: true },
+          { id: "q2", kind: "usual_size" },
+          { id: "q3", kind: "fit" },
+        ],
+        ease,
+        stretch: "some",
+      },
+      words: {
+        "t1.bust": "Bust",
+        "t1.xs.size": "XS",
+        "t1.xl.size": "XL",
+        "fit.q1": "What's your bust measurement?",
+        "fit.q2": "What size do you usually wear?",
+        "fit.q3": "How do you like tops to fit?",
+      },
+    },
+  },
+});
+type Node = ReturnType<typeof fitted>;
+const fitOf = (n: Node) => n.content.jsonValue.fit;
 
 // One shop's `$app.settings`, enforcing compareDigest like Shopify, and its
 // charts. `down` makes every call fail.
@@ -43,7 +95,11 @@ function fakeStore(initial: Settings | null = null) {
     writes: 0,
     down: false,
     chartsDown: false, // only the chart list fails
-    charts: [chart],
+    chartWritesDown: false,
+    chartWritesMax: Infinity, // chart writes past this many fail
+    chartReadsFresh: Infinity, // chart reads past this many see a newer save
+    chartWrites: 0,
+    charts: [chart] as (typeof chart | Node)[],
   };
   const graphql = vi.fn(
     async (query: string, opts?: { variables?: Record<string, unknown> }) => {
@@ -60,6 +116,37 @@ function fakeStore(initial: Settings | null = null) {
                 },
               },
         });
+      if (query.includes("query ChartGet")) {
+        const found = store.charts.find((c) => c.id === opts!.variables!.id);
+        const stale = store.chartReadsFresh-- <= 0;
+        return json({
+          data: {
+            metaobject:
+              found && stale
+                ? { ...found, updatedAt: "later" }
+                : (found ?? null),
+            metaobjectDefinitionByType: { type: TYPE },
+          },
+        });
+      }
+      if (query.includes("mutation ChartUpdate")) {
+        if (store.chartWritesDown || store.chartWrites >= store.chartWritesMax)
+          throw new Error("socket hang up");
+        const { id, metaobject } = opts!.variables as {
+          id: string;
+          metaobject: { values: { content: string } };
+        };
+        const i = store.charts.findIndex((c) => c.id === id);
+        const node = {
+          ...(store.charts[i] as Node),
+          updatedAt: `2026-11-02T00:00:0${++store.chartWrites}Z`,
+          content: { jsonValue: JSON.parse(metaobject.values.content) },
+        };
+        store.charts[i] = node;
+        return json({
+          data: { metaobjectUpdate: { metaobject: node, userErrors: [] } },
+        });
+      }
       if (query.includes("query FittedAppHandle"))
         return json({
           data: { currentAppInstallation: { app: { handle: "fitted" } } },
@@ -498,5 +585,278 @@ describe("fit finder screen", () => {
     await click("Try again");
     expect(banners()).toEqual([UPGRADE]);
     expect(noFit().value).toBe(saved().text.en.noFit);
+  });
+});
+
+describe("a chart's ease and stretch", () => {
+  const TOPS = "gid://shopify/Metaobject/2";
+  const BOTTOMS = "gid://shopify/Metaobject/3";
+  const AT = chart.updatedAt;
+  beforeEach(() => {
+    store.charts = [
+      chart,
+      fitted(2, "Women's tops"),
+      fitted(3, "Women's bottoms", {}),
+    ];
+  });
+  const send = (charts: unknown) =>
+    post({ digest: "d0", edits: edits(), charts });
+  const tops = () => fitOf(store.charts[1] as Node);
+  const none = () => expect(store.chartWrites + store.writes).toBe(0);
+
+  it("loads only charts with questions, with their fit table and words", async () => {
+    const got = (await load()).fitFinder as { charts: unknown[] };
+    const { tables, words } = (store.charts[1] as Node).content.jsonValue;
+    expect(got.charts).toEqual([
+      {
+        id: TOPS,
+        updatedAt: AT,
+        name: "Women's tops",
+        unit: "in",
+        fit: tops(),
+        table: tables[0],
+        words,
+      },
+      expect.objectContaining({ id: BOTTOMS }),
+    ]);
+  });
+
+  it("saves through the chart's own write, keeping the rest of the chart", async () => {
+    const r = await send([
+      { id: TOPS, updatedAt: AT, ease: { bust: 1.5 }, stretch: "high" },
+    ]);
+    expect(r).toEqual({ status: 200, body: { ok: true } });
+    const was = fitted(2, "").content.jsonValue;
+    expect(tops()).toEqual({
+      ...was.fit,
+      ease: { bust: 1.5 },
+      stretch: "high",
+    });
+    expect((store.charts[1] as Node).content.jsonValue.words).toEqual(
+      was.words,
+    );
+    expect(store.chartWrites).toBe(1);
+  });
+
+  it("skips what already holds the edits, so a replay or a retry is no change", async () => {
+    const body = [
+      { id: TOPS, updatedAt: AT, ease: { bust: 1.5 }, stretch: "high" },
+    ];
+    await send(body);
+    expect(await send(body)).toEqual({ status: 200, body: { ok: true } });
+    expect(store.chartWrites).toBe(1);
+    expect(store.writes).toBe(1); // the settings, once
+  });
+
+  it("answers 502 in the plain words when nothing landed", async () => {
+    store.chartWritesDown = true;
+    const r = await post({
+      digest: "d0",
+      edits: { fitFinder: saved().fitFinder, noFit: saved().text.en.noFit },
+      charts: [{ id: TOPS, updatedAt: AT, ease: {}, stretch: "none" }],
+    });
+    expect(r).toMatchObject({
+      status: 502,
+      body: { error: { code: "shopify" } },
+    });
+    none();
+  });
+
+  it("offers Try saving again, not Reload latest, when a chart changes after the settings landed", async () => {
+    store.chartReadsFresh = 1; // the write's own read sees another tab's save
+    const r = await send([
+      { id: TOPS, updatedAt: AT, ease: {}, stretch: "none" },
+    ]);
+    expect(r).toMatchObject({
+      status: 502,
+      body: { error: { code: "shopify" } },
+    });
+    expect(store.writes).toBe(1);
+    expect(JSON.parse(logs[0])).toMatchObject({ route: "app.fit-finder" });
+  });
+
+  it("finishes on retry when one chart landed and the next failed", async () => {
+    store.chartWritesMax = 1;
+    const body = {
+      digest: "d0",
+      edits: { fitFinder: saved().fitFinder, noFit: saved().text.en.noFit },
+      charts: [
+        { id: TOPS, updatedAt: AT, ease: {}, stretch: "none" },
+        { id: BOTTOMS, updatedAt: AT, ease: {}, stretch: "none" },
+      ],
+    };
+    expect(await post(body)).toMatchObject({
+      status: 502,
+      body: { error: { code: "shopify" } },
+    });
+    store.chartWritesMax = Infinity;
+    expect(await post(body)).toEqual({ status: 200, body: { ok: true } });
+    expect(store.chartWrites).toBe(2);
+    expect(fitOf(store.charts[2] as Node)).toMatchObject({ stretch: "none" });
+  });
+
+  it("writes a chart sent twice once", async () => {
+    const one = { id: TOPS, updatedAt: AT, ease: { bust: 1 }, stretch: "high" };
+    expect((await send([one, { ...one, ease: { bust: 3 } }])).status).toBe(200);
+    expect(store.chartWrites).toBe(1);
+    expect(tops()).toMatchObject({ ease: { bust: 1 } });
+  });
+
+  it("refuses a chart changed since it loaded, writing nothing", async () => {
+    const stale = "2026-10-01T00:00:00Z";
+    const r = await send([
+      { id: TOPS, updatedAt: stale, ease: {}, stretch: "none" },
+    ]);
+    expect(r).toMatchObject({
+      status: 409,
+      body: { error: { code: "conflict" } },
+    });
+    none();
+  });
+
+  it("refuses a chart that isn't one of this shop's with questions", async () => {
+    for (const id of [chart.id, "gid://shopify/Metaobject/99", "1", null]) {
+      const r = await send([{ id, updatedAt: AT, ease: {}, stretch: "none" }]);
+      expect(r.status).toBe(409);
+    }
+    none();
+  });
+
+  it("answers 422 with Ease marked for ease the chart can't hold, writing nothing", async () => {
+    for (const ease of [{ size: 1 }, { bust: "2" }, { bust: 10000 }, null]) {
+      const r = await send([
+        { id: TOPS, updatedAt: AT, ease, stretch: "some" },
+      ]);
+      expect(r.status).toBe(422);
+      const { fieldErrors } = r.body as { fieldErrors: object };
+      expect(Object.keys(fieldErrors)).toEqual(["ease"]);
+    }
+    const bad = { id: TOPS, updatedAt: AT, ease: {}, stretch: "max" };
+    expect((await send([bad])).status).toBe(422);
+    none();
+  });
+
+  it("answers 502 when only the settings landed, logging why; the retry finishes it", async () => {
+    store.chartWritesDown = true;
+    const body = [{ id: TOPS, updatedAt: AT, ease: {}, stretch: "none" }];
+    const r = await send(body);
+    expect(r).toMatchObject({
+      status: 502,
+      body: { error: { code: "shopify" } },
+    });
+    expect(JSON.stringify(r.body)).not.toContain("socket");
+    expect(JSON.parse(logs[0])).toMatchObject({
+      shop: SHOP,
+      route: "app.fit-finder",
+    });
+    // The settings landed first, so the retry, on the same digest, skips them.
+    expect(store.writes).toBe(1);
+    store.chartWritesDown = false;
+    expect(await send(body)).toEqual({ status: 200, body: { ok: true } });
+    expect(store.writes).toBe(1);
+    expect(tops()).toMatchObject({ ease: {}, stretch: "none" });
+  });
+
+  const ease = () => document.getElementById("ease") as HTMLInputElement;
+  const picked = () => labelled("Recommend sizes from");
+  const names = (el: HTMLElement, key: "value" | "textContent") =>
+    [...el.querySelectorAll("option")].map((o) => o[key]);
+
+  it("shows the picked chart's questions, ease and stretch, as the canvas draws them", async () => {
+    await open();
+    expect(picked().value).toBe(TOPS);
+    expect(names(picked(), "textContent")).toEqual([
+      "Women's tops",
+      "Women's bottoms",
+    ]);
+    expect(
+      [...document.querySelectorAll(".qs li")].map((li) => li.textContent),
+    ).toEqual([
+      "1What's your bust measurement?Number, optional. Links to How to measure.",
+      "2What size do you usually wear?Choice: XS to XL. Used when there's no measurement.",
+      "3How do you like tops to fit?Choice: Snug, Regular, Relaxed",
+    ]);
+    expect(ease().value).toBe("+2 in at bust");
+    // The engine's stretch levels, in the canvas's words.
+    const stretch = labelled("Stretch");
+    expect(names(stretch, "value")).toEqual(Object.keys(STRETCH));
+    expect(names(stretch, "textContent")).toEqual([
+      "None",
+      "Some (linen blend)",
+      "High",
+    ]);
+    expect(stretch.value).toBe("some");
+    // The question editor isn't drawn yet (#128).
+    expect(text()).not.toContain("Add question");
+    expect(text()).not.toContain("Edit");
+  });
+
+  it("keeps each chart's edits while switching, and saves every changed chart", async () => {
+    await open();
+    await type(ease(), "+1.5 in at bust");
+    await type(picked(), BOTTOMS);
+    expect(ease().value).toBe("");
+    await type(labelled("Stretch"), "high");
+    await type(picked(), TOPS);
+    expect(ease().value).toBe("+1.5 in at bust");
+    expect(saveBar()).not.toBeNull();
+    await click("Save");
+
+    expect(tops()).toMatchObject({ ease: { bust: 1.5 }, stretch: "some" });
+    expect(fitOf(store.charts[2] as Node)).toMatchObject({
+      ease: {},
+      stretch: "high",
+    });
+    expect(store.writes).toBe(0); // the settings didn't change
+    expect(saveBar()).toBeNull();
+    expect(ease().value).toBe("+1.5 in at bust");
+  });
+
+  it("marks ease that doesn't read, on its chart, and sends nothing", async () => {
+    await open();
+    await type(ease(), "two inches");
+    await type(picked(), BOTTOMS);
+    await type(noFit(), "");
+    await click("Save");
+    none();
+    expect(picked().value).toBe(TOPS);
+    expect(banners()[0]).toBe("Fix 2 fields to save");
+    expect(text()).toContain("Ease doesn't start with a number");
+    expect(text()).toContain("When no size fits is empty");
+    expect(text()).toContain("Start with a number, like +2 in at bust.");
+    expect(ease().getAttribute("aria-invalid")).toBe("true");
+    const link = [...document.querySelectorAll("a")].find(
+      (a) => a.textContent === "Ease",
+    )!;
+    await act(async () => link.click());
+    expect(document.activeElement).toBe(ease());
+  });
+
+  it("keeps the edits when a chart write fails after the settings, and Try saving again finishes", async () => {
+    await open();
+    await type(noFit(), "Message us.");
+    await type(ease(), "+1 in at bust");
+    store.chartWritesDown = true;
+    await click("Save");
+    expect(banners()).toEqual([
+      "Your fit finder changes weren't saved",
+      UPGRADE,
+    ]);
+    expect(ease().value).toBe("+1 in at bust");
+    expect(store.value!.text.en.noFit).toBe("Message us.");
+
+    store.chartWritesDown = false;
+    await click("Try saving again");
+    expect(tops()).toMatchObject({ ease: { bust: 1 } });
+    expect(store.writes).toBe(1);
+    expect(banners()).toEqual([UPGRADE]);
+  });
+
+  it("leaves the chart parts out when no chart has questions", async () => {
+    store.charts = [chart];
+    await open();
+    expect(text()).toContain("Fit finder type");
+    expect(text()).not.toContain("Recommend sizes from");
+    expect(ease()).toBeNull();
   });
 });
