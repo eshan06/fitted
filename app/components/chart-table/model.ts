@@ -1,6 +1,7 @@
 // The editor's working copy of a chart (ARCHITECTURE §5). The table tools
 // edit the first table; focus() puts the table being edited first. Numbers
 // stay as typed text until Save, so a half-typed range never gets lost.
+import { VIDEO_ERROR, videoSite } from "../../lib/video";
 import type {
   ChartInput,
   ChartStatus,
@@ -222,6 +223,13 @@ export const setUnit = (d: Draft, unit: Content["unit"]): Draft => ({
   ...d,
   content: { ...d.content, unit },
 });
+/** The fit video link; emptied, it matches a chart stored without one. */
+export function setVideo(d: Draft, link: string): Draft {
+  const { videoUrl: _, ...content } = d.content;
+  return { ...d, content: link ? { ...content, videoUrl: link } : content };
+}
+
+export const MAX_TABLES = 4;
 /** A table's heading, as "Garment measurements"; empty until it has one. */
 export const tableTitle = (d: Draft, i: number) =>
   d.content.words[`${d.content.tables[i].id}.title`]?.trim() ?? "";
@@ -233,6 +241,102 @@ export function measuresOf(d: Draft, i: number) {
     .map((c) => d.content.words[`${t.id}.${c.id}`]?.trim() || "Measurement")
     .map((n, j) => (j ? n.toLowerCase() : n));
   return names.length ? and(names) : "";
+}
+/**
+ * A new last table with the first table's sizes and no measurements yet, so
+ * it saves as it is.
+ */
+export function addTable(d: Draft): Draft {
+  const c = d.content;
+  if (c.tables.length >= MAX_TABLES) return d;
+  const fresh = idMaker(c);
+  const [first, id, size] = [c.tables[0], fresh("t"), fresh("c")];
+  const word = (k: string) => c.words[`${first.id}.${k}`]?.trim();
+  const words = {
+    ...c.words,
+    [`${id}.${size}`]: word(first.columns[0].id) || "Size",
+  };
+  const rows = first.rows.map((r) => {
+    const row = fresh("r");
+    const name = word(`${r.id}.${first.columns[0].id}`);
+    if (name) words[`${id}.${row}.${size}`] = name;
+    return { id: row, cells: {} };
+  });
+  const t = { id, columns: [{ id: size, kind: "size" as const }], rows };
+  return { ...d, content: { ...c, tables: [...c.tables, t], words } };
+}
+/** A copy of table i, with its words and typed values, as the last table. */
+export function cloneTable(d: Draft, i: number): Draft {
+  const c = d.content;
+  const t = c.tables[i];
+  if (c.tables.length >= MAX_TABLES || !t) return d;
+  const fresh = idMaker(c);
+  const ids = new Map([[t.id, fresh("t")]]);
+  t.columns.forEach((col) => ids.set(col.id, fresh("c")));
+  t.rows.forEach((r) => ids.set(r.id, fresh("r")));
+  const to = (id: string) => ids.get(id) ?? id;
+  const rekey = <V>(o: Record<string, V>, keep: (k: string) => boolean) =>
+    Object.fromEntries(
+      Object.entries(o).flatMap(([k, v]) =>
+        keep(k) ? [[k.split(".").map(to).join("."), v]] : [],
+      ),
+    );
+  const copy = {
+    ...t,
+    id: to(t.id),
+    columns: t.columns.map((col) => ({ ...col, id: to(col.id) })),
+    rows: t.rows.map((r) => ({ id: to(r.id), cells: rekey(r.cells, Boolean) })),
+    ...(t.merges && {
+      merges: t.merges.map((m) => ({ ...m, row: to(m.row), col: to(m.col) })),
+    }),
+    ...(t.wrap && { wrap: t.wrap.map(to) }),
+  };
+  const own = (k: string) => t.rows.some((r) => k.startsWith(`${r.id}.`));
+  return {
+    ...d,
+    content: {
+      ...c,
+      tables: [...c.tables, copy],
+      words: { ...c.words, ...rekey(c.words, (k) => k.startsWith(`${t.id}.`)) },
+    },
+    cells: { ...d.cells, ...rekey(d.cells, own) },
+  };
+}
+/**
+ * Every table but the first can go, unless the fit finder asks it: the save
+ * refuses a fit finder with no table.
+ */
+export const canRemoveTable = (d: Draft, i: number) =>
+  i > 0 && d.content.fit?.table !== d.content.tables[i]?.id;
+export function removeTable(d: Draft, i: number): Draft {
+  if (!canRemoveTable(d, i)) return d;
+  const t = d.content.tables[i];
+  const own = (k: string) => t.rows.some((r) => k.startsWith(`${r.id}.`));
+  return {
+    ...d,
+    content: {
+      ...d.content,
+      tables: d.content.tables.filter((_, j) => j !== i),
+      words: strip(d.content.words, (k) => k.startsWith(`${t.id}.`)),
+    },
+    cells: strip(d.cells, own),
+  };
+}
+/** The findings left once table i is removed; the tables after it move up. */
+export function removeTableErrors(
+  d: Draft,
+  i: number,
+  errors: FieldErrors,
+): FieldErrors {
+  const words = `content.words.${d.content.tables[i].id}.`;
+  const out: FieldErrors = {};
+  for (const [k, v] of Object.entries(errors)) {
+    const m = /^content\.tables\.(\d+)\.(.*)$/.exec(k);
+    const n = m ? Number(m[1]) : -1;
+    if (n === i || k.startsWith(words)) continue;
+    out[m && n > i ? `content.tables.${n - 1}.${m[2]}` : k] = v;
+  }
+  return out;
 }
 
 /** The chart to save, or the problems to fix first, keyed like validateChart's paths. */
@@ -267,6 +371,9 @@ export function toInput(
     });
     return { ...t, rows };
   });
+  const { videoUrl, ...content } = d.content;
+  const video = videoUrl?.trim();
+  if (video && !videoSite(video)) errs["content.videoUrl"] = VIDEO_ERROR;
   if (Object.keys(errs).length) return { fieldErrors: errs };
   // An emptied word is left out rather than saved blank.
   const words = Object.fromEntries(
@@ -276,7 +383,7 @@ export function toInput(
     input: {
       name: d.name.trim(),
       template: d.template,
-      content: { ...d.content, tables, words },
+      content: { ...content, tables, words, ...(video && { videoUrl: video }) },
       ...(d.measureImage && { measureImage: d.measureImage }),
     },
   };
@@ -321,6 +428,8 @@ function problemsIn(d: Draft, errors: FieldErrors) {
     // The other tabs' fields (Editor's tabOf opens the one that holds each).
     if (key === "content.words.tips")
       return { id: "tips", where: "Fit tips", long };
+    if (key === "content.videoUrl")
+      return { id: "video", where: "Fit video", long };
     const step = /^content\.words\.m\.([^.]+)\.(name|text)$/.exec(key);
     const si = d.content.measure.steps.indexOf(step?.[1] ?? "");
     if (step && si >= 0)
