@@ -814,6 +814,40 @@ describe("chart editor screen", () => {
     expect(c.words).not.toHaveProperty(["t1.bust"]);
   });
 
+  it("keeps the fit finder's only measurement, says why, and the chart still saves", async () => {
+    const withFit = stored();
+    const c = withFit.stored.chart.content;
+    c.fit = {
+      table: "t1",
+      stretch: "none",
+      ease: {},
+      questions: [{ id: "qb", kind: "measure", col: "bust", optional: false }],
+    };
+    c.words["fit.qb"] = "Bust";
+    const { sent } = await open([withFit]);
+    await act(async () => byLabel("Column 2 name").focus());
+    await click("Remove measurement");
+    expect(document.querySelector("dialog")).toBeNull();
+    const warn = document.querySelector('s-banner[tone="warning"]')!;
+    expect(warn.getAttribute("heading")).toBe("Bust can't be removed");
+    expect(warn.textContent).toBe(
+      "It's the fit finder's only measurement. Add another one in Fit finder first.",
+    );
+    expect(warn.querySelector("a")?.getAttribute("href")).toBe(
+      "/app/fit-finder",
+    );
+    expect(byLabel("XS, Bust").value).toBe("31–32");
+    // Selecting again clears it.
+    await act(async () => byLabel("Size 1").focus());
+    await act(async () => byLabel("Column 2 name").focus());
+    expect(missed()).toBeUndefined();
+    await type(document.querySelector<HTMLInputElement>("#name")!, "Tops");
+    await click("Save");
+    expect(sent).toHaveLength(1);
+    const saved = validateChart(sent[0].chart);
+    expect(saved.content.fit?.questions).toEqual(c.fit.questions);
+  });
+
   it("drops the banner when a remove takes its only marked value", async () => {
     await open([stored()]);
     await type(byLabel("XS, Bust"), "33-");

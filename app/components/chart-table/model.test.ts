@@ -5,6 +5,7 @@ import {
   addSize,
   blankDraft,
   dropped,
+  fitOnly,
   formatCell,
   cellProblem,
   parseCell,
@@ -476,6 +477,43 @@ describe("removing a size or a measurement", () => {
     expect(out.cells).not.toHaveProperty(["m.waist"]);
     // The other table rides along untouched.
     expect(saved.content.tables[1]).toEqual(chart().content.tables[1]);
+  });
+
+  it("keeps only the column the fit finder's measure questions all ask", () => {
+    const c = chart();
+    c.content.tables[0].columns.push({
+      id: "waist",
+      kind: "measure",
+      convert: true,
+    });
+    Object.assign(c.content.words, { "t1.waist": "Waist", "fit.qb": "Bust" });
+    const fit = (questions: NonNullable<typeof c.content.fit>["questions"]) =>
+      toDraft(
+        {
+          ...c,
+          content: {
+            ...c.content,
+            fit: { table: "t1", stretch: "none", ease: {}, questions },
+          },
+        },
+        "DRAFT",
+      );
+    const bust = {
+      id: "qb",
+      kind: "measure",
+      col: "bust",
+      optional: false,
+    } as const;
+    const usual = { id: "qu", kind: "usual_size" } as const;
+    expect(fitOnly(fit([bust, usual]), "bust")).toBe(true);
+    expect(fitOnly(fit([bust, usual]), "waist")).toBe(false);
+    expect(
+      fitOnly(fit([bust, { ...bust, id: "qw", col: "waist" }]), "bust"),
+    ).toBe(false);
+    expect(fitOnly(fit([usual]), "bust")).toBe(false);
+    expect(fitOnly(toDraft(c, "DRAFT"), "bust")).toBe(false);
+    // A size is never the fit finder's measurement.
+    expect(fitOnly(fit([bust]), undefined)).toBe(false);
   });
 
   it("drops the removed size's or column's findings and moves the later sizes' up", () => {

@@ -389,6 +389,20 @@ export function removal(d: Draft, sel: Selected) {
 }
 
 /**
+ * The fit finder's only measurement: the one column its measure questions
+ * ask. Removing it would leave the fit finder no measurement, or no questions,
+ * which the save refuses, so the editor keeps it.
+ */
+export function fitOnly(d: Draft, col?: string) {
+  const fit = d.content.fit;
+  if (col === undefined || fit?.table !== table(d).id) return false;
+  const asked = fit.questions.flatMap((q) =>
+    q.kind === "measure" ? q.col : [],
+  );
+  return asked.length > 0 && asked.every((c) => c === col);
+}
+
+/**
  * Numbers stored outside Fitted in a size, text or country column, which
  * toInput leaves out: the Editor board's warning for each column that has
  * any, and the cells to mark. A value retyped as the cell's words is kept.
