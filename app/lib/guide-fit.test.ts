@@ -950,24 +950,30 @@ describe("Find my size's result screen (§7)", () => {
     expect(root.querySelector(".fitted-result strong")?.textContent).toBe(evil);
   });
 
-  it("notes how the measurements are used under every result, the no-fit one too", () => {
+  it("notes how the measurements are used under a size, as drawn", () => {
     const root = open(data());
     answer(root, { q1: "35.5", q2: "m", q3: "regular" });
     const link = root.querySelector<HTMLAnchorElement>(".fitted-act a")!;
     expect(link.textContent).toBe("How we use your measurements");
-    const note = root.querySelector(link.getAttribute("href")!)!;
+    const note = root.querySelector<HTMLElement>(link.getAttribute("href")!)!;
     expect(note.textContent).toBe(
       "We use these measurements to suggest a size for this product.",
     );
     expect(note.parentElement).toBe(root.querySelector(".fitted-result"));
+    // The link goes to the note without changing the page's address.
+    const before = location.href;
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+    link.dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(true);
+    expect([location.href, document.activeElement]).toEqual([before, note]);
+    // The no-fit result is as drawn: its words, then why.
     type(root, "q1", "50");
     expect(said(root)?.[0]).toBe(
       "We couldn't find a good match. Check the size chart or message us.",
     );
-    expect(root.querySelector(".fitted-act a")?.textContent).toBe(
-      "How we use your measurements",
-    );
-    expect(texts(root, ".fitted-result > .fitted-fine")).toHaveLength(1);
+    expect(
+      root.querySelector(".fitted-act, .fitted-result .fitted-fine"),
+    ).toBeNull();
     // Each guide's note has its own id.
     const other = open(data({}, { handle: "c-dresses001" }));
     answer(other, { q2: "m", q3: "regular" });
@@ -1158,6 +1164,85 @@ describe("Find my size's Add to cart", () => {
     } finally {
       HTMLFormElement.prototype.requestSubmit = requestSubmit;
     }
+  });
+
+  it("offers Select when the size is also a value of another option, as it can't tell which to change", () => {
+    // Length, then Size, both with S, M and L, in Shopify's order. The form
+    // shows Length M, Size M, so S could mean Length S / Size M (listed
+    // first) or Length M / Size S.
+    const pairs = ["S", "M", "L"].flatMap((l) =>
+      ["XS", "S", "M", "L", "XL"].map((s) => [l, s]),
+    );
+    const ids = pairs.map((_, i) => 301 + i);
+    const now = ids[pairs.findIndex(([l, s]) => l === "M" && s === "M")];
+    const root = page(
+      {
+        variants: {
+          id: ids,
+          o1: pairs.map(([l]) => l),
+          o2: pairs.map(([, s]) => s),
+          o3: pairs.map(() => null),
+        },
+      },
+      button.replace('value="103"', `value="${now}"`),
+    );
+    const sent = submitted();
+    answer(root, { q1: "33.5", q2: "s", q3: "regular" });
+    expect(said(root)?.[0]).toBe("We recommend S");
+    expect(act(root)?.textContent).toBe("Select S");
+    act(root)!.click();
+    expect(theme("S").checked).toBe(true);
+    expect(sent).toEqual([]);
+  });
+
+  it("sets a select that holds the variant id, as older themes print it", () => {
+    const select = (ids: number[]) =>
+      `<select name="id">${ids
+        .map(
+          (v) =>
+            `<option value="${v}"${v === 103 ? " selected" : ""}>${v}</option>`,
+        )
+        .join("")}</select><button type="submit" name="add">Add</button>`;
+    const root = page({}, select(sized.id));
+    const sent = submitted();
+    answer(root, { q1: "37", q2: "m", q3: "regular" });
+    expect(act(root)?.textContent).toBe("Add L to cart");
+    act(root)!.click();
+    expect(sent).toEqual([["product", [["id", "104"]], "add"]]);
+    // A select without that variant can't hold it.
+    sessionStorage.clear();
+    const missing = page({}, select([101, 102, 103, 105]));
+    answer(missing, { q1: "37", q2: "m", q3: "regular" });
+    expect(act(missing)?.textContent).toBe("Select L");
+  });
+
+  it("offers Select when the variant ids are radios, whose checked one it can't set", () => {
+    const radios = sized.id
+      .map(
+        (v) =>
+          `<input type="radio" name="id" value="${v}"${v === 103 ? " checked" : ""}>`,
+      )
+      .join("");
+    const root = page({}, `${radios}<button type="submit">Add</button>`);
+    answer(root, { q1: "37", q2: "m", q3: "regular" });
+    expect(act(root)?.textContent).toBe("Select L");
+  });
+
+  it("adds nothing when the theme's form changed since the result showed, and offers what it can now", () => {
+    const root = page();
+    const sent = submitted();
+    answer(root, { q1: "35.5", q2: "m", q3: "regular" });
+    expect(act(root)?.textContent).toBe("Add M to cart");
+    beacon.mockClear();
+    // The theme now shows another product's form.
+    document.querySelector<HTMLInputElement>(".product [name=id]")!.value =
+      "999";
+    act(root)!.click();
+    expect(sent).toEqual([]);
+    expect(beacon).not.toHaveBeenCalled();
+    expect(root.closest("dialog")!.open).toBe(true);
+    expect(act(root)?.textContent).toBe("Select M");
+    expect(document.activeElement).toBe(act(root));
   });
 
   it("offers neither for a size the theme's controls don't have", () => {
