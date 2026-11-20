@@ -653,6 +653,21 @@ describe("chart editor screen", () => {
     expect(byLabel("XS, Bust").value).toBe("32–31");
   });
 
+  it("links a stored step's finding to its field on the How to measure tab", async () => {
+    const b = broken({ "content.words.m.m1.name": "Too long" });
+    b.stored.raw.content.measure.steps = ["m1"];
+    b.stored.raw.content.words["m.m1.name"] = "Bust";
+    await open([b]);
+    expect(text()).toContain("Step 1: Too long");
+    const link = [...document.querySelectorAll("s-banner a")].find(
+      (a) => a.textContent === "Step 1",
+    ) as HTMLAnchorElement;
+    await act(async () => link.click());
+    await settle();
+    expect(document.activeElement).toBe(byLabel("Step 1 name"));
+    expect(byLabel("Step 1 name").value).toBe("Bust");
+  });
+
   it("shows only the banner when a finding is outside what the editor can change", async () => {
     await open([broken({ "content.roundTo": "Pick 0.25, 0.5 or 1" })]);
     expect(document.querySelector("s-banner")?.getAttribute("heading")).toBe(
