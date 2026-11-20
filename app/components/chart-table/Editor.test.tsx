@@ -431,15 +431,19 @@ describe("chart editor screen", () => {
   it("opens a new chart whose first version wasn't recorded saying so, once", async () => {
     const { loader } = await open(
       [stored()],
-      [],
-      "/app/charts/42?history=missed",
+      [{ status: 502, body: { error: { code: "shopify", message: "x" } } }],
+      "/app/charts/42?history=missed&host=abc",
     );
     expect(missed()).toBe("Saved, but version history missed it");
     // The note leaves the address, so a reload doesn't repeat it.
     const calls = loader.mock.calls as unknown as [{ request: Request }][];
     expect(calls.at(-1)?.[0].request.url).toBe(
-      "http://localhost/app/charts/42",
+      "http://localhost/app/charts/42?host=abc",
     );
+    // The next save's answer replaces it: this one changed nothing.
+    await type(byLabel("XS, Bust"), "30–32");
+    await click("Save");
+    expect(missed()).toBeUndefined();
   });
 
   it("says when the chart didn't load, and tries again", async () => {

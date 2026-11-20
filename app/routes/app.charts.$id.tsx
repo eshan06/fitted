@@ -229,7 +229,9 @@ export default function ChartEditor() {
   useEffect(() => {
     if (params.get("history") !== "missed") return;
     setMissed(true);
-    setParams({}, { replace: true });
+    const rest = new URLSearchParams(params);
+    rest.delete("history");
+    setParams(rest, { replace: true });
   }, [params, setParams]);
   if (loaded.mode === "new")
     return <Editor key="new" initial={blankDraft()} handle={loaded.handle} />;

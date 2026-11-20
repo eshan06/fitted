@@ -199,7 +199,7 @@ export function Editor(props: {
         </button>
       </SaveBar>
       <div className="editor">
-        {(props.historyMissed || answer?.historyMissed) && (
+        {((props.historyMissed && !answer) || answer?.historyMissed) && (
           <s-banner
             tone="warning"
             heading="Saved, but version history missed it"

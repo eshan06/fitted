@@ -63,7 +63,7 @@ Version history (#24) is in Postgres (§14). The chart in Shopify is the current
 
 Concurrent edits: a save sends the `updatedAt` the editor loaded; if the chart changed since, the save is refused with "This chart changed since you opened it" and a reload, never a silent overwrite.
 
-Copy link (#24) gives `https://<shop>/apps/fitted/charts/<handle>`, an app proxy page (`app/routes/proxy.charts.$handle.tsx`) in the store's theme layout. The route verifies the proxy signature, checks the handle's format, and returns one fixed Liquid template that looks the Active chart up by handle and prints every value escaped. The route makes no Admin API call, so anonymous visits can't spend the shop's rate limit; a Draft or unknown handle renders the template's not-found state. Outside the extension `$app` doesn't resolve, so the template names the type as `app--<app id>--chart` (confirm in #24). The canvas doesn't draw this page yet, so it gets drawn first.
+Copy link (#127) gives `https://<shop>/apps/fitted/charts/<handle>`, an app proxy page (`app/routes/proxy.charts.$handle.tsx`) in the store's theme layout. The route verifies the proxy signature, checks the handle's format, and returns one fixed Liquid template that looks the Active chart up by handle and prints every value escaped. The route makes no Admin API call, so anonymous visits can't spend the shop's rate limit; a Draft or unknown handle renders the template's not-found state. Outside the extension `$app` doesn't resolve, so the template names the type as `app--<app id>--chart` (confirm in #127). The canvas doesn't draw this page yet, so it gets drawn first.
 
 ## 6. Display rules
 
