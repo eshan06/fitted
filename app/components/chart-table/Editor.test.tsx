@@ -462,6 +462,19 @@ describe("chart editor screen", () => {
     expect(missed()).toBe("Saved, but version history missed it");
   });
 
+  it("still opens a new chart when the save bar won't hide", async () => {
+    bridge.saveBar.hide.mockRejectedValue(new Error("no admin"));
+    await open(
+      [newChart, newChart, stored()],
+      [{ status: 200, body: { created: "42" } }],
+      "/app/charts/new",
+    );
+    await createJeans();
+    await settle();
+    expect(at.pathname).toBe("/app/charts/42");
+    expect(byLabel("XS, Bust").value).toBe("31–32");
+  });
+
   it("links More actions to the chart's version history, except on a new chart", async () => {
     await open([stored()]);
     const link = [...document.querySelectorAll("details.more a")].find(

@@ -136,12 +136,17 @@ export function Editor(props: {
   const missed = answer?.historyMissed;
   useEffect(() => {
     if (!created) return;
+    let live = true;
     const open = () =>
+      live &&
       navigate(`/app/charts/${created}${missed ? "?history=missed" : ""}`, {
         replace: true,
       });
     // A failed hide still opens the chart; only the address may lag.
     shopify.saveBar.hide(SAVE_BAR).then(open, open);
+    return () => {
+      live = false;
+    };
   }, [created, missed, navigate, shopify]);
 
   const save = (d = draft) => {
