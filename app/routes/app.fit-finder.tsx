@@ -385,7 +385,6 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
               >
                 <s-button
                   slot="secondary-actions"
-                  variant="primary"
                   href={loaded.plansUrl}
                   target="_top"
                 >

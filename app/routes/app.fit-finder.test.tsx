@@ -371,6 +371,8 @@ describe("fit finder screen", () => {
     )!;
     expect(upgrade.getAttribute("href")).toBe(PLANS);
     expect(upgrade.getAttribute("target")).toBe("_top");
+    // A banner's action button can't be primary: Shopify hides it (seen on the dev store).
+    expect(upgrade.hasAttribute("variant")).toBe(false);
     act(() => root!.unmount());
 
     m.getPlan.mockResolvedValue({ plan: "free", checkFailed: false });
