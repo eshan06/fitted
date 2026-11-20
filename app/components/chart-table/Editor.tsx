@@ -317,6 +317,16 @@ export function Editor(props: {
               errors={errors}
               problems={listed}
               onChange={setDraft}
+              onRemove={(sel) => {
+                setDraft(model.remove(draft, sel));
+                // Cell findings name sizes by position, so they move up too.
+                if (!notice?.fieldErrors) return;
+                const left = model.removeErrors(draft, sel, notice.fieldErrors);
+                // With none left, the banner goes, as after a fix and save.
+                if (Object.keys(left).length)
+                  setLocal({ ...notice, fieldErrors: left });
+                else dismiss();
+              }}
             />
           ) : (
             <h2 className="blank">A blank chart, ready for sizes</h2>

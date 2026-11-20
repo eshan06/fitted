@@ -564,4 +564,107 @@ describe("chart editor screen", () => {
     await click("Save");
     expect(sent).toHaveLength(1);
   });
+
+  it("removes a size after the dialog names its values, and an empty one straight away", async () => {
+    await open([stored()]);
+    await act(async () => byLabel("Size 1").focus());
+    expect(text()).toContain("Size XS selected");
+    await click("Remove size");
+    const dialog = document.querySelector("dialog")!;
+    expect(dialog.open).toBe(true);
+    expect(dialog.textContent).toContain("Remove size XS?");
+    expect(dialog.textContent).toContain(
+      "Saving removes XS's values: Bust 31–32.",
+    );
+    expect(dialog.textContent).toContain(
+      "Until you save, Discard brings them back.",
+    );
+    await click("Cancel");
+    expect(document.querySelector("dialog")).toBeNull();
+    expect(byLabel("Size 1")).not.toBeNull();
+    await click("Remove size");
+    await act(async () =>
+      document.querySelector<HTMLElement>("dialog s-button[tone]")!.click(),
+    );
+    expect(document.querySelector('[aria-label="Size 1"]')).toBeNull();
+    expect(text()).not.toContain("selected");
+    await act(async () => button("Add size").click());
+    await act(async () => byLabel("Size 1").focus());
+    await click("Remove size");
+    expect(document.querySelector("dialog")).toBeNull();
+    expect(document.querySelector('[aria-label="Size 1"]')).toBeNull();
+    await click("Discard");
+    expect(byLabel("XS, Bust").value).toBe("31–32");
+  });
+
+  it("keeps a marked value on its own size when a size above it is removed", async () => {
+    await open([stored()]);
+    await act(async () => button("Add size").click());
+    await type(byLabel("Size 2, Bust"), "33-");
+    await click("Save");
+    expect(byLabel("Size 2, Bust").getAttribute("aria-invalid")).toBe("true");
+    await act(async () => byLabel("Size 1").focus());
+    await click("Remove size");
+    await act(async () =>
+      document.querySelector<HTMLElement>("dialog s-button[tone]")!.click(),
+    );
+    await settle();
+    expect(byLabel("Size 1, Bust").value).toBe("33-");
+    expect(byLabel("Size 1, Bust").getAttribute("aria-invalid")).toBe("true");
+    expect(text()).toContain("Size 1, Bust:");
+    // Focus moves to the size that took its place, not the page.
+    expect(document.activeElement).toBe(byLabel("Size 1"));
+  });
+
+  it("closes the dialog with its X or Escape and keeps the size", async () => {
+    await open([stored()]);
+    await act(async () => byLabel("Size 1").focus());
+    await click("Remove size");
+    await act(async () =>
+      document
+        .querySelector<HTMLElement>('dialog [aria-label="Close"]')!
+        .click(),
+    );
+    expect(document.querySelector("dialog")).toBeNull();
+    await click("Remove size");
+    // Escape closes a modal dialog, which fires its close event.
+    await act(async () =>
+      document.querySelector("dialog")!.dispatchEvent(new Event("close")),
+    );
+    expect(document.querySelector("dialog")).toBeNull();
+    expect(byLabel("XS, Bust").value).toBe("31–32");
+  });
+
+  it("removes a measurement after the dialog names the sizes it leaves", async () => {
+    const { sent } = await open([stored()]);
+    await act(async () => byLabel("Column 2 name").focus());
+    expect(text()).toContain("Bust column selected");
+    await click("Remove measurement");
+    expect(document.querySelector("dialog")?.textContent).toContain(
+      "Saving removes Bust from 1 size, 31–32 (XS). Shoppers won't see a Bust column.",
+    );
+    await act(async () =>
+      document.querySelector<HTMLElement>("dialog s-button[tone]")!.click(),
+    );
+    expect(document.querySelector('[aria-label="XS, Bust"]')).toBeNull();
+    await click("Save");
+    const c = (sent[0].chart as ChartInput).content;
+    expect(c.tables[0].columns).toEqual([{ id: "size", kind: "size" }]);
+    expect(c.words).not.toHaveProperty(["t1.bust"]);
+  });
+
+  it("drops the banner when a remove takes its only marked value", async () => {
+    await open([stored()]);
+    await type(byLabel("XS, Bust"), "33-");
+    await click("Save");
+    expect(document.querySelector("s-banner")).not.toBeNull();
+    await act(async () => byLabel("Column 2 name").focus());
+    await click("Remove measurement");
+    await act(async () =>
+      document.querySelector<HTMLElement>("dialog s-button[tone]")!.click(),
+    );
+    await settle();
+    expect(document.querySelector("s-banner")).toBeNull();
+    expect(document.activeElement).toBe(byLabel("Column 1 name"));
+  });
 });
