@@ -386,6 +386,24 @@ describe("appearance screen", () => {
     expect(byId("css").getAttribute("aria-invalid")).toBeNull();
   });
 
+  it("marks custom CSS with a < or over 10 KB, and Discard puts everything back", async () => {
+    await open();
+    await type(byId("css"), "<style>");
+    await click("Save");
+    expect(heading()).toEqual(["Fix 1 field to save"]);
+    expect(text()).toContain("Custom CSS can't be saved as it is");
+    expect(text()).toContain(`Custom CSS can't contain "<"`);
+    await type(byId("css"), "a".repeat(10 * 1024 + 1));
+    await click("Save");
+    expect(text()).toContain("Keep custom CSS under 10 KB");
+    expect(store.admin.graphql).toHaveBeenCalledTimes(1); // the load only: nothing sent
+
+    await click("Discard");
+    expect(byId("css").value).toBe("");
+    expect(heading()).toEqual([]);
+    expect(saveBar()).toBeNull();
+  });
+
   it("shows changed elsewhere; Cancel keeps the edits, Reload latest discards them", async () => {
     await open();
     await type(byId("label"), "Mine");
