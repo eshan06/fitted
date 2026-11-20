@@ -188,3 +188,82 @@
   justify-content: center;
   font-weight: 700;
 }
+.fit-finder .qs li {
+  flex-wrap: wrap;
+}
+.fit-finder .row.start {
+  justify-content: flex-start;
+}
+/* The question editor: the canvas's dialog on a dimmed screen. The dialog
+   element is the dimmed layer, so large text scrolls it with the page. */
+.fit-finder .q-editor {
+  position: fixed;
+  inset: 0;
+  width: auto;
+  height: auto;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  padding: 100px 16px 40px;
+  box-sizing: border-box;
+  background: rgba(0, 0, 0, 0.5);
+  overflow-y: auto;
+}
+.fit-finder .q-editor::backdrop {
+  background: transparent;
+}
+.fit-finder .q-editor .panel {
+  max-width: 35rem;
+  margin: 0 auto;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+}
+.fit-finder .q-editor .head,
+.fit-finder .q-editor .foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 14px 20px;
+}
+.fit-finder .q-editor .head {
+  padding-right: 16px;
+  border-bottom: 1px solid #e1e3e5;
+}
+.fit-finder .q-editor .foot {
+  border-top: 1px solid #e1e3e5;
+}
+.fit-finder .q-editor h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+.fit-finder .q-editor .body,
+.fit-finder .q-editor fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.fit-finder .q-editor .body {
+  padding: 20px;
+}
+.fit-finder .q-editor fieldset {
+  gap: 10px;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+.fit-finder .q-editor label.choice {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0 10px;
+}
+.fit-finder .q-editor .choice input {
+  grid-row: span 2;
+}
+.fit-finder .q-editor .opt {
+  padding-top: 26px;
+}

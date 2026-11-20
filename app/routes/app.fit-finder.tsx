@@ -29,10 +29,12 @@ import {
   updateChart,
   validateChart,
 } from "../models/chart.server";
-import { STRETCH, type Fit, findSize } from "../lib/fit-finder";
+import { STRETCH, type Fit, type Question, findSize } from "../lib/fit-finder";
 import {
   type FitChart,
   describe,
+  fitOf,
+  fitWords,
   formatEase,
   howItPicks,
   lastStep,
@@ -41,6 +43,7 @@ import {
   sampleAnswers,
   size,
 } from "../components/fit-finder/chart-fit";
+import { QuestionEditor } from "../components/fit-finder/QuestionEditor";
 import { getPlan } from "../models/billing.server";
 import {
   type FieldErrors,
@@ -82,15 +85,17 @@ const refusal = (code: string) => ({
   error: { code, message: COPY[code].slice(1).join(" ").replace("**", "") },
 });
 
-// Only a chart with `content.fit` has questions to show (§10).
+// Every chart that reads, with its fit; one without questions yet gets them
+// from the question editor (§10).
 const fitChart = ({ id, updatedAt, name, chart }: StoredChart): FitChart[] => {
   const c = chart?.content;
-  const table = c?.tables.find((t) => t.id === c.fit?.table);
-  if (!c?.fit || !table) return [];
+  if (!c) return [];
+  const fit = fitOf(c);
+  const table = c.tables.find((t) => t.id === fit.table)!;
   const words = Object.entries(c.words).filter(
     ([k]) => k.startsWith(`${table.id}.`) || k.startsWith("fit."),
   );
-  const { unit, fit } = c;
+  const { unit } = c;
   return [
     { id, updatedAt, name, unit, fit, table, words: Object.fromEntries(words) },
   ];
@@ -108,12 +113,14 @@ async function load(admin: Admin, shop: string) {
       })(),
     ]);
     const charts = all.flatMap(fitChart);
-    // Only Pro's live line names how many products show the picked chart.
+    // Only Pro's live line names how many products show the picked chart,
+    // and only a chart with saved questions is live.
+    const live = charts.filter((c) => c.fit.questions.length);
     const counts =
-      plan === "pro" && charts.length
+      plan === "pro" && live.length
         ? await countChartProducts(
             admin,
-            charts.map((c) => c.id),
+            live.map((c) => c.id),
           )
         : null;
     const hasCharts = all.length > 0;
@@ -139,8 +146,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 // The screen sends the fit finder section whole, with the primary language's
-// "When no size fits", and the ease and stretch of each chart it changed.
-// Everything else stays as stored. A part already holding what was sent (a
+// "When no size fits", and the questions, their words, ease and stretch of
+// each chart it changed. Everything else stays as stored. A part already holding what was sent (a
 // retry after a partial save) is skipped, so a retry never reads as stale.
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -160,21 +167,41 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const writes: (() => Promise<unknown>)[] = [];
     const sent = Array.isArray(body?.charts) ? body.charts.slice(0, 200) : [];
     const seen = new Set();
-    for (const { id, updatedAt, ease, stretch } of sent.map(Object)) {
+    for (const one of sent.map(Object)) {
+      const { id, updatedAt, ease, stretch, questions, words } = one;
       if (seen.has(id)) continue;
       seen.add(id);
       const { chart, updatedAt: now } = await getChart(admin, id);
-      const fit = chart?.content.fit;
-      if (!fit) throw new ChartConflictError("The chart lost its questions");
-      const next = validateChart({
-        ...chart,
-        content: { ...chart.content, fit: { ...fit, ease, stretch } },
-      });
+      if (!chart) throw new ChartConflictError("The chart doesn't read");
+      const c = chart.content;
+      const fit = fitOf(c);
+      // Only the fit's own words come from the browser, as an object.
+      if (
+        words !== undefined &&
+        (typeof words !== "object" || !words || Array.isArray(words))
+      )
+        throw new ChartValidationError({ "content.words": "Must be words" });
+      const content = {
+        ...c,
+        fit: { ...fit, questions: questions ?? fit.questions, ease, stretch },
+        words: words
+          ? { ...fitWords(c.words, false), ...fitWords(words) }
+          : c.words,
+      };
       const key = (e: object) => JSON.stringify(Object.entries(e).sort());
-      if (stretch === fit.stretch && key(ease) === key(fit.ease)) continue;
+      const sig = ({ fit: f, words: w }: typeof c) =>
+        JSON.stringify([
+          f?.questions,
+          f?.stretch,
+          key(f?.ease ?? {}),
+          key(fitWords(w)),
+        ]);
+      if (c.fit && sig(content) === sig(c)) continue;
       // The chart's own conflict check (§5), here and again at its write.
+      // Before validating, so a chart changed elsewhere asks for a reload.
       if (now !== updatedAt)
         throw new ChartConflictError("This chart changed since you opened it");
+      const next = validateChart({ ...chart, content });
       writes.push(() => updateChart(admin, id, next, updatedAt));
     }
     const digest = typeof body?.digest === "string" ? body.digest : null;
@@ -351,7 +378,16 @@ type Answer = {
 type Draft = {
   fitFinder: Settings["fitFinder"];
   noFit: string;
-  fits: Record<string, { ease: string; stretch: Fit["stretch"] }>; // by chart id
+  // By chart id; `words` holds only the questions' words.
+  fits: Record<
+    string,
+    {
+      ease: string;
+      stretch: Fit["stretch"];
+      questions: Question[];
+      words: Record<string, string>;
+    }
+  >;
 };
 type Flag = keyof Omit<Settings["fitFinder"], "type" | "answers">;
 const PLAN_NAMES = { free: "Free", standard: "Standard", pro: "Pro" };
@@ -383,12 +419,20 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
     fits: Object.fromEntries(
       loaded.charts.map((c) => [
         c.id,
-        { ease: formatEase(c), stretch: c.fit.stretch },
+        {
+          ease: formatEase(c),
+          stretch: c.fit.stretch,
+          questions: c.fit.questions,
+          words: fitWords(c.words),
+        },
       ]),
     ),
   }));
-  const [chartId, setChartId] = useState(loaded.charts[0]?.id);
-  const chart = loaded.charts.find((c) => c.id === chartId);
+  const [chartId, setChartId] = useState(
+    (loaded.charts.find((c) => c.fit.questions.length) ?? loaded.charts[0])?.id,
+  );
+  const picked = loaded.charts.find((c) => c.id === chartId);
+  const [editing, setEditing] = useState<number | null>(null);
   const [draft, setDraft] = useState(initial);
   const [local, setLocal] = useState<Answer | null>(null);
   const [dismissed, setDismissed] = useState<Answer>();
@@ -403,16 +447,17 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
     const fieldErrors: FieldErrors = {};
     const charts = [];
     for (const c of loaded.charts) {
-      const { ease: text, stretch } = draft.fits[c.id];
+      const own = draft.fits[c.id];
       const was = initial.fits[c.id];
-      if (text === was.ease && stretch === was.stretch) continue;
+      if (JSON.stringify(own) === JSON.stringify(was)) continue;
+      const text = own.ease;
       const ease = text === was.ease ? c.fit.ease : parseEase(c, text);
       if (!ease) {
         fieldErrors.ease = "Missing";
         setChartId(c.id);
         break;
       }
-      charts.push({ id: c.id, updatedAt: c.updatedAt, ease, stretch });
+      charts.push({ ...own, id: c.id, updatedAt: c.updatedAt, ease });
     }
     if (!draft.noFit.trim()) fieldErrors.noFit = "Missing";
     if (Object.keys(fieldErrors).length) return setLocal({ fieldErrors });
@@ -430,13 +475,34 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
   const put = (patch: Partial<Draft["fitFinder"]>) =>
     setDraft((d) => ({ ...d, fitFinder: { ...d.fitFinder, ...patch } }));
   const f = draft.fitFinder;
-  const own = chart && draft.fits[chart.id];
+  const own = picked && draft.fits[picked.id];
+  // The picked chart with the screen's unsaved questions and their words.
+  const chart = picked &&
+    own && {
+      ...picked,
+      fit: { ...picked.fit, questions: own.questions },
+      words: { ...fitWords(picked.words, false), ...own.words },
+    };
+  const n = own?.questions.length ?? 0;
   const count = chart && loaded.counts?.[chart.id];
   const putFit = (patch: Partial<Draft["fits"][string]>) =>
     setDraft((d) => ({
       ...d,
       fits: { ...d.fits, [chart!.id]: { ...d.fits[chart!.id], ...patch } },
     }));
+  // Puts a question at i (or removes the one there) with its words, dropping
+  // the old question's.
+  const putQuestion = (i: number, q?: Question, words = {}) => {
+    const old = own!.questions[i];
+    const questions = [...own!.questions];
+    questions.splice(i, old ? 1 : 0, ...(q ? [q] : []));
+    // Keys are fit.<question> and fit.<question>.<answer>.
+    const kept = Object.entries(own!.words).filter(
+      ([k]) => k.split(".")[1] !== old?.id,
+    );
+    putFit({ questions, words: { ...Object.fromEntries(kept), ...words } });
+    setEditing(null);
+  };
   const box = (id: Flag, label: string) => (
     <label className="choice">
       <input
@@ -572,7 +638,8 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
         }
         side={
           chart &&
-          own && (
+          own &&
+          n > 0 && (
             <ShopperPreview
               chart={chart}
               own={own}
@@ -616,7 +683,7 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
                     <option value="sliders">Sliders</option>
                   </select>
                 </label>
-                {own && (
+                {own && n > 0 && (
                   <>
                     <div>
                       <label>
@@ -680,7 +747,7 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
                     </select>
                   </label>
                 </div>
-                <ol className="qs">
+                <ol className="qs" hidden={!n}>
                   {chart.fit.questions.map((q, i) => {
                     const d = describe(chart, q);
                     return (
@@ -688,18 +755,48 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
                         <span className="num" aria-hidden="true">
                           {i + 1}
                         </span>
-                        <span>
+                        <span className="grow">
                           <strong>{d.words}</strong>
                           <span className="help">{d.kind}</span>
                         </span>
+                        <s-button
+                          accessibilityLabel={`Edit question ${i + 1}`}
+                          onClick={() => setEditing(i)}
+                        >
+                          Edit
+                        </s-button>
                       </li>
                     );
                   })}
                 </ol>
+                {/* A fit finder asks 1 to 6 questions (§10). */}
+                <div className="row start">
+                  <s-button
+                    disabled={n >= 6 || undefined}
+                    onClick={() => setEditing(n)}
+                  >
+                    Add question
+                  </s-button>
+                  {n >= 6 && (
+                    <span className="help">
+                      A fit finder asks up to 6 questions.
+                    </span>
+                  )}
+                </div>
+                {editing !== null && (
+                  <QuestionEditor
+                    chart={chart}
+                    index={editing}
+                    type={f.type}
+                    onDone={(q, words) => putQuestion(editing, q, words)}
+                    onRemove={() => putQuestion(editing)}
+                    onClose={() => setEditing(null)}
+                  />
+                )}
               </section>
             )}
 
-            {chart && (
+            {chart && n > 0 && (
               <section className="card" aria-labelledby="h-logic">
                 <h2 id="h-logic">How Fitted picks a size</h2>
                 <ol className="list">
