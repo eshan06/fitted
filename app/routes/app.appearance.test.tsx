@@ -453,3 +453,86 @@ describe("appearance screen", () => {
     expect(byId("label").value).toBe("Size guide");
   });
 });
+
+describe("colors, font and preview", () => {
+  const preview = () =>
+    document.querySelector('[aria-label="Product page preview"]')!;
+  const picker = (name: string) =>
+    document.querySelector<HTMLInputElement>(`[aria-label="${name} color"]`);
+  const reopen = async () => {
+    act(() => root?.unmount());
+    document.body.innerHTML = "";
+    await open();
+  };
+
+  it("saves colors picked or typed, reads them back, and the preview follows", async () => {
+    await open();
+    expect(labelled("Match my theme").checked).toBe(true);
+    expect(byId("colors.accent").value).toBe("#2448A8");
+    await type(picker("Text")!, "#111111"); // a swatch picks Custom
+    expect(labelled("Custom").checked).toBe(true);
+    await type(byId("colors.accent"), "#AA0000");
+    await type(byId("label"), "Fit guide");
+    expect(preview().textContent).toContain("Fit guide");
+    const link = preview().querySelector<HTMLElement>(".link")!;
+    expect(link.style.color.toLowerCase()).toMatch(/#aa0000|170, 0, 0/);
+    await click("Save");
+    expect(store.value!.colors).toEqual({
+      mode: "custom",
+      text: "#111111",
+      accent: "#AA0000",
+      background: "#FFFFFF",
+    });
+
+    await reopen();
+    expect(labelled("Custom").checked).toBe(true);
+    expect(byId("colors.text").value).toBe("#111111");
+    expect(picker("Accent")!.value).toBe("#aa0000");
+
+    // Matching the theme stores no colors.
+    await click(labelled("Match my theme"));
+    expect(preview().querySelector<HTMLElement>(".link")!.style.color).toBe("");
+    await click("Save");
+    expect(store.value!.colors).toEqual({ mode: "theme" });
+  });
+
+  it("marks a bad hex with the slashed swatch and sends nothing", async () => {
+    await open();
+    await type(byId("colors.accent"), "#2448A");
+    expect(picker("Accent")).toBeNull();
+    expect(document.querySelectorAll(".swatch")).toHaveLength(1);
+    await click("Save");
+
+    expect(store.writes).toBe(0);
+    expect(heading()).toEqual(["Fix 1 field to save"]);
+    expect(text()).toContain("Accent color isn't a valid hex code");
+    expect(text()).toContain(
+      "Accent needs # and 6 letters or numbers, like #2448A8.",
+    );
+    expect(byId("colors.accent").getAttribute("aria-invalid")).toBe("true");
+    expect(byId("colors.accent").getAttribute("aria-describedby")).toBe(
+      "colors.accent-err",
+    );
+  });
+
+  it("offers no font upload yet, and keeps a stored one until Match my theme replaces it", async () => {
+    await open();
+    const option = labelled("Font").querySelector<HTMLOptionElement>(
+      'option[value="upload"]',
+    )!;
+    expect(option.disabled).toBe(true);
+
+    const s = saved();
+    s.popup.font = { fileUrl: "https://cdn.shopify.com/s/files/1/a.woff2" };
+    store = fakeStore(s);
+    await reopen();
+    expect(labelled("Font").value).toBe("upload");
+    await type(byId("label"), "Fit guide");
+    await click("Save");
+    expect(store.value!.popup.font).toEqual(s.popup.font);
+
+    await type(labelled("Font"), "theme");
+    await click("Save");
+    expect(store.value!.popup.font).toBe("theme");
+  });
+});
