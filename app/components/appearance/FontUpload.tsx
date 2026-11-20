@@ -13,34 +13,58 @@ type View = "choose" | "type" | "size" | "failed";
 const uploaded = new Map<string, File>();
 const nameOf = (url: string) => new URL(url).pathname.split("/").pop();
 
-export function useFontUpload(font: Font, put: (v: Font) => void) {
-  const uploader = useFetcher<Answer>();
-  const input = useRef<HTMLInputElement>(null);
+// The upload itself, held by the page above the editor: a save remounts the
+// editor, and a fetcher unmounted mid-upload aborts it.
+export function useUploader() {
+  const fetcher = useFetcher<Answer>();
   // The answer on hand when the file was sent, so only a newer one counts;
   // null once nothing is awaited. Match my theme, Remove or Discard while it
-  // uploads drops the upload.
+  // uploads drops the upload, and the action then deletes its file.
   const sentOver = useRef<{ answer?: Answer } | null>(null);
-  const [view, setView] = useState<View | null>(null);
   const [file, setFile] = useState<File>();
-  const sending = uploader.state !== "idle" && !!sentOver.current;
+  return { fetcher, sentOver, file, setFile };
+}
+
+// `saving`: a save is running, and its end remounts the editor, so an answer
+// waits for the editor that follows.
+export function useFontUpload(
+  {
+    fetcher: uploader,
+    sentOver,
+    file,
+    setFile,
+  }: ReturnType<typeof useUploader>,
+  font: Font,
+  put: (v: Font) => void,
+  saving: boolean,
+) {
+  const input = useRef<HTMLInputElement>(null);
+  const [view, setView] = useState<View | null>(null);
+  // Sent and not yet taken in.
+  const sending =
+    !!sentOver.current &&
+    (uploader.state !== "idle" || uploader.data !== sentOver.current.answer);
 
   useEffect(() => {
     const a = uploader.data;
     const old = sentOver.current;
-    if (uploader.state !== "idle" || !old || !a || a === old.answer || !file)
-      return;
+    const idle = uploader.state === "idle";
+    if (saving || !idle || !old || !a || a === old.answer || !file) return;
     sentOver.current = null;
     if (a.fileUrl) {
       uploaded.set(a.fileUrl, file);
       put({ fileUrl: a.fileUrl });
-      setView(null);
-    } else if (a.fieldErrors)
+      return setView(null);
+    }
+    // The theme's font, as at the pick: a remounted editor has the stored one.
+    put("theme");
+    if (a.fieldErrors)
       setView(
         a.fieldErrors["popup.font"] === FONT_WORDS.size ? "size" : "type",
       );
     else setView("failed");
     // `put` is new on every render; the check above keeps this to one run per answer.
-  }, [uploader.state, uploader.data, file, put]);
+  }, [saving, uploader.state, uploader.data, file, put, sentOver]);
 
   const send = (f: File) => {
     setView(null);
@@ -68,6 +92,8 @@ export function useFontUpload(font: Font, put: (v: Font) => void) {
     }
   };
   const reset = (v: View | null = null) => {
+    // Aborted, so the action deletes the file it may have made.
+    if (sentOver.current && uploader.state !== "idle") uploader.reset();
     sentOver.current = null;
     setView(v);
   };

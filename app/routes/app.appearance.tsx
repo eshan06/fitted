@@ -3,7 +3,11 @@
 // App Bridge's save bar, with colors, the popup font and the product page
 // preview, and the popup font's upload to Shopify Files. Languages is #43's.
 import { Suspense, useState, type ReactNode } from "react";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import type {
+  ActionFunctionArgs,
+  LoaderFunctionArgs,
+  ShouldRevalidateFunction,
+} from "react-router";
 import {
   Await,
   data,
@@ -20,7 +24,10 @@ import {
 } from "../models/admin.server";
 import { readFile, uploadFont } from "../models/files.server";
 import { FONT_MAX, FONT_WORDS, fontType } from "../lib/font-file";
-import { useFontUpload } from "../components/appearance/FontUpload";
+import {
+  useFontUpload,
+  useUploader,
+} from "../components/appearance/FontUpload";
 import {
   type FieldErrors,
   type Loaded,
@@ -79,6 +86,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     themeUrl: themeEditorUrl(session.shop),
   };
 };
+// A font upload changes no settings. Reading them again would remount the
+// editor when they changed elsewhere, dropping the edits without a word.
+export const shouldRevalidate: ShouldRevalidateFunction = (a) =>
+  a.formEncType !== "multipart/form-data" && a.defaultShouldRevalidate;
 
 // What the screen sends whole, with the primary language's label and header.
 // The fit finder and other languages stay as stored.
@@ -100,11 +111,16 @@ async function upload(request: Request, admin: Admin, shop: string) {
   if (bytes.length > FONT_MAX) return refuse("size");
   try {
     return {
-      fileUrl: await uploadFont(admin, { name: file.name, mime, bytes }),
+      fileUrl: await uploadFont(
+        admin,
+        { name: file.name, mime, bytes },
+        request.signal,
+      ),
     };
   } catch (err) {
     if (!(err instanceof AdminApiError)) throw err;
-    log(shop, err);
+    // The screen dropped it: nothing went wrong, and no one reads the answer.
+    if (err.detail !== "aborted") log(shop, err);
     const error = { code: "upload", message: FONT_WORDS.failed };
     return data({ error }, { status: 502 });
   }
@@ -149,6 +165,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 // The Appearance board's states: loading, couldn't load, and the editor.
 export default function Appearance() {
   const { appearance, themeUrl } = useLoaderData<typeof loader>();
+  // Here, so a font upload outlives the editor's remount after a save.
+  const uploader = useUploader();
   return (
     <Suspense fallback={<Page body={<Loading />} />}>
       <Await resolve={appearance} errorElement={<Page body={<LoadError />} />}>
@@ -156,7 +174,12 @@ export default function Appearance() {
           "error" in a ? (
             <Page body={<LoadError />} />
           ) : (
-            <Editor key={a.digest ?? "new"} loaded={a} themeUrl={themeUrl} />
+            <Editor
+              key={a.digest ?? "new"}
+              loaded={a}
+              themeUrl={themeUrl}
+              uploader={uploader}
+            />
           )
         }
       </Await>
@@ -318,7 +341,11 @@ function check(d: Draft): FieldErrors {
   return e;
 }
 
-function Editor(props: { loaded: Loaded; themeUrl: string }) {
+function Editor(props: {
+  loaded: Loaded;
+  themeUrl: string;
+  uploader: ReturnType<typeof useUploader>;
+}) {
   const fetcher = useFetcher<Answer>();
   const revalidator = useRevalidator();
   const [initial] = useState(() => toDraft(props.loaded));
@@ -460,8 +487,10 @@ function Editor(props: { loaded: Loaded; themeUrl: string }) {
     );
   };
   const fontUpload = useFontUpload(
+    props.uploader,
     draft["popup.font"] as Settings["popup"]["font"],
     (v) => put("popup.font", v),
+    saving,
   );
   const custom = draft["colors.mode"] === "custom";
   // The canvas's product, showing the label and custom colors.
@@ -526,7 +555,12 @@ function Editor(props: { loaded: Loaded; themeUrl: string }) {
     <>
       {code === "conflict" ? (
         <Banner copy={COPY.conflict}>
-          {button("Reload latest", () => revalidator.revalidate())}
+          {/* Held while a font uploads, like Save: it discards edits. */}
+          {button(
+            "Reload latest",
+            () => revalidator.revalidate(),
+            fontUpload.sending,
+          )}
           {button("Cancel", dismiss)}
         </Banner>
       ) : (
@@ -583,7 +617,7 @@ function Editor(props: { loaded: Loaded; themeUrl: string }) {
           variant="primary"
           onClick={save}
           loading={saving ? "" : undefined}
-          // A save remounts the editor, which would drop the upload.
+          // The font joins the draft once uploaded, so a save waits for it.
           disabled={fontUpload.sending}
         >
           Save

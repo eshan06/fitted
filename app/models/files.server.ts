@@ -31,9 +31,21 @@ const KINDS = {
   image: { op: "Image", resource: "IMAGE", type: "MediaImage" },
 } as const;
 
-/** Uploads a checked file; answers its Files id and cdn.shopify.com URL. */
-async function upload(admin: Admin, kind: keyof typeof KINDS, file: Upload) {
-  const { op, resource, type } = KINDS[kind];
+/**
+ * Uploads a checked file; answers its Files id and cdn.shopify.com URL.
+ * `signal` is the screen's request: once it stops waiting, no file is kept.
+ */
+async function upload(
+  admin: Admin,
+  kind: keyof typeof KINDS,
+  file: Upload,
+  signal?: AbortSignal,
+) {
+  const { op, resource } = KINDS[kind];
+  const dropped = () => {
+    if (signal?.aborted)
+      throw new AdminApiError(`The ${kind} upload was dropped`, "aborted");
+  };
   const filename = file.name.replace(/[^\w.-]+/g, "-").slice(-100);
   const { stagedUploadsCreate } = await adminGraphql<{
     stagedUploadsCreate: { stagedTargets: Target[] };
@@ -75,6 +87,7 @@ async function upload(admin: Admin, kind: keyof typeof KINDS, file: Upload) {
       typeof res === "string" ? res : `HTTP ${res.status}`,
     );
 
+  dropped();
   // Not retried: a second fileCreate would add a second file.
   const { fileCreate } = await adminGraphql<{
     fileCreate: { files: { id: string }[] };
@@ -92,7 +105,42 @@ async function upload(admin: Admin, kind: keyof typeof KINDS, file: Upload) {
     },
   );
   const { id } = fileCreate.files[0];
+  try {
+    const url = await ready(admin, kind, id, dropped);
+    dropped();
+    return { id, url };
+  } catch (err) {
+    // A file the merchant was told didn't upload is deleted. Only the one
+    // this upload just made is ever deleted. (A lost session can't delete.)
+    if (!(err instanceof AdminApiError)) throw err;
+    await adminGraphql(
+      admin,
+      `#graphql
+      mutation Fitted${op}Drop($ids: [ID!]!) {
+        fileDelete(fileIds: $ids) { deletedFileIds userErrors { field message code } }
+      }`,
+      { ids: [id] },
+    ).catch((e) => {
+      if (!(e instanceof AdminApiError)) throw e;
+      throw new AdminApiError(
+        `Shopify didn't delete the dropped ${kind}`,
+        `${e.detail}; first: ${err.message}`,
+      );
+    });
+    throw err;
+  }
+}
+
+/** Waits for Shopify to finish the file; answers its cdn.shopify.com URL. */
+async function ready(
+  admin: Admin,
+  kind: keyof typeof KINDS,
+  id: string,
+  dropped: () => void,
+) {
+  const { op, type } = KINDS[kind];
   for (const end = Date.now() + WAIT_MS; ; await sleep(500)) {
+    dropped();
     const { node } = await adminGraphql<{ node: Node }>(
       admin,
       `#graphql
@@ -103,8 +151,7 @@ async function upload(admin: Admin, kind: keyof typeof KINDS, file: Upload) {
       { retry: true },
     );
     const url = node?.url ?? node?.image?.url;
-    if (node?.fileStatus === "READY" && url && FONT_URL.test(url))
-      return { id, url };
+    if (node?.fileStatus === "READY" && url && FONT_URL.test(url)) return url;
     if (node?.fileStatus === "READY" || node?.fileStatus === "FAILED")
       throw new AdminApiError(`Shopify didn't keep the ${kind}`, `${url}`);
     if (Date.now() > end)
@@ -138,8 +185,11 @@ export async function readFile(request: Request, max: number) {
 }
 
 /** Uploads a checked font file and returns its Shopify Files URL. */
-export const uploadFont = async (admin: Admin, file: Upload) =>
-  (await upload(admin, "font", file)).url;
+export const uploadFont = async (
+  admin: Admin,
+  file: Upload,
+  signal?: AbortSignal,
+) => (await upload(admin, "font", file, signal)).url;
 // Proof that Fitted uploaded a file for this shop, so a discard never
 // deletes a file the merchant or another app made.
 function sign(shop: string, id: string) {
