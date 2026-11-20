@@ -1115,6 +1115,15 @@ describe("a chart's ease and stretch", () => {
     vi.useRealTimers();
   });
 
+  it("drops the count's error when Try again finds nothing to count", async () => {
+    await countFails();
+    await open();
+    await retries();
+    m.getPlan.mockResolvedValue({ plan: "standard", checkFailed: false });
+    await click("Try again");
+    expect(document.querySelector(".live")).toBeNull();
+  });
+
   it("loads the screen with the count's own error, logging why", async () => {
     await countFails();
     const got = load();
