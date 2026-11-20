@@ -51,9 +51,11 @@ export const forCharts = (rules: Rules, ids: Set<string>): Rules => ({
   order: rules.order.filter((id) => ids.has(id)),
 });
 
-/** Charts left with nothing to match aren't ranked, so they drop out on save. */
+/** Charts left with no conditions aren't ranked, so they drop out on save. */
 export function toSave(rules: Rules): Rules {
-  const order = rules.order.filter((id) => rules.charts[id]?.match.length);
+  const order = rules.order.filter(
+    (id) => rules.charts[id]?.match.length || rules.charts[id]?.exclude.length,
+  );
   return {
     v: 1,
     order,

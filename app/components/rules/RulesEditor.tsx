@@ -16,7 +16,7 @@ export type Loaded = {
 type Answer = {
   ok?: true;
   fieldErrors?: FieldErrors;
-  error?: { code: string };
+  error?: { code: string; message: string };
 };
 type Rule = Rules["charts"][string];
 type List = "match" | "exclude";
@@ -32,6 +32,10 @@ export const COPY: Record<string, string[]> = {
     "You need Products access to save rules",
     "Nothing was saved, since saving rules also updates your products.",
     "**Ask the store owner to add Products access to your account in Settings › Users.",
+  ],
+  plan: [
+    "This change needs the Standard plan",
+    "On Free, tag, product type, vendor and metafield conditions keep working but can't be added or changed, so nothing was saved. Change them back or remove them, or move to Standard, $9 a month.",
   ],
   shopify: [
     "Your rule changes weren't saved",
@@ -87,6 +91,13 @@ export function RulesEditor(props: {
     setDraft(initial);
     setDismissed(fetcher.data);
   }
+  // A server answer marking another chart's condition opens that chart.
+  const [shown, setShown] = useState<Answer>();
+  if (fetcher.data !== shown) {
+    setShown(fetcher.data);
+    const [first] = Object.keys(fetcher.data?.fieldErrors ?? {});
+    if (first?.startsWith("charts.")) setSelected(first.split(".")[1]);
+  }
   const { initial } = base;
 
   const saving = fetcher.state !== "idle";
@@ -95,6 +106,7 @@ export function RulesEditor(props: {
   const errors = notice?.fieldErrors ?? {};
   const err = notice?.error;
   const marked = Object.entries(errors);
+  const rows = marked.filter(([p]) => p.startsWith("charts.")).length;
   const name = (id: string) =>
     loaded.charts.find((c) => c.id === id)?.name ?? "";
   const current =
@@ -202,6 +214,7 @@ export function RulesEditor(props: {
         id="rules-save-bar"
         open={
           saving ||
+          !!loaded.damaged ||
           JSON.stringify(model.toSave(draft)) !==
             JSON.stringify(model.toSave(initial))
         }
@@ -236,8 +249,10 @@ export function RulesEditor(props: {
         {marked.length > 0 && (
           <Banner
             copy={[
-              `Fix ${marked.length} condition${marked.length === 1 ? "" : "s"} to save`,
-              "Nothing was saved, so products still show the same charts.",
+              `Fix ${rows || 1} condition${rows > 1 ? "s" : ""} to save`,
+              err?.code === "plan"
+                ? err.message
+                : "Nothing was saved, so products still show the same charts.",
               // Messages about the whole document, such as a limit (§6).
               ...marked
                 .filter(([p]) => !p.startsWith("charts."))
@@ -303,7 +318,10 @@ export function RulesEditor(props: {
                 draggable
                 onDragStart={() => setDragging(i)}
                 onDragOver={(e) => e.preventDefault()}
-                onDrop={() => move(dragging, i)}
+                onDrop={() => {
+                  move(dragging, i);
+                  setDragging(-1);
+                }}
               >
                 {/* The arrow keys move it too, for keyboards. */}
                 <button
@@ -370,7 +388,9 @@ function ConditionRow(props: {
     className: bad ? "field bad" : "field",
     "aria-invalid": bad ? true : undefined,
   });
-  const message = [e(""), e("key"), e("value"), e("ids")].find(Boolean);
+  const message = [e(""), e("key"), e("op"), e("value"), e("ids")].find(
+    Boolean,
+  );
   const noun = c.field === "product" ? "product" : "collection";
   const n = "ids" in c ? c.ids.length : 0;
   return (

@@ -41,6 +41,11 @@ vi.mock("../models/rules.server", async (orig) => ({
   startResolve: m.startResolve,
 }));
 const { action, loader } = await import("./app.rules");
+const { COPY } = await import("../components/rules/RulesEditor");
+// §15: every refusal carries a code and the words the screen shows.
+const answer = (code: string) => ({
+  error: { code, message: COPY[code][1] },
+});
 
 const SHOP = "fitted-dev.myshopify.com";
 const CHART = "gid://shopify/Metaobject/42";
@@ -141,7 +146,14 @@ describe("loading display rules", () => {
     );
     expect(await result(load())).toEqual({
       status: 502,
-      body: { mode: "error" },
+      body: {
+        mode: "error",
+        error: {
+          code: "shopify",
+          message:
+            "Fitted couldn't reach your store just now. Your charts still show on the same products as before.",
+        },
+      },
     });
     expect(JSON.parse(logs[0])).toMatchObject({
       level: "error",
@@ -183,7 +195,7 @@ describe("saving display rules", () => {
     m.canReadProducts.mockResolvedValue(false);
     expect(await result(post({ rules: rules(), digest: "d1" }))).toEqual({
       status: 403,
-      body: { error: { code: "product_access" } },
+      body: answer("product_access"),
     });
     expect(m.saveRules).not.toHaveBeenCalled();
     expect(m.startResolve).not.toHaveBeenCalled();
@@ -232,7 +244,7 @@ describe("saving display rules", () => {
     m.saveRules.mockRejectedValue(new RulesPlanError(fieldErrors));
     expect(await result(post({ rules: rules(), digest: "d1" }))).toEqual({
       status: 403,
-      body: { fieldErrors },
+      body: { ...answer("plan"), fieldErrors },
     });
     expect(m.startResolve).not.toHaveBeenCalled();
   });
@@ -241,7 +253,7 @@ describe("saving display rules", () => {
     m.saveRules.mockRejectedValue(new RulesConflictError("changed"));
     expect(await result(post({ rules: rules(), digest: "old" }))).toEqual({
       status: 409,
-      body: { error: { code: "conflict" } },
+      body: answer("conflict"),
     });
     expect(m.startResolve).not.toHaveBeenCalled();
   });
@@ -252,7 +264,7 @@ describe("saving display rules", () => {
     );
     expect(await result(post({ rules: rules(), digest: "d1" }))).toEqual({
       status: 502,
-      body: { error: { code: "shopify" } },
+      body: answer("shopify"),
     });
     expect(JSON.parse(logs[0])).toMatchObject({ shop: SHOP, detail: "[raw]" });
     expect(m.startResolve).not.toHaveBeenCalled();

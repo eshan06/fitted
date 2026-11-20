@@ -55,12 +55,14 @@ describe("rules draft", () => {
     expect(model.blank("all", contains)).toEqual({ field: "all" });
   });
 
-  it("drops charts with nothing to match and their rules when saving", () => {
+  it("drops charts with no conditions when saving, and keeps a chart with only exclusions", () => {
+    const C = "gid://shopify/Metaobject/3";
     const draft: Rules = {
       v: 1,
-      order: [A, B],
+      order: [A, C, B],
       charts: {
         [A]: { match: [{ field: "all" }], exclude: [], auto: true },
+        [C]: { match: [], exclude: [], auto: true },
         [B]: {
           match: [],
           exclude: [{ field: "tag", op: "is", value: "x" }],
@@ -70,8 +72,8 @@ describe("rules draft", () => {
     };
     expect(model.toSave(draft)).toEqual({
       v: 1,
-      order: [A],
-      charts: { [A]: draft.charts[A] },
+      order: [A, B],
+      charts: { [A]: draft.charts[A], [B]: draft.charts[B] },
     });
   });
 

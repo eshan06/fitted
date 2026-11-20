@@ -287,13 +287,16 @@ describe("display rules screen", () => {
     expect(options).toEqual(["Pick a chart", "Shoes"]);
   });
 
-  it("marks the conditions the plan can't add, and the document-wide limits", async () => {
+  it("opens the chart whose condition the plan refused, with the upgrade and any document-wide message", async () => {
+    const plan =
+      "On Free, tag, product type, vendor and metafield conditions keep working but can't be added or changed, so nothing was saved. Change them back or remove them, or move to Standard, $9 a month.";
     await open(
       [edit(ranked())],
       [
         {
           status: 403,
           body: {
+            error: { code: "plan", message: plan },
             fieldErrors: {
               [`charts.${A}.match.0`]:
                 "Tag, type, vendor and metafield rules are on Standard and Pro",
@@ -303,6 +306,7 @@ describe("display rules screen", () => {
         },
       ],
     );
+    await click(buttons("2. Shoes")[0]);
     await click(buttons("Add condition")[1]);
     await type(byLabel("Field", 1), "collection");
     bridge.resourcePicker.mockResolvedValue([
@@ -310,7 +314,9 @@ describe("display rules screen", () => {
     ]);
     await click(byLabel("Edit the picked collections"));
     await click(buttons("Save")[0]);
-    expect(headings()).toEqual(["Fix 2 conditions to save"]);
+    expect(document.querySelector("h2")?.textContent).toBe("Women's tops");
+    expect(headings()).toEqual(["Fix 1 condition to save"]);
+    expect(text()).toContain(plan);
     expect(text()).toContain(
       "Rules can compare at most 20 different metafields",
     );
@@ -320,6 +326,58 @@ describe("display rules screen", () => {
     expect(document.getElementById("r1-match-0-field")?.className).toContain(
       "bad",
     );
+  });
+
+  it("reorders by dragging a chart onto another's place", async () => {
+    const { sent } = await open([edit(ranked())]);
+    const [first, second] = document.querySelectorAll(".ranks li");
+    await act(async () => {
+      first.dispatchEvent(new Event("dragstart", { bubbles: true }));
+    });
+    await act(async () => {
+      second.dispatchEvent(new Event("drop", { bubbles: true }));
+    });
+    expect(buttons("1. Shoes")).toHaveLength(1);
+    // A later drop with nothing dragged moves nothing.
+    await act(async () => {
+      second.dispatchEvent(new Event("drop", { bubbles: true }));
+    });
+    expect(buttons("1. Shoes")).toHaveLength(1);
+    await click(buttons("Save")[0]);
+    expect((sent[0].rules as Rules).order).toEqual([B, A]);
+  });
+
+  it("edits a metafield condition's key and comparison", async () => {
+    const { sent } = await open([edit(ranked())]);
+    await click(buttons("Add condition")[0]);
+    await type(byLabel("Field", 1), "metafield");
+    await type(byLabel("Metafield key"), "custom.fit");
+    await type(byLabel("Condition", 1), "contains");
+    await type(byLabel("Value"), "slim");
+    await click(buttons("Save")[0]);
+    expect((sent[0].rules as Rules).charts[A].match[1]).toEqual({
+      field: "metafield",
+      key: "custom.fit",
+      op: "contains",
+      value: "slim",
+    });
+  });
+
+  it("keeps the edits and the banner's place when a conflict is cancelled", async () => {
+    await open(
+      [edit(ranked())],
+      [{ status: 409, body: { error: { code: "conflict", message: "x" } } }],
+    );
+    await act(async () =>
+      byLabel("Move Women's tops").dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
+      ),
+    );
+    await click(buttons("Save")[0]);
+    await click(buttons("Cancel")[0]);
+    expect(headings()).toEqual([]);
+    expect(buttons("1. Shoes")).toHaveLength(1);
+    expect(saveBar()).not.toBeNull();
   });
 
   it("says when the picker doesn't open", async () => {
@@ -340,6 +398,16 @@ describe("display rules screen", () => {
     expect(text()).toContain(
       "Set up your rules again and save to replace them.",
     );
+  });
+
+  it("can replace saved rules that fail the checks with no rules at all", async () => {
+    const { sent } = await open([
+      edit(none(), "d0", { [`charts.${A}.match.0.value`]: "Bad" } as never),
+    ]);
+    await click(buttons("Save")[0]);
+    expect(sent).toEqual([
+      { rules: { v: 1, order: [], charts: {} }, digest: "d0" },
+    ]);
   });
 
   it("points a store with no charts at making one", async () => {

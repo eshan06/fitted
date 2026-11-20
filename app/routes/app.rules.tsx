@@ -49,12 +49,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   } catch (err) {
     if (!(err instanceof AdminApiError)) throw err;
     log(session.shop, err);
-    return data({ mode: "error" as const }, { status: 502 });
+    const error = { code: "shopify", message: COPY.load[1] };
+    return data({ mode: "error" as const, error }, { status: 502 });
   }
 };
 
-const fail = (status: number, code: string) =>
-  data({ error: { code } }, { status });
+// The answers of §15, worded as the screen's banners.
+const fail = (status: number, code: string, fieldErrors?: object) =>
+  data({ error: { code, message: COPY[code][1] }, fieldErrors }, { status });
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -68,12 +70,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     void startResolve(session.shop, true);
     return { ok: true as const };
   } catch (err) {
-    // A Free plan's refusal names its conditions like a check does (§8).
-    if (err instanceof RulesValidationError || err instanceof RulesPlanError)
-      return data(
-        { fieldErrors: err.fieldErrors },
-        { status: err instanceof RulesPlanError ? 403 : 422 },
-      );
+    if (err instanceof RulesValidationError)
+      return data({ fieldErrors: err.fieldErrors }, { status: 422 });
+    // Free's refusal marks its conditions like a check does, with the upgrade (§8).
+    if (err instanceof RulesPlanError)
+      return fail(403, "plan", err.fieldErrors);
     if (err instanceof RulesConflictError) return fail(409, "conflict");
     if (!(err instanceof AdminApiError)) throw err;
     log(session.shop, err);
