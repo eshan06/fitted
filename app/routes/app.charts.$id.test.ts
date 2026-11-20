@@ -18,6 +18,7 @@ const m = vi.hoisted(() => ({
   unpublishChart: vi.fn(),
   countActiveCharts: vi.fn(),
   canReadProducts: vi.fn(),
+  pricingPlansUrl: vi.fn(),
   startResolve: vi.fn(),
 }));
 vi.mock("../shopify.server", () => ({
@@ -26,6 +27,7 @@ vi.mock("../shopify.server", () => ({
 vi.mock("../models/admin.server", async (orig) => ({
   ...(await orig<typeof import("../models/admin.server")>()),
   canReadProducts: m.canReadProducts,
+  pricingPlansUrl: m.pricingPlansUrl,
 }));
 vi.mock("../models/rules.server", () => ({ startResolve: m.startResolve }));
 vi.mock("../models/billing.server", async (orig) => ({
@@ -46,6 +48,8 @@ const { action, loader } = await import("./app.charts.$id");
 
 const SHOP = "fitted-dev.myshopify.com";
 const ID = "gid://shopify/Metaobject/42";
+const PLANS =
+  "https://admin.shopify.com/store/fitted-dev/charges/fitted-5/pricing_plans";
 const admin = { graphql: vi.fn() };
 const redirect = vi.fn(
   (url: string) =>
@@ -121,6 +125,7 @@ beforeEach(() => {
   });
   m.getPlan.mockResolvedValue({ plan: "free", checkFailed: false });
   m.countActiveCharts.mockResolvedValue(2);
+  m.pricingPlansUrl.mockResolvedValue(PLANS);
   m.getChart.mockResolvedValue(stored("DRAFT"));
   m.updateChart.mockResolvedValue(stored("DRAFT"));
   m.canReadProducts.mockResolvedValue(true);
@@ -262,13 +267,12 @@ describe("saving a chart", () => {
         limit: 3,
         published: 3,
         checkFailed: false,
-        // App Pricing's plan page for the session's store and the app's handle.
-        plansUrl:
-          "https://admin.shopify.com/store/fitted-dev/charges/fitted-5/pricing_plans",
+        plansUrl: PLANS,
       },
     });
-    // The plan is the session's shop's, never one the browser sent.
+    // The plan and its page are the session's shop's, never one the browser sent.
     expect(m.getPlan).toHaveBeenCalledWith(SHOP);
+    expect(m.pricingPlansUrl).toHaveBeenCalledWith(admin, SHOP);
     expect(m.updateChart).not.toHaveBeenCalled();
     expect(m.publishChart).not.toHaveBeenCalled();
   });

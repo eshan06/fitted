@@ -4,7 +4,11 @@ import { randomInt } from "node:crypto";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Link, data, useLoaderData, useRevalidator } from "react-router";
 import { authenticate } from "../shopify.server";
-import { AdminApiError, canReadProducts } from "../models/admin.server";
+import {
+  AdminApiError,
+  canReadProducts,
+  pricingPlansUrl,
+} from "../models/admin.server";
 import {
   ChartConflictError,
   ChartNotFoundError,
@@ -21,7 +25,6 @@ import {
   FREE_ACTIVE_CHARTS,
   canPublishChart,
   getPlan,
-  plansUrl,
 } from "../models/billing.server";
 import { startResolve } from "../models/rules.server";
 import { Editor } from "../components/chart-table/Editor";
@@ -118,7 +121,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
               limit: FREE_ACTIVE_CHARTS,
               published,
               checkFailed,
-              plansUrl: plansUrl(session.shop),
+              plansUrl: await pricingPlansUrl(admin, session.shop),
             },
           },
           { status: 403 },
