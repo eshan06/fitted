@@ -1,7 +1,7 @@
 // Appearance & languages (ARCHITECTURE §7, §15): the Appearance board's link,
 // popup, placement, units and custom CSS, saved to `$app.settings` through
-// App Bridge's save bar. Colors and fonts, and the preview, are #123's;
-// Languages is #43's.
+// App Bridge's save bar, with colors, the popup font and the product page
+// preview. The font upload is #130's; Languages is #43's.
 import { Suspense, useState, type ReactNode } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import {
@@ -129,7 +129,12 @@ export default function Appearance() {
   );
 }
 
-const Page = (props: { banners?: ReactNode; body: ReactNode }) => (
+// `side` is the preview, beside the form until space runs out.
+const Page = (props: {
+  banners?: ReactNode;
+  body: ReactNode;
+  side?: ReactNode;
+}) => (
   <s-page>
     <div className="editor appearance">
       {props.banners}
@@ -139,21 +144,41 @@ const Page = (props: { banners?: ReactNode; body: ReactNode }) => (
           Make the size guide look like part of your store.
         </p>
       </div>
-      {props.body}
+      {props.side ? (
+        <div className="split">
+          <div className="form">{props.body}</div>
+          {props.side}
+        </div>
+      ) : (
+        props.body
+      )}
     </div>
   </s-page>
 );
 
 const Loading = () => (
-  <div role="status" className="editor">
+  <div role="status" className="split">
     <span className="visually-hidden">Loading appearance settings</span>
-    {[3, 6, 4].map((rows) => (
-      <div key={rows} className="card">
-        {Array.from({ length: rows }, (_, i) => (
-          <span key={i} className="sk" style={{ width: `${90 - i * 9}%` }} />
-        ))}
-      </div>
-    ))}
+    <div className="form">
+      {[3, 6, 4].map((rows) => (
+        <div key={rows} className="card">
+          {Array.from({ length: rows }, (_, i) => (
+            <span key={i} className="sk" style={{ width: `${90 - i * 9}%` }} />
+          ))}
+        </div>
+      ))}
+    </div>
+    <div className="card">
+      {[
+        ["35%", "1rem"],
+        ["100%", "12.5rem"],
+        ["60%", "1.125rem"],
+        ["30%"],
+        ["100%", "2.75rem"],
+      ].map(([width, height]) => (
+        <span key={width + height} className="sk" style={{ width, height }} />
+      ))}
+    </div>
   </div>
 );
 
@@ -185,11 +210,16 @@ type Answer = {
 };
 // By path ("popup.logo"), so each control reads and writes one value.
 type Draft = Record<string, unknown>;
+// The swatches' colors while the store has none.
+const COLORS = { text: "#202223", accent: "#2448A8", background: "#FFFFFF" };
+const HEX = /^#[0-9a-f]{6}$/i;
 function toDraft({ settings: s, primaryLocale: l }: Loaded): Draft {
   const { label, header } = s.text[l];
-  const d: Draft = { colors: s.colors, css: s.css, label, header };
+  const d: Draft = { css: s.css, label, header };
   for (const k of SECTIONS)
     for (const [f, v] of Object.entries(s[k])) d[`${k}.${f}`] = v;
+  for (const [f, v] of Object.entries({ ...COLORS, ...s.colors }))
+    d[`colors.${f}`] = v;
   return d;
 }
 function toEdits(d: Draft) {
@@ -198,6 +228,8 @@ function toEdits(d: Draft) {
     const [k, f] = path.split(".");
     e[k] = f ? { ...(e[k] as object), [f]: v } : v;
   }
+  // Matching the theme stores no colors.
+  if (d["colors.mode"] === "theme") e.colors = { mode: "theme" };
   return e;
 }
 
@@ -217,6 +249,13 @@ const FIELDS: Record<string, [string, string, string?]> = {
   ],
   css: ["Custom CSS", "can't be saved as it is"],
 };
+const NAMES = { text: "Text", accent: "Accent", background: "Background" };
+for (const [k, name] of Object.entries(NAMES))
+  FIELDS[`colors.${k}`] = [
+    `${name} color`,
+    "isn't a valid hex code",
+    `${name} needs # and 6 letters or numbers, like ${COLORS[k as keyof typeof COLORS]}.`,
+  ];
 
 /** The screen's own check, before anything is sent. */
 function check(d: Draft): FieldErrors {
@@ -230,6 +269,9 @@ function check(d: Draft): FieldErrors {
   } catch {
     e["placement.selector"] = "Not a selector";
   }
+  if (d["colors.mode"] === "custom")
+    for (const k of Object.keys(NAMES))
+      if (!HEX.test(String(d[`colors.${k}`]))) e[`colors.${k}`] = "Not a hex";
   const css = String(d.css);
   if (css.includes("<")) e.css = `Custom CSS can't contain "<"`;
   else if (new Blob([css]).size > 10 * 1024)
@@ -269,7 +311,7 @@ function Editor(props: { loaded: Loaded; themeUrl: string }) {
 
   const err = (id: string) =>
     errors[id] && (
-      <p id={`${id}-err`} className="help err">
+      <p key={id} id={`${id}-err`} className="help err">
         <s-icon type="alert-circle" tone="critical" size="small" />
         {FIELDS[id]?.[2] ?? errors[id]}
       </p>
@@ -345,6 +387,99 @@ function Editor(props: { loaded: Loaded; themeUrl: string }) {
     </label>
   );
 
+  // A swatch to pick with, and the typed hex box beside it. Either picks Custom.
+  const color = (k: keyof typeof NAMES) => {
+    const id = `colors.${k}`;
+    const v = String(draft[id]);
+    const set = (value: string) =>
+      setDraft((d) => ({ ...d, [id]: value, "colors.mode": "custom" }));
+    return (
+      <div key={k}>
+        <label htmlFor={id}>{NAMES[k]}</label>
+        <div className="hex">
+          {HEX.test(v) ? (
+            <input
+              type="color"
+              aria-label={`${NAMES[k]} color`}
+              value={v.toLowerCase()}
+              onChange={(e) => set(e.target.value.toUpperCase())}
+            />
+          ) : (
+            <span className="swatch" aria-hidden="true" />
+          )}
+          <input
+            id={id}
+            className={errors[id] ? "field bad" : "field"}
+            aria-invalid={errors[id] ? true : undefined}
+            aria-describedby={errors[id] ? `${id}-err` : undefined}
+            maxLength={7}
+            value={v}
+            onChange={(e) => set(e.target.value)}
+          />
+        </div>
+      </div>
+    );
+  };
+  const font = draft["popup.font"];
+  const custom = draft["colors.mode"] === "custom";
+  // The canvas's product, showing the label and custom colors.
+  const preview = (
+    <aside className="card" aria-label="Product page preview">
+      <div className="row">
+        <h2>Preview</h2>
+        <span className="badge">Product page</span>
+      </div>
+      <div
+        className="product"
+        style={
+          custom
+            ? {
+                color: String(draft["colors.text"]),
+                background: String(draft["colors.background"]),
+              }
+            : undefined
+        }
+      >
+        <div className="photo">Product photo</div>
+        <strong className="name">Linen Wrap Top</strong>
+        <span>$58.00</span>
+        <div className="row">
+          <strong>Size</strong>
+          <span
+            className="link"
+            style={
+              custom ? { color: String(draft["colors.accent"]) } : undefined
+            }
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M3 15.5 15.5 3l5.5 5.5L8.5 21z" />
+              <path d="m7 12 2 2M10 9l2 2M13 6l2 2" />
+            </svg>
+            {String(draft.label)}
+          </span>
+        </div>
+        <div className="pills">
+          {["XS", "S", "M", "L", "XL"].map((size) => (
+            <span key={size} className={size === "M" ? "on" : ""}>
+              {size}
+            </span>
+          ))}
+        </div>
+        <span className="cart">Add to cart</span>
+      </div>
+    </aside>
+  );
+
   const banners = (
     <>
       {code === "conflict" ? (
@@ -397,7 +532,10 @@ function Editor(props: { loaded: Loaded; themeUrl: string }) {
     <>
       <SaveBar
         id="appearance-save-bar"
-        open={saving || JSON.stringify(draft) !== JSON.stringify(initial)}
+        open={
+          saving ||
+          JSON.stringify(toEdits(draft)) !== JSON.stringify(toEdits(initial))
+        }
       >
         <button
           variant="primary"
@@ -452,6 +590,30 @@ function Editor(props: { loaded: Loaded; themeUrl: string }) {
                   ["fade", "Fade in"],
                 ])}
                 {text("header", "Header text", "", true)}
+                {/* Uploading is #130's: until then, only a stored upload shows. */}
+                <label>
+                  Font
+                  <select
+                    className="field"
+                    value={font === "theme" ? "theme" : "upload"}
+                    onChange={(e) =>
+                      put(
+                        "popup.font",
+                        e.target.value === "theme"
+                          ? "theme"
+                          : initial["popup.font"],
+                      )
+                    }
+                  >
+                    <option value="theme">Match my theme</option>
+                    <option
+                      value="upload"
+                      disabled={initial["popup.font"] === "theme"}
+                    >
+                      Upload a font
+                    </option>
+                  </select>
+                </label>
               </div>
               {box("popup.logo", "Show my logo in the popup")}
               {box(
@@ -497,6 +659,35 @@ function Editor(props: { loaded: Loaded; themeUrl: string }) {
               )}
             </section>
 
+            <section className="card" aria-labelledby="h-look">
+              <h2 id="h-look">Colors and fonts</h2>
+              {[
+                [
+                  "theme",
+                  "Match my theme",
+                  "Uses your theme's fonts and colors. Recommended.",
+                ],
+                ["custom", "Custom", ""],
+              ].map(([v, label, help]) => (
+                <label key={v} className="choice">
+                  <input
+                    type="radio"
+                    name="colors.mode"
+                    checked={draft["colors.mode"] === v}
+                    onChange={() => put("colors.mode", v)}
+                  />
+                  <span>
+                    <strong>{label}</strong>
+                    {help && <span className="help">{help}</span>}
+                  </span>
+                </label>
+              ))}
+              <div className="fields colors">
+                {(["text", "accent", "background"] as const).map(color)}
+                {Object.keys(NAMES).map((k) => err(`colors.${k}`))}
+              </div>
+            </section>
+
             <section className="card" aria-labelledby="h-units">
               <h2 id="h-units">Units</h2>
               <div>
@@ -527,6 +718,7 @@ function Editor(props: { loaded: Loaded; themeUrl: string }) {
             </section>
           </>
         }
+        side={preview}
       />
     </>
   );

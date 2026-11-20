@@ -59,3 +59,127 @@
   font-size: 0.8125rem;
   resize: vertical;
 }
+/* The form beside its preview; the preview drops below when space runs out. */
+.appearance .split {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-start;
+}
+.appearance .split > .form {
+  flex: 3 1 28.75rem;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.appearance .split > .card {
+  flex: 2 1 18.75rem;
+  min-width: 0;
+}
+.appearance .colors {
+  padding-left: 26px;
+}
+.appearance .colors > .err {
+  flex-basis: 100%;
+  margin-top: -6px;
+}
+.appearance .hex {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 6px;
+}
+.appearance .hex .field {
+  margin: 0;
+}
+.appearance .hex input[type="color"],
+.appearance .swatch {
+  width: 2.25rem;
+  height: 2.25rem;
+  flex: none;
+  box-sizing: border-box;
+  border: 1px solid #c9cccf;
+  border-radius: 8px;
+  padding: 2px;
+  background: #fff;
+}
+/* No color to show: a slashed swatch. */
+.appearance .swatch {
+  border-color: #8e1f0b;
+  background: linear-gradient(
+    135deg,
+    #fff 45%,
+    #8e1f0b 45%,
+    #8e1f0b 55%,
+    #fff 55%
+  );
+}
+.appearance .badge {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #5c5f62;
+}
+.appearance .product {
+  border: 1px solid #e1e3e5;
+  border-radius: 12px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 0.9375rem;
+}
+.appearance .photo {
+  aspect-ratio: 4 / 3;
+  border-radius: 10px;
+  background: #e9e6e1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8125rem;
+  color: #45484b;
+}
+.appearance .product .name {
+  font-size: 1.125rem;
+}
+.appearance .product .row strong,
+.appearance .product .link {
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+.appearance .product .link {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  text-decoration: underline;
+}
+.appearance .pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.appearance .pills span,
+.appearance .cart {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 40px;
+  padding: 0 12px;
+  box-sizing: border-box;
+  border: 1px solid #c9cccf;
+  border-radius: 8px;
+  background: #fff;
+  color: #202223;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+.appearance .pills .on {
+  border: 2px solid #202223;
+}
+.appearance .cart {
+  min-height: 44px;
+  border-color: #202223;
+  background: #202223;
+  color: #fff;
+}
