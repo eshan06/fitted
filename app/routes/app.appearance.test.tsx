@@ -388,6 +388,10 @@ describe("appearance screen", () => {
 
   it("marks custom CSS with a < or over 10 KB, and Discard puts everything back", async () => {
     await open();
+    expect(text()).toContain(
+      "Added to your product pages as written. Start each rule with .fitted-guide to style only the size guide.",
+    );
+    expect(text()).not.toContain("Applies only to the size guide");
     await type(byId("css"), "<style>");
     await click("Save");
     expect(heading()).toEqual(["Fix 1 field to save"]);

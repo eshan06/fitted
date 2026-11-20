@@ -713,7 +713,7 @@ function Editor(props: { loaded: Loaded; themeUrl: string }) {
               {text(
                 "css",
                 "Custom CSS",
-                "Applies only to the size guide. Fitted never runs custom code on your checkout.",
+                "Added to your product pages as written. Start each rule with .fitted-guide to style only the size guide.",
               )}
             </section>
           </>
