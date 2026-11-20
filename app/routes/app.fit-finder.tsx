@@ -1,6 +1,7 @@
-// Fit finder (ARCHITECTURE §7, §8, §15): the FitFinder board's settings half,
-// saved to `$app.settings` through App Bridge's save bar. Set up on any plan;
-// it goes live on Pro. The chart's questions, ease and preview are #126's.
+// Fit finder (ARCHITECTURE §7, §8, §10, §15): the FitFinder board, saved
+// through App Bridge's save bar: its settings to `$app.settings`, and each
+// chart's ease and stretch to that chart's `content.fit`. Set up on any plan;
+// it goes live on Pro.
 import { Suspense, useState, type ReactNode } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import {
@@ -17,7 +18,23 @@ import {
   AdminApiError,
   pricingPlansUrl,
 } from "../models/admin.server";
-import { listCharts } from "../models/chart.server";
+import {
+  ChartConflictError,
+  ChartNotFoundError,
+  ChartValidationError,
+  type StoredChart,
+  chartPages,
+  getChart,
+  updateChart,
+  validateChart,
+} from "../models/chart.server";
+import { STRETCH, type Fit } from "../lib/fit-finder";
+import {
+  type FitChart,
+  describe,
+  formatEase,
+  parseEase,
+} from "../components/fit-finder/chart-fit";
 import { getPlan } from "../models/billing.server";
 import {
   type FieldErrors,
@@ -59,15 +76,37 @@ const refusal = (code: string) => ({
   error: { code, message: COPY[code].slice(1).join(" ").replace("**", "") },
 });
 
+// Only a chart with `content.fit` has questions to show (§10).
+const fitChart = ({ id, updatedAt, name, chart }: StoredChart): FitChart[] => {
+  const c = chart?.content;
+  const table = c?.tables.find((t) => t.id === c.fit?.table);
+  if (!c?.fit || !table) return [];
+  const words = Object.entries(c.words).filter(
+    ([k]) => k.startsWith(`${table.id}.`) || k.startsWith("fit."),
+  );
+  const { columns, rows } = table;
+  return [
+    {
+      ...{ id, updatedAt, name, unit: c.unit, fit: c.fit },
+      table: { id: table.id, columns, rows },
+      words: Object.fromEntries(words),
+    },
+  ];
+};
+
 async function load(admin: Admin, shop: string) {
   try {
-    const [settings, { charts }, { plan }, plansUrl] = await Promise.all([
+    const all: StoredChart[] = [];
+    const [settings, { plan }, plansUrl] = await Promise.all([
       getSettings(admin),
-      listCharts(admin),
       getPlan(shop),
       pricingPlansUrl(admin, shop),
+      (async () => {
+        for await (const page of chartPages(admin)) all.push(...page);
+      })(),
     ]);
-    return { ...settings, plan, plansUrl, hasCharts: charts.length > 0 };
+    const charts = all.flatMap(fitChart);
+    return { ...settings, plan, plansUrl, hasCharts: all.length > 0, charts };
   } catch (err) {
     if (!(
       err instanceof SettingsReadWriteError || err instanceof AdminApiError
@@ -89,7 +128,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 // The screen sends the fit finder section whole, with the primary language's
-// "When no size fits". Everything else stays as stored.
+// "When no size fits", and the ease and stretch of each chart it changed.
+// Everything else stays as stored. A part already holding what was sent (a
+// retry after a partial save) is skipped, so a retry never reads as stale.
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const body = await request.json().catch(() => null);
@@ -103,20 +144,54 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       fitFinder: e.fitFinder,
       text: { ...s.text, [l]: { ...s.text[l], noFit: e.noFit } },
     };
+    // Every chart is checked before anything is written.
+    const writes: (() => Promise<unknown>)[] = [];
+    const sent = Array.isArray(body?.charts) ? body.charts.slice(0, 200) : [];
+    for (const { id, updatedAt, ease, stretch } of sent.map(Object)) {
+      const { chart, updatedAt: now } = await getChart(admin, id);
+      const fit = chart?.content.fit;
+      if (!fit) throw new ChartConflictError("The chart lost its questions");
+      const next = validateChart({
+        ...chart,
+        content: { ...chart.content, fit: { ...fit, ease, stretch } },
+      });
+      const key = (e: object) => JSON.stringify(Object.entries(e).sort());
+      if (stretch === fit.stretch && key(ease) === key(fit.ease)) continue;
+      // The chart's own conflict check (§5), here and again at its write.
+      if (now !== updatedAt)
+        throw new ChartConflictError("This chart changed since you opened it");
+      writes.push(() => updateChart(admin, id, next, updatedAt));
+    }
     const digest = typeof body?.digest === "string" ? body.digest : null;
-    await saveSettings(admin, { ...loaded, digest }, input);
+    if (JSON.stringify(input) !== JSON.stringify(s))
+      await saveSettings(admin, { ...loaded, digest }, input);
+    for (const write of writes) await write();
     return { ok: true as const };
   } catch (err) {
-    if (err instanceof SettingsValidationError) {
-      // The primary language's words go by the screen's name.
+    if (
+      err instanceof SettingsValidationError ||
+      err instanceof ChartValidationError
+    ) {
+      // Words and ease go by the screen's names.
       const fieldErrors: FieldErrors = {};
       for (const [path, message] of Object.entries(err.fieldErrors))
-        fieldErrors[path.replace(/^text\.[^.]+\.noFit$/, "noFit")] = message;
+        fieldErrors[
+          path
+            .replace(/^text\.[^.]+\.noFit$/, "noFit")
+            .replace(/^content\.fit\.ease(\..*)?$/, "ease")
+        ] = message;
       return data({ fieldErrors }, { status: 422 });
     }
-    if (err instanceof SettingsConflictError)
+    if (
+      err instanceof SettingsConflictError ||
+      err instanceof ChartConflictError ||
+      err instanceof ChartNotFoundError
+    )
       return data(refusal("conflict"), { status: 409 });
-    if (!(err instanceof SettingsReadWriteError)) throw err;
+    if (!(
+      err instanceof SettingsReadWriteError || err instanceof AdminApiError
+    ))
+      throw err;
     log(session.shop, err);
     return data(refusal("shopify"), { status: 502 });
   }
@@ -134,7 +209,11 @@ export default function FitFinder() {
           ) : !f.hasCharts ? (
             <Page body={<Empty />} />
           ) : (
-            <Editor key={f.digest ?? "new"} loaded={f} storeUrl={storeUrl} />
+            <Editor
+              key={[f.digest, ...f.charts.map((c) => c.updatedAt)].join()}
+              loaded={f}
+              storeUrl={storeUrl}
+            />
           )
         }
       </Await>
@@ -235,10 +314,31 @@ type Answer = {
   fieldErrors?: FieldErrors;
   error?: { code: string; message: string };
 };
-type Draft = { fitFinder: Settings["fitFinder"]; noFit: string };
+type Draft = {
+  fitFinder: Settings["fitFinder"];
+  noFit: string;
+  fits: Record<string, { ease: string; stretch: Fit["stretch"] }>; // by chart id
+};
 type Flag = keyof Omit<Settings["fitFinder"], "type" | "answers">;
 const PLAN_NAMES = { free: "Free", standard: "Standard", pro: "Pro" };
 const NO_FIT = "Enter a message for shoppers, up to 200 characters.";
+// Keyed by the engine's STRETCH, so the choices can't drift from it.
+const STRETCH_NAMES: Record<keyof typeof STRETCH, string> = {
+  none: "None",
+  some: "Some (linen blend)",
+  high: "High",
+};
+// The fix list's words for each marked field, in the canvas's order.
+const MARKS: Record<string, [string, string]> = {
+  ease: ["Ease", "doesn't start with a number"],
+  noFit: ["When no size fits", "is empty"],
+};
+const errorLine = (id: string, words: string) => (
+  <p id={`${id}-err`} className="help err">
+    <s-icon type="alert-circle" tone="critical" size="small" />
+    {words}
+  </p>
+);
 
 function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
   const fetcher = useFetcher<Answer>();
@@ -246,7 +346,15 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
   const [initial] = useState<Draft>(() => ({
     fitFinder: loaded.settings.fitFinder,
     noFit: loaded.settings.text[loaded.primaryLocale].noFit,
+    fits: Object.fromEntries(
+      loaded.charts.map((c) => [
+        c.id,
+        { ease: formatEase(c), stretch: c.fit.stretch },
+      ]),
+    ),
   }));
+  const [chartId, setChartId] = useState(loaded.charts[0]?.id);
+  const chart = loaded.charts.find((c) => c.id === chartId);
   const [draft, setDraft] = useState(initial);
   const [local, setLocal] = useState<Answer | null>(null);
   const [dismissed, setDismissed] = useState<Answer>();
@@ -258,10 +366,25 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
   const code = notice?.error?.code;
 
   const save = () => {
-    if (!draft.noFit.trim())
-      return setLocal({ fieldErrors: { noFit: "Missing" } });
+    const fieldErrors: FieldErrors = {};
+    const charts = [];
+    for (const c of loaded.charts) {
+      const { ease: text, stretch } = draft.fits[c.id];
+      const was = initial.fits[c.id];
+      if (text === was.ease && stretch === was.stretch) continue;
+      const ease = text === was.ease ? c.fit.ease : parseEase(c, text);
+      if (!ease) {
+        fieldErrors.ease = "Missing";
+        setChartId(c.id);
+        break;
+      }
+      charts.push({ id: c.id, updatedAt: c.updatedAt, ease, stretch });
+    }
+    if (!draft.noFit.trim()) fieldErrors.noFit = "Missing";
+    if (Object.keys(fieldErrors).length) return setLocal({ fieldErrors });
     setLocal(null);
-    fetcher.submit({ digest: loaded.digest, edits: draft } as never, {
+    const edits = { fitFinder: draft.fitFinder, noFit: draft.noFit };
+    fetcher.submit({ digest: loaded.digest, edits, charts } as never, {
       method: "post",
       encType: "application/json",
     });
@@ -273,6 +396,12 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
   const put = (patch: Partial<Draft["fitFinder"]>) =>
     setDraft((d) => ({ ...d, fitFinder: { ...d.fitFinder, ...patch } }));
   const f = draft.fitFinder;
+  const own = chart && draft.fits[chart.id];
+  const putFit = (patch: Partial<Draft["fits"][string]>) =>
+    setDraft((d) => ({
+      ...d,
+      fits: { ...d.fits, [chart!.id]: { ...d.fits[chart!.id], ...patch } },
+    }));
   const box = (id: Flag, label: string) => (
     <label className="choice">
       <input
@@ -320,18 +449,18 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
           <ul className="list">
             {marked.map((id) => (
               <li key={id}>
-                {id === "noFit" ? (
+                {MARKS[id] ? (
                   <>
                     <a
-                      href="#noFit"
+                      href={`#${id}`}
                       onClick={(e) => {
                         e.preventDefault();
-                        document.getElementById("noFit")?.focus();
+                        document.getElementById(id)?.focus();
                       }}
                     >
-                      When no size fits
+                      {MARKS[id][0]}
                     </a>{" "}
-                    is empty
+                    {MARKS[id][1]}
                   </>
                 ) : (
                   `${id}: ${errors[id]}`
@@ -426,8 +555,88 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
                     <option value="sliders">Sliders</option>
                   </select>
                 </label>
+                {own && (
+                  <>
+                    <div>
+                      <label>
+                        Ease
+                        <input
+                          id="ease"
+                          className={errors.ease ? "field bad" : "field"}
+                          aria-invalid={errors.ease ? true : undefined}
+                          aria-describedby={
+                            errors.ease ? "ease-err" : undefined
+                          }
+                          value={own.ease}
+                          onChange={(e) => putFit({ ease: e.target.value })}
+                        />
+                      </label>
+                      {errors.ease &&
+                        errorLine(
+                          "ease",
+                          "Start with a number, like +2 in at bust.",
+                        )}
+                    </div>
+                    <label>
+                      Stretch
+                      <select
+                        className="field"
+                        value={own.stretch}
+                        onChange={(e) =>
+                          putFit({
+                            stretch: e.target.value as Fit["stretch"],
+                          })
+                        }
+                      >
+                        {Object.entries(STRETCH_NAMES).map(([v, name]) => (
+                          <option key={v} value={v}>
+                            {name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </>
+                )}
               </div>
             </section>
+
+            {chart && (
+              <section className="card" aria-labelledby="h-qs">
+                <div className="row">
+                  <h2 id="h-qs">Questions</h2>
+                  <label>
+                    Recommend sizes from
+                    <select
+                      className="field"
+                      value={chart.id}
+                      onChange={(e) => setChartId(e.target.value)}
+                    >
+                      {loaded.charts.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <ol className="qs">
+                  {chart.fit.questions.map((q, i) => {
+                    const d = describe(chart, q);
+                    return (
+                      <li key={q.id}>
+                        <span className="num" aria-hidden="true">
+                          {i + 1}
+                        </span>
+                        <span>
+                          <strong>{d.words}</strong>
+                          <span className="help">{d.kind}</span>
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ol>
+              </section>
+            )}
 
             <section className="card" aria-labelledby="h-result">
               <h2 id="h-result">Result screen</h2>
@@ -462,12 +671,7 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
                     }
                   />
                 </label>
-                {errors.noFit && (
-                  <p id="noFit-err" className="help err">
-                    <s-icon type="alert-circle" tone="critical" size="small" />
-                    {NO_FIT}
-                  </p>
-                )}
+                {errors.noFit && errorLine("noFit", NO_FIT)}
               </div>
             </section>
           </>

@@ -51,3 +51,35 @@
 .fit-finder .empty .help {
   max-width: 460px;
 }
+.fit-finder ol.qs {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.fit-finder .qs li {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px;
+  border: 1px solid #e1e3e5;
+  border-radius: 10px;
+}
+.fit-finder .qs strong,
+.fit-finder .qs .help {
+  display: block;
+}
+.fit-finder .num {
+  width: 1.625rem;
+  height: 1.625rem;
+  flex: none;
+  border-radius: 999px;
+  background: #e9eef9;
+  color: #1f3d8f;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+}
