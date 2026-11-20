@@ -105,6 +105,23 @@ describe("plan gates", () => {
   );
 });
 
+describe("lastConfirmedPlan", () => {
+  it("gives the session's shop's last confirmed plan and when, or Free and null", async () => {
+    findUnique.mockResolvedValueOnce(row("standard", 90));
+    await expect(billing.lastConfirmedPlan(shop)).resolves.toEqual({
+      plan: "standard",
+      at: new Date(now.getTime() - 90 * 60_000),
+    });
+    expect(findUnique).toHaveBeenCalledWith({ where: { shop } });
+
+    findUnique.mockResolvedValueOnce(null); // never confirmed, or uninstalled
+    await expect(billing.lastConfirmedPlan(shop)).resolves.toEqual({
+      plan: "free",
+      at: null,
+    });
+  });
+});
+
 describe("getPlan", () => {
   it("serves a plan confirmed under 5 minutes ago from the cache", async () => {
     findUnique.mockResolvedValue(row("standard", 4.9));

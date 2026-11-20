@@ -86,6 +86,14 @@ export async function getPlan(
   return next.result;
 }
 
+/** The shop's last confirmed plan and when, for the plan-check banner: Free and null if never. */
+export async function lastConfirmedPlan(
+  shop: string,
+): Promise<{ plan: Plan; at: Date | null }> {
+  const row = await db.shop.findUnique({ where: { shop } });
+  return { plan: toPlan(row?.plan), at: row?.planCheckedAt ?? null };
+}
+
 /**
  * For app/uninstalled: the shop starts over on Free, unconfirmed and not on the
  * store, so a reinstall checks at once and writes `$app.plan` again, and reads
