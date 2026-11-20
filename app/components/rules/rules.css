@@ -1,0 +1,75 @@
+/* The Rules board's look (Fitted canvas), on top of the editor's shared styles. */
+.editor h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+.editor .lead {
+  margin: 6px 0 0;
+  font-weight: 600;
+}
+.editor .cond,
+.editor .ranks li,
+.editor .check {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
+  border-radius: 10px;
+}
+.editor .cond {
+  background: #f7f7f8;
+}
+.editor .cond .field {
+  flex: 1 1 140px;
+  width: auto;
+  margin: 0;
+}
+.editor .cond input[aria-label="Value"],
+.editor .picked {
+  flex: 2 1 180px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.editor .cond button,
+.editor .ranks button,
+.editor a.button {
+  font: inherit;
+  font-weight: 600;
+  border: 1px solid #c9cccf;
+  border-radius: 8px;
+  background: #fff;
+  color: #202223;
+  padding: 2px 10px;
+}
+.editor .ranks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.editor .ranks li {
+  margin-top: 8px;
+  border: 1px solid #e1e3e5;
+}
+.editor .ranks .name {
+  flex: 1;
+  text-align: start;
+  border: 0;
+}
+.editor .ranks [aria-pressed="true"] {
+  text-decoration: underline;
+}
+.editor .empty {
+  align-items: center;
+  text-align: center;
+  padding: 48px 24px;
+}
+.editor a.button {
+  background: #202223;
+  color: #fff;
+  padding: 8px 14px;
+}
+.editor .check .help {
+  display: block;
+}

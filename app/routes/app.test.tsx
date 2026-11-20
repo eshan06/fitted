@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App, { loader } from "./app";
 import Home from "./app._index";
 import Import from "./app.import";
-import DisplayRules from "./app.rules";
 import FitFinder from "./app.fit-finder";
 import Appearance from "./app.appearance";
 
@@ -76,7 +75,6 @@ describe("placeholder screens", () => {
   it.each([
     ["Home", Home],
     ["Import charts", Import],
-    ["Display rules", DisplayRules],
     ["Fit finder", FitFinder],
     ["Appearance & languages", Appearance],
   ])("%s is an empty page with the canvas's title", (title, Screen) => {
