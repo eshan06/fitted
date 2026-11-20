@@ -114,6 +114,7 @@ describe("loading Home", () => {
       plansUrl: PLANS,
       charts: 3,
       active: 2,
+      limit: null,
       rows: [
         {
           id: "gid://shopify/Metaobject/3",
@@ -149,6 +150,21 @@ describe("loading Home", () => {
     expect(home.rows.map((r) => r.name)).toEqual(
       [6, 5, 4, 3, 2].map((n) => `Chart ${n}`),
     );
+  });
+
+  it("flags Free at 3 published charts, and no other plan", async () => {
+    const three = () =>
+      pages([1, 2, 3, 4].map((n) => stored(n, n < 4 ? "ACTIVE" : "DRAFT")));
+    m.getPlan.mockResolvedValue({ plan: "free", checkFailed: false });
+    m.chartPages.mockReturnValue(three());
+    expect(await (await load()).home).toMatchObject({ active: 3, limit: 3 });
+
+    m.chartPages.mockReturnValue(pages([stored(1, "ACTIVE")]));
+    expect(await (await load()).home).toMatchObject({ limit: null });
+
+    m.getPlan.mockResolvedValue({ plan: "standard", checkFailed: false });
+    m.chartPages.mockReturnValue(three());
+    expect(await (await load()).home).toMatchObject({ limit: null });
   });
 
   it("answers a failed Shopify call with the error state and logs the detail", async () => {
@@ -188,6 +204,7 @@ describe("the screen", () => {
     plansUrl: PLANS,
     charts: 4,
     active: 3,
+    limit: null,
     rows: [
       {
         id: "gid://shopify/Metaobject/1",
@@ -318,7 +335,7 @@ describe("the screen", () => {
   });
 
   it("shows Free at its limit", async () => {
-    const el = await show(Promise.resolve({ ...OK, plan: "free" }));
+    const el = await show(Promise.resolve({ ...OK, plan: "free", limit: 3 }));
     expect(banner(el)).toBe("Free plan: 3 of 3 published charts");
     expect(text(el)).toContain(
       "Drafts don't count. To publish a 4th, set one to Draft or move to Standard, $9 a month.",

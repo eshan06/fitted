@@ -39,6 +39,7 @@ export type HomeData =
       plansUrl: string;
       charts: number;
       active: number;
+      limit: number | null; // Free's limit of published charts, once reached
       rows: HomeRow[];
       products: { all: N; covered: N; missing: string[] };
     }
@@ -58,11 +59,16 @@ async function loadHome(admin: Admin, shop: string): Promise<HomeData> {
       getPlan(shop),
       pricingPlansUrl(admin, shop),
     ]);
+    const active = charts.filter((c) => c.status === "ACTIVE").length;
     return {
       plan,
       plansUrl,
       charts: charts.length,
-      active: charts.filter((c) => c.status === "ACTIVE").length,
+      active,
+      limit:
+        plan === "free" && active >= FREE_ACTIVE_CHARTS
+          ? FREE_ACTIVE_CHARTS
+          : null,
       rows: charts
         .map((c) => ({
           id: c.id,
@@ -241,17 +247,18 @@ function PlanBanner({
   plan,
   plansUrl,
   active,
+  limit,
 }: Extract<HomeData, { plan: unknown }>) {
   const link = (
     <s-link href={plansUrl} target="_top">
       Change plan
     </s-link>
   );
-  if (plan === "free" && active >= FREE_ACTIVE_CHARTS)
+  if (limit)
     return (
       <s-banner
         tone="info"
-        heading={`Free plan: ${active} of ${FREE_ACTIVE_CHARTS} published charts`}
+        heading={`Free plan: ${active} of ${limit} published charts`}
       >
         <s-stack gap="small-200">
           <s-paragraph>
