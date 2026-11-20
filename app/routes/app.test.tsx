@@ -147,6 +147,12 @@ describe("admin shell", () => {
       "/app/charts?embedded=1&host=abc",
     );
     expect(m.getPlan).toHaveBeenCalledExactlyOnceWith(SHOP, { recheck: true });
+
+    // A path that would read as another host stays on the app.
+    const offsite = await load(
+      "https://fitted.test//evil.test/app?plan_handle=pro",
+    ).catch((r) => r);
+    expect(offsite.headers.get("Location")).toBe("/evil.test/app");
   });
 
   // Only the shell's own loader: a screen that adds a loader authenticates in
