@@ -229,8 +229,12 @@ const Loading = () => (
   </div>
 );
 
-const button = (label: string, onClick: () => void) => (
-  <s-button slot="secondary-actions" onClick={onClick}>
+const button = (label: string, onClick: () => void, disabled = false) => (
+  <s-button
+    slot="secondary-actions"
+    onClick={onClick}
+    disabled={disabled || undefined}
+  >
     {label}
   </s-button>
 );
@@ -540,7 +544,7 @@ function Editor(props: { loaded: Loaded; themeUrl: string }) {
       ) : (
         code && (
           <Banner copy={COPY.shopify}>
-            {button("Try saving again", save)}
+            {button("Try saving again", save, fontUpload.sending)}
           </Banner>
         )
       )}

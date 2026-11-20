@@ -868,6 +868,25 @@ describe("font upload screen", () => {
     expect(store.value!.text.en.label).toBe("Fit guide");
   });
 
+  it("holds Try saving again while a font uploads", async () => {
+    await open();
+    await type(byId("label"), "Fit guide");
+    store.down = true;
+    await click("Save");
+    store.down = false;
+    const upload = holdUpload();
+    await type(labelled("Font"), "upload");
+    await choose(font("Sora-Regular.woff2"));
+    const retry = () =>
+      [...document.querySelectorAll("s-button")].find(
+        (b) => b.textContent === "Try saving again",
+      )!;
+    expect(retry().hasAttribute("disabled")).toBe(true);
+    upload.release();
+    await settle();
+    expect(retry().hasAttribute("disabled")).toBe(false);
+  });
+
   it("drops an upload when Match my theme is picked while it runs", async () => {
     const upload = holdUpload();
     await open();
