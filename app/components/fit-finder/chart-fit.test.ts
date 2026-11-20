@@ -195,6 +195,14 @@ group("how Fitted picks a size", () => {
     ]);
   });
 
+  it("names a one-size chart's size once", () => {
+    const c = named();
+    c.table = { ...c.table, rows: c.table.rows.slice(0, 1) };
+    expect(howItPicks(c)[1]).toBe(
+      "Between two sizes, pick the larger one, or the smaller for a snug fit. Otherwise, relaxed fit moves one size up and snug fit one size down, never past XS.",
+    );
+  });
+
   // The fit line says what findSize does: a relaxed pick between M and L is L, not XL.
   it("matches findSize, which never moves a pick that falls between two sizes", () => {
     const c = named({ bust: 1.25 }); // 37.5 in + 1.25 is between M (37-38) and L (39-40)

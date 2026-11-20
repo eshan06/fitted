@@ -130,9 +130,11 @@ export function howItPicks(c: FitChart) {
       `Match the shopper's ${and(cols)} measurements to the ${c.name} chart. The largest size wins.`,
     );
   else if (usual) lines.push("Start from the size they usually wear.");
+  // A one-size chart names its size once.
+  const ends = [...new Set([c.table.rows[0], c.table.rows.at(-1)!])];
   if (qs.some((q) => q.kind === "fit"))
     lines.push(
-      `Between two sizes, pick the larger one, or the smaller for a snug fit. Otherwise, relaxed fit moves one size up and snug fit one size down, never past ${size(c, c.table.rows[0].id)} or ${size(c, c.table.rows.at(-1)!.id)}.`,
+      `Between two sizes, pick the larger one, or the smaller for a snug fit. Otherwise, relaxed fit moves one size up and snug fit one size down, never past ${ends.map((r) => size(c, r.id)).join(" or ")}.`,
     );
   if (cols.length && usual)
     lines.push("No measurement? Start from the size they usually wear.");
