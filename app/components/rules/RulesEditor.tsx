@@ -122,6 +122,7 @@ export function RulesEditor(props: {
     setBase({ digest: loaded.digest, initial });
     setDraft(initial);
     setDismissed(fetcher.data);
+    setNames((n) => ({ ...n, ...loaded.names }));
   }
   // A server answer marking another chart's condition opens that chart.
   const [shown, setShown] = useState<Answer>();
@@ -173,10 +174,10 @@ export function RulesEditor(props: {
       ? selected
       : (draft.order[0] ?? loaded.charts[0].id);
   const rule = draft.charts[current] ?? NONE;
-  // The chart on screen's matches, again once a resolve ends.
+  // The chart on screen's matches, again when a resolve starts or ends.
   const { load: show } = preview;
   useEffect(() => {
-    if (!applying) show(`/app/rules?preview=${encodeURIComponent(current)}`);
+    show(`/app/rules?preview=${encodeURIComponent(current)}`);
   }, [current, applying, show]);
 
   const setRule = (id: string, next: Rule) =>

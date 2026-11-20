@@ -256,6 +256,7 @@ describe("loading display rules", () => {
         "Women's tops: must be true or false",
         "Not in the priority list",
       ],
+      names: {},
     });
   });
 

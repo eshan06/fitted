@@ -245,7 +245,10 @@ describe("display rules screen", () => {
     const newer = ranked();
     newer.order = [B, A];
     const { loader } = await open(
-      [edit(ranked()), edit(newer, "d2")],
+      [
+        edit(ranked()),
+        edit(newer, "d2", null, { names: { [P]: "Linen wrap top" } }),
+      ],
       [{ status: 409, body: { error: { code: "conflict" } } }],
     );
     await act(async () =>
@@ -260,6 +263,11 @@ describe("display rules screen", () => {
     expect(headings()).toEqual([]);
     expect(buttons("1. Shoes")).toHaveLength(1);
     expect(saveBar()).toBeNull();
+    // Its picks come by name too.
+    await click(buttons("2. Women's tops")[0]);
+    expect(document.querySelector(".picked")?.textContent).toContain(
+      "Linen wrap top",
+    );
   });
 
   it("keeps the edits when Shopify fails and tries again", async () => {
@@ -637,6 +645,28 @@ describe("matches, counts and names", () => {
     expect(list).toContain("2. ShoesEverything else");
     await click(buttons("2. Shoes")[0]);
     expect(matches()?.textContent).toBe("0 products match");
+  });
+
+  it("previews the chart on screen while a resolve runs, never the last one's", async () => {
+    const card = (count: number) => ({
+      count,
+      atLeast: false,
+      products: [],
+      url: "u",
+    });
+    const running = job("running", 5);
+    await open([edit(ranked(), "d1", null, { job: running })], [], [running], {
+      [A]: card(148),
+      [B]: card(212),
+    });
+    expect(headings()).toEqual(["Applying your rules to 340 products"]);
+    expect(matches()?.querySelector("h2")?.textContent).toBe(
+      "148 products match",
+    );
+    await click(buttons("2. Shoes")[0]);
+    expect(matches()?.querySelector("h2")?.textContent).toBe(
+      "212 products match",
+    );
   });
 
   it("leaves the matches card out when Shopify gives no preview", async () => {
