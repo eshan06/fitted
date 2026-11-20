@@ -15,6 +15,7 @@ const m = vi.hoisted(() => ({
   getPlan: vi.fn(),
   pricingPlansUrl: vi.fn(),
   resolveIfStale: vi.fn(),
+  extensions: vi.fn(),
 }));
 vi.mock("../shopify.server", () => ({
   authenticate: { admin: m.authenticate },
@@ -36,6 +37,8 @@ vi.mock("../models/billing.server", async (orig) => ({
   ...(await orig<typeof import("../models/billing.server")>()),
   getPlan: m.getPlan,
 }));
+const bridge = { app: { extensions: m.extensions } };
+vi.mock("@shopify/app-bridge-react", () => ({ useAppBridge: () => bridge }));
 const { default: Home, loader } = await import("./app._index");
 type Data = Awaited<Awaited<ReturnType<typeof loader>>["home"]>;
 type Ok = Extract<Data, { plan: unknown }>;
@@ -70,6 +73,7 @@ const load = async () =>
 let logs: string[];
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.stubEnv("SHOPIFY_API_KEY", "key123");
   logs = [];
   vi.spyOn(console, "log").mockImplementation((line) => logs.push(line));
   m.authenticate.mockResolvedValue({ admin, session: { shop: SHOP } });
@@ -86,17 +90,26 @@ beforeEach(() => {
       ids.map((id) => [id, N(Number(id.split("/").pop()) * 10)]),
     ),
   );
+  m.extensions.mockResolvedValue([]);
 });
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
+const THEME_ON = [
+  {
+    handle: "size-guide",
+    type: "theme_app_extension",
+    activations: [{ handle: "size-guide", status: "active" }],
+  },
+];
 
 describe("loading Home", () => {
   it("reads the charts, counts, plan and coverage for the session's shop", async () => {
     m.chartPages.mockReturnValue(
       pages(
         [
-          stored(1, "ACTIVE"),
+          stored(1, "ACTIVE", { handle: "i-7-0" }),
           stored(2, "DRAFT", {
             name: "",
             chart: undefined,
@@ -112,9 +125,13 @@ describe("loading Home", () => {
     expect(await home).toEqual({
       plan: "standard",
       plansUrl: PLANS,
+      themeUrl:
+        "https://admin.shopify.com/store/fitted-dev/themes/current/editor?template=product&addAppBlockId=key123/size-guide&target=mainSection",
       charts: 3,
       active: 2,
       limit: null,
+      imported: 1,
+      fitLive: false,
       rows: [
         {
           id: "gid://shopify/Metaobject/3",
@@ -193,6 +210,21 @@ describe("loading Home", () => {
     expect(m.chartPages).not.toHaveBeenCalled();
     expect(m.resolveIfStale).not.toHaveBeenCalled();
   });
+
+  it("finds a live fit finder only on Pro with a published chart that has one", async () => {
+    const fit = { chart: { content: { fit: {} } } as never };
+    const charts = () =>
+      pages([stored(1, "ACTIVE", fit), stored(2, "DRAFT", fit)]);
+    m.chartPages.mockReturnValue(charts());
+    expect(await (await load()).home).toMatchObject({ fitLive: false });
+
+    m.getPlan.mockResolvedValue({ plan: "pro", checkFailed: false });
+    m.chartPages.mockReturnValue(charts());
+    expect(await (await load()).home).toMatchObject({ fitLive: true });
+
+    m.chartPages.mockReturnValue(pages([stored(2, "DRAFT", fit)]));
+    expect(await (await load()).home).toMatchObject({ fitLive: false });
+  });
 });
 
 describe("the screen", () => {
@@ -202,9 +234,12 @@ describe("the screen", () => {
   const OK: Ok = {
     plan: "standard",
     plansUrl: PLANS,
+    themeUrl: "https://admin.shopify.com/theme",
     charts: 4,
     active: 3,
     limit: null,
+    imported: 12,
+    fitLive: false,
     rows: [
       {
         id: "gid://shopify/Metaobject/1",
@@ -395,6 +430,162 @@ describe("the screen", () => {
     expect(
       el.querySelector('s-section[accessibilityLabel*="size guide"]'),
     ).toBeNull();
+  });
+
+  it("shows the returning merchant's setup guide, three of four done", async () => {
+    m.extensions.mockResolvedValue(THEME_ON);
+    const el = await show(Promise.resolve(OK));
+    const t = text(el);
+    expect(
+      el.querySelector('s-section[heading="Setup guide"]')?.textContent,
+    ).toMatch(/^3 of 4 done/);
+    expect(t).toContain(
+      "Turn on Fitted in your themeThe size guide app embed is on in your live theme.",
+    );
+    expect(t).toContain(
+      "Move your charts from Kiwi12 charts imported. You can uninstall Kiwi once you've checked them.",
+    );
+    expect(t).toContain(
+      "Choose which products show each chart312 of 340 products have a size guide.",
+    );
+    expect(t).toContain(
+      "Add a fit finderHelp shoppers pick a size in three quick questions. Part of Pro, $15 a month.",
+    );
+    expect(t.indexOf("Turn on Fitted")).toBeLessThan(t.indexOf("Move your"));
+    expect(button(el, "Upgrade to Pro")?.getAttribute("href")).toBe(
+      "/app/fit-finder",
+    );
+    expect(button(el, "Open theme editor")).toBeUndefined();
+    expect(t).not.toContain("Setup guide: all done");
+  });
+
+  it("offers the theme editor while the theme check hasn't found Fitted, or fails", async () => {
+    for (const answer of [
+      async () => [{ ...THEME_ON[0], activations: [{ status: "available" }] }],
+      async () => {
+        throw new Error("no bridge");
+      },
+    ]) {
+      m.extensions.mockImplementation(answer);
+      const el = await show(Promise.resolve(OK));
+      expect(text(el)).toContain(
+        "One switch in your theme editor. We'll take you there.",
+      );
+      const open = button(el, "Open theme editor");
+      expect(open?.getAttribute("href")).toBe(OK.themeUrl);
+      expect(open?.getAttribute("target")).toBe("_top");
+      expect(text(el)).toContain("2 of 4 done");
+    }
+  });
+
+  it("names the next step when products or the fit finder aren't done", async () => {
+    const el = await show(
+      Promise.resolve({
+        ...OK,
+        plan: "pro",
+        imported: 0,
+        products: { all: N(340), covered: N(0), missing: ["Socks"] },
+      }),
+    );
+    const t = text(el);
+    expect(t).toContain(
+      "Add your first chartShoppers see a size guide on any product that has a chart.",
+    );
+    expect(t).not.toContain("Import charts");
+    expect(t).toContain("Match by collection, tag, product type or vendor.");
+    expect(
+      [...el.querySelectorAll('s-button[href="/app/rules"]')].map(
+        (b) => b.textContent,
+      ),
+    ).toEqual(["Add a display rule", "Add a display rule"]);
+    expect(t).toContain(
+      "Add a fit finderHelp shoppers pick a size in three quick questions.Set up fit finder",
+    );
+    expect(button(el, "Set up fit finder")?.getAttribute("href")).toBe(
+      "/app/fit-finder",
+    );
+    expect(t).toContain("1 of 4 done");
+  });
+
+  it("counts one imported chart in the singular", async () => {
+    const el = await show(Promise.resolve({ ...OK, imported: 1 }));
+    expect(text(el)).toContain(
+      "1 chart imported. You can uninstall Kiwi once you've checked them.",
+    );
+  });
+
+  it("shows the first install's three ways to add a chart, first", async () => {
+    const el = await show(
+      Promise.resolve({
+        ...OK,
+        plan: "free",
+        charts: 0,
+        active: 0,
+        imported: 0,
+        rows: [],
+        products: { all: N(340), covered: N(0), missing: [] },
+      }),
+    );
+    const t = text(el);
+    expect(t).toContain("0 of 4 done");
+    expect(t.indexOf("Add your first chart")).toBeLessThan(
+      t.indexOf("Turn on Fitted in your theme"),
+    );
+    expect(t).toContain(
+      "Import from KiwiWe read the charts your store shows today. Free on every plan.Import charts",
+    );
+    expect(t).toContain(
+      "Start from a templateTops, bottoms, dresses, shoes, kids and more.Choose a template",
+    );
+    expect(t).toContain(
+      "Upload a CSVUse our template or any spreadsheet export.Upload CSV",
+    );
+    expect(
+      ["Import charts", "Choose a template", "Upload CSV"].map((l) => [
+        button(el, l)?.getAttribute("href"),
+        button(el, l)?.getAttribute("variant"),
+      ]),
+    ).toEqual([
+      ["/app/import", "primary"],
+      ["/app/charts/new", "secondary"],
+      ["/app/import", "secondary"],
+    ]);
+    expect(t).toContain(
+      "Add a fit finderHelp shoppers pick a size in three quick questions. Part of Pro, $15 a month.",
+    );
+    expect(button(el, "Add a display rule")).toBeUndefined();
+    expect(button(el, "Upgrade to Pro")).toBeUndefined();
+    expect(button(el, "Open theme editor")?.getAttribute("href")).toBe(
+      OK.themeUrl,
+    );
+  });
+
+  it("folds the setup guide when Pro is all set up, and shows the steps again", async () => {
+    m.extensions.mockResolvedValue(THEME_ON);
+    const el = await show(
+      Promise.resolve({
+        ...OK,
+        plan: "pro",
+        fitLive: true,
+        products: { all: N(340), covered: N(340), missing: [] },
+      }),
+    );
+    expect(text(el)).toContain(
+      "Setup guide: all doneEvery product has a size guide, and the fit finder is live.Show steps",
+    );
+    expect(text(el)).not.toContain("4 of 4 done");
+    await act(async () => button(el, "Show steps")?.click());
+    expect(text(el)).toContain("4 of 4 done");
+    expect(text(el)).not.toContain("Setup guide: all done");
+  });
+
+  it("keeps the guide open while a product has no chart, even with every step done", async () => {
+    m.extensions.mockResolvedValue(THEME_ON);
+    const el = await show(
+      Promise.resolve({ ...OK, plan: "pro", fitLive: true }),
+    );
+    expect(text(el)).toContain("4 of 4 done");
+    expect(text(el)).not.toContain("Setup guide: all done");
   });
 
   it("shows the loading state, then the error with Try again that reloads", async () => {
