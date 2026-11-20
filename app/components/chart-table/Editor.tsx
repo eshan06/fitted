@@ -106,7 +106,14 @@ export function Editor(props: {
       .leaveConfirmation()
       .then(() => shopify.saveBar.hide(SAVE_BAR))
       .then(() => live && blocker.proceed())
-      .catch(() => live && blocker.reset());
+      .catch(() => {
+        if (!live) return;
+        blocker.reset();
+        shopify.toast.show(
+          "Couldn't leave this page. Save or discard your edits, then try again.",
+          { isError: true },
+        );
+      });
     return () => {
       live = false;
     };

@@ -10,6 +10,7 @@ vi.mock("../../shopify.server", () => ({ authenticate: { admin: vi.fn() } }));
 vi.mock("../../db.server", () => ({ default: {} }));
 const bridge = vi.hoisted(() => ({
   saveBar: { leaveConfirmation: vi.fn(), hide: vi.fn() },
+  toast: { show: vi.fn() },
 }));
 // The save bar is App Bridge's; here it renders its buttons in place.
 vi.mock("@shopify/app-bridge-react", () => ({
@@ -949,6 +950,19 @@ describe("chart editor screen", () => {
     await follow("Size charts");
     await follow("Size charts");
     expect(bridge.saveBar.leaveConfirmation).toHaveBeenCalledTimes(2);
+    expect(byLabel("XS, Bust").value).toBe("30–32");
+    expect(text()).not.toContain("Left for");
+  });
+
+  it("says so when the admin can't check before leaving, and keeps the edits", async () => {
+    bridge.saveBar.leaveConfirmation.mockRejectedValue(new Error("no admin"));
+    await open([stored()]);
+    await type(byLabel("XS, Bust"), "30–32");
+    await follow("Size charts");
+    expect(bridge.toast.show).toHaveBeenCalledWith(
+      "Couldn't leave this page. Save or discard your edits, then try again.",
+      { isError: true },
+    );
     expect(byLabel("XS, Bust").value).toBe("30–32");
     expect(text()).not.toContain("Left for");
   });
