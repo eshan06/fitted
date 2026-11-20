@@ -266,9 +266,13 @@ const Mark = ({ done }: { done: boolean }) => (
 function SetupGuide({ steps }: { steps: Step[] }) {
   const done = steps.filter((s) => s.done).length;
   return (
-    <s-section heading="Setup guide">
+    // Headed inside the card, count beside it, as the canvas draws it.
+    <s-section accessibilityLabel="Setup guide">
       <s-stack gap="base">
-        <s-text color="subdued">{`${done} of ${steps.length} done`}</s-text>
+        <s-grid gridTemplateColumns="1fr auto" gap="base" alignItems="center">
+          <s-heading>Setup guide</s-heading>
+          <s-text color="subdued">{`${done} of ${steps.length} done`}</s-text>
+        </s-grid>
         <div
           aria-hidden="true" // the count above says it
           style={{ height: 6, borderRadius: 999, background: "#E4E5E7" }}

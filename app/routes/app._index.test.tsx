@@ -437,8 +437,13 @@ describe("the screen", () => {
     const el = await show(Promise.resolve(OK));
     const t = text(el);
     expect(
-      el.querySelector('s-section[heading="Setup guide"]')?.textContent,
-    ).toMatch(/^3 of 4 done/);
+      el.querySelector('s-section[accessibilityLabel="Setup guide"]')
+        ?.textContent,
+    ).toMatch(/^Setup guide3 of 4 done/);
+    expect(
+      el.querySelector('s-section[accessibilityLabel="Setup guide"] s-heading')
+        ?.textContent,
+    ).toBe("Setup guide");
     expect(t).toContain(
       "Turn on Fitted in your themeThe size guide app embed is on in your live theme.",
     );
