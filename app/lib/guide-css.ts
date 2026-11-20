@@ -74,7 +74,7 @@ export const tableCss = /* @__PURE__ */ [
   ".fitted-measure{display:flex;flex-wrap:wrap;gap:16px 20px;align-items:flex-start}",
   ".fitted-measure img{flex:0 0 35%;min-width:0;max-width:240px;height:auto}",
   ".fitted-dialog .fitted-steps{display:flex;flex:1 1 12em;flex-direction:column;gap:12px;max-width:60ch;margin:0;padding:0;padding-inline-start:20px;font-size:15px;line-height:1.6;list-style:decimal}",
-  ".fitted-dialog .fitted-steps li{margin:0}",
+  ".fitted-dialog .fitted-steps li{margin:0;white-space:pre-line}",
   ".fitted-fit{--fitted-edge:color-mix(in srgb,var(--fitted-text) 62%,var(--fitted-bg));display:flex;flex-wrap:wrap;gap:14px 12px;margin:0}",
   ".fitted-fit>*{flex:1 1 100%;margin:0}",
   ".fitted-fit>label{display:flex;flex:1 1 160px;flex-direction:column;gap:6px;font-size:14px;font-weight:600}",

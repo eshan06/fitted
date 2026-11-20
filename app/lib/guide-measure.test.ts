@@ -10,6 +10,7 @@ const en = JSON.parse(
 
 const words = {
   "t1.m.size": "M",
+  "t1.bust": "Bust",
   "m.b.name": "Bust",
   "m.b.text":
     "Measure around the fullest part of your chest, keeping the tape level.",
@@ -28,7 +29,8 @@ const fit = {
   ease: {},
   stretch: "none",
 };
-// What the data snippet prints (§9), with the chart's measure as given.
+// What the data snippet prints (§9), with the chart's measure as given. Its
+// bust converts, so the in/cm switch shows.
 const data = (
   over: Record<string, unknown> = {},
   measure: unknown = { steps: ["b", "w", "h"] },
@@ -42,8 +44,11 @@ const data = (
       tables: [
         {
           id: "t1",
-          columns: [{ id: "size", kind: "size" }],
-          rows: [{ id: "m", cells: {} }],
+          columns: [
+            { id: "size", kind: "size" },
+            { id: "bust", kind: "measure", convert: true },
+          ],
+          rows: [{ id: "m", cells: { bust: [35, 36] } }],
         },
       ],
       measure,
@@ -153,6 +158,28 @@ describe("How to measure", () => {
     ]);
   });
 
+  it("leaves out a step left blank, the others keeping their lines' numbers", () => {
+    const root = open(data({}, { steps: ["x", "b", "y", "h"] }));
+    expect(steps(root)).toEqual([
+      `Bust. Line 2 on the drawing. ${words["m.b.text"]}`,
+      `Hips. Line 4. ${words["m.h.text"]}`,
+    ]);
+    const numbers = [...root.querySelectorAll(".fitted-steps li")].map((li) =>
+      li.getAttribute("value"),
+    );
+    expect(numbers).toEqual(["2", "4"]);
+    // A name or a text alone is still a step.
+    const half = open(data({ strings: { "m.b.text": "", "m.w.name": "" } }));
+    expect(steps(half)).toEqual([
+      "Bust. Line 1 on the drawing.",
+      `Line 2. ${words["m.w.text"]}`,
+      `Hips. Line 3. ${words["m.h.text"]}`,
+    ]);
+    // Blank steps and no drawing: nothing to show.
+    const blank = open(data({ measureImage: null }, { steps: ["x", "y"] }));
+    expect(blank.querySelector(".fitted-tabs, .fitted-measure")).toBeNull();
+  });
+
   it.each([
     ["no steps", { steps: [] }],
     ["a measure that isn't one", null],
@@ -199,6 +226,15 @@ describe("How to measure", () => {
     expect(shown(pane(root))).toBe(false);
     expect(shown(root.querySelector("table"))).toBe(true);
     expect(root.querySelector(".fitted-on th")?.textContent).toBe("M");
+  });
+
+  it("keeps the Size chart showing as its own switches change", () => {
+    const root = open(data());
+    root.querySelector<HTMLElement>('[data-fitted-sys="cm"]')?.click();
+    expect(shown(root.querySelector("table"))).toBe(true);
+    expect(shown(pane(root))).toBe(false);
+    // 35 to 36 in, to the nearest 0.5 cm.
+    expect(root.querySelector("tbody td")?.textContent).toBe("89–91.5");
   });
 
   it("hides with the footer on Find my size", () => {

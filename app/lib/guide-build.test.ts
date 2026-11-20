@@ -231,7 +231,18 @@ describe("size guide Liquid", () => {
     const used = (src = "") =>
       [...src.matchAll(/data-t-(\w+)=/g)].map((m) => m[1]);
     expect(used(pro)).toEqual(expect.arrayContaining(["fit", "recommend"]));
-    expect(used(before)).toEqual(expect.arrayContaining(["chart", "select"]));
+    // How to measure and the tab bar show on every plan (§9).
+    expect(used(before)).toEqual(
+      expect.arrayContaining([
+        "chart",
+        "select",
+        "sections",
+        "measure",
+        "line_first",
+        "line",
+        "drawing",
+      ]),
+    );
     expect(used(before)).not.toContain("fit");
   });
 

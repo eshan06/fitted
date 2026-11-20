@@ -568,16 +568,20 @@ export function render(root: HTMLElement, g: Guide) {
     } catch {
       // Not a URL: no drawing.
     }
-    if (!steps.length && !src) return null;
     // "Bust. Line 1 on the drawing. Measure around ...", then "Line 2." and
-    // so on, numbered as the list is.
-    const items = steps.map((s, i) => {
-      const name = word(`m.${s}.name`);
-      const line = src && fill(i ? "line" : "line_first", { n: `${i + 1}` });
-      const how = [line, word(`m.${s}.text`)].filter(Boolean).join(" ");
+    // so on. A step left blank is left out, and the rest keep their numbers,
+    // so each still matches its line.
+    const filled = steps.flatMap((s, i) => {
+      const [name, text] = [word(`m.${s}.name`), word(`m.${s}.text`)];
+      return name || text ? [{ n: `${i + 1}`, name, text }] : [];
+    });
+    if (!filled.length && !src) return null;
+    const items = filled.map(({ n, name, text }, i) => {
+      const line = src && fill(i ? "line" : "line_first", { n });
+      const how = [line, text].filter(Boolean).join(" ");
       return h(
         "li",
-        {},
+        { value: n },
         name && h("strong", {}, `${name}.`),
         name && how && " ",
         how,
