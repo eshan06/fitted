@@ -4,7 +4,11 @@ import { randomInt } from "node:crypto";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Link, data, useLoaderData, useRevalidator } from "react-router";
 import { authenticate } from "../shopify.server";
-import { AdminApiError, canReadProducts } from "../models/admin.server";
+import {
+  AdminApiError,
+  canReadProducts,
+  pricingPlansUrl,
+} from "../models/admin.server";
 import {
   ChartConflictError,
   ChartNotFoundError,
@@ -17,10 +21,18 @@ import {
   updateChart,
   validateChart,
 } from "../models/chart.server";
-import { canPublishChart, getPlan } from "../models/billing.server";
+import {
+  FREE_ACTIVE_CHARTS,
+  canPublishChart,
+  getPlan,
+} from "../models/billing.server";
 import { startResolve } from "../models/rules.server";
 import { Editor } from "../components/chart-table/Editor";
-import { blankDraft, toDraft } from "../components/chart-table/model";
+import {
+  blankDraft,
+  storedDraft,
+  toDraft,
+} from "../components/chart-table/model";
 
 const ROUTE = "app.charts.$id";
 // Thrown as a Response (§15); the app's error boundary prints its text.
@@ -98,11 +110,28 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       (await getChart(admin, id)).status !== "ACTIVE"
     ) {
       const { plan, checkFailed } = await getPlan(session.shop);
-      if (!canPublishChart(plan, await countActiveCharts(admin)))
-        return fail(
-          403,
-          "plan_limit",
-          `${checkFailed ? "Fitted couldn't check your plan just now, so it counts as Free. " : ""}Free includes 3 published charts. Nothing was saved: set this chart to Draft to save your changes, or upgrade to Standard to publish more.`,
+      const published = await countActiveCharts(admin);
+      if (!canPublishChart(plan, published))
+        return data(
+          {
+            error: {
+              code: "plan_limit",
+              message: `${checkFailed ? "Fitted couldn't check your plan just now, so it counts as Free. " : ""}Free includes ${FREE_ACTIVE_CHARTS} published charts. Nothing was saved: set this chart to Draft to save your changes, or upgrade to Standard to publish more.`,
+              // The banner's numbers and its See plans link.
+              limit: FREE_ACTIVE_CHARTS,
+              published,
+              checkFailed,
+              // Without the link the banner still says why and offers Save as Draft.
+              plansUrl: await pricingPlansUrl(admin, session.shop).catch(
+                (err) => {
+                  if (!(err instanceof AdminApiError)) throw err;
+                  logShopifyError(session.shop, err);
+                  return undefined;
+                },
+              ),
+            },
+          },
+          { status: 403 },
         );
     }
     const saved = await updateChart(admin, id, body.chart, body.updatedAt);
@@ -153,18 +182,24 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 // The Editor board's states: the editor itself, loading, couldn't load, and a
-// stored chart that fails the checks.
+// stored chart that fails the checks (opened with its values marked when the
+// table can be drawn, else its banner alone).
 export default function ChartEditor() {
   const loaded = useLoaderData<typeof loader>();
   const revalidator = useRevalidator();
   if (loaded.mode === "new")
     return <Editor key="new" initial={blankDraft()} handle={loaded.handle} />;
-  if (loaded.mode === "edit" && loaded.stored.chart)
+  const s = loaded.mode === "edit" ? loaded.stored : undefined;
+  const initial = s?.chart
+    ? toDraft(s.chart, s.status)
+    : s && storedDraft(s.raw, s.status, s.fieldErrors);
+  if (s && initial)
     return (
       <Editor
-        key={`${loaded.stored.updatedAt}|${loaded.stored.status}`}
-        initial={toDraft(loaded.stored.chart, loaded.stored.status)}
-        updatedAt={loaded.stored.updatedAt}
+        key={`${s.updatedAt}|${s.status}`}
+        initial={initial}
+        updatedAt={s.updatedAt}
+        invalid={s.fieldErrors}
       />
     );
   const invalid = loaded.mode === "edit" ? loaded.stored.fieldErrors : null;
@@ -180,7 +215,7 @@ export default function ChartEditor() {
             <span className="sk short" />
           </div>
         ) : invalid ? (
-          // ponytail: names the count only; the follow-up step opens the chart with the cells marked.
+          // Too broken to draw as a table: Fitted never wrote it.
           <s-banner
             tone="critical"
             heading={`Fix ${count} ${count === 1 ? "value" : "values"} to save this chart`}

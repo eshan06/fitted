@@ -10,6 +10,19 @@ import type {
 } from "../../models/chart.server";
 
 type Cell = [number] | [number, number];
+export const TEMPLATES: Record<Template, string> = {
+  blank: "Blank",
+  tops: "Tops",
+  bottoms: "Bottoms",
+  dresses: "Dresses",
+  bras_swimwear: "Bras and swimwear",
+  shoes: "Shoes",
+  kids: "Kids",
+  headwear: "Headwear",
+  rings: "Rings",
+  bracelets: "Bracelets",
+  necklaces: "Necklaces",
+};
 export type Draft = {
   name: string;
   template: Template;
@@ -238,4 +251,66 @@ export function problems(d: Draft, errors: FieldErrors): Problem[] {
       return { id: `cell-h-${a}`, where: `Column ${ci + 1} name`, long };
     return { where: "", long };
   });
+}
+
+const isObj = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+const hasIds = (v: unknown): v is { id: string }[] =>
+  Array.isArray(v) && v.every((x) => isObj(x) && typeof x.id === "string");
+/**
+ * A stored chart that fails the checks, as a draft the editor can draw and
+ * fix, or null when its shape is too broken for the table or a finding is in
+ * something the editor can't change. Bad values stay as typed text, so the
+ * editor's own check marks them.
+ */
+export function storedDraft(
+  raw: unknown,
+  status: ChartStatus,
+  errors: FieldErrors,
+): Draft | null {
+  if (!isObj(raw) || !isObj(raw.content)) return null;
+  const c = raw.content;
+  const drawable =
+    Array.isArray(c.tables) &&
+    c.tables.length > 0 &&
+    c.tables.every(
+      (t) =>
+        isObj(t) &&
+        typeof t.id === "string" &&
+        hasIds(t.columns) &&
+        t.columns.length > 0 &&
+        hasIds(t.rows) &&
+        t.rows.every((r) => isObj((r as { cells?: unknown }).cells)),
+    ) &&
+    isObj(c.measure) &&
+    Array.isArray(c.measure.steps) &&
+    isObj(c.words) &&
+    Object.values(c.words).every((w) => typeof w === "string") &&
+    (c.fit === undefined || (isObj(c.fit) && hasIds(c.fit.questions)));
+  if (!drawable || typeof raw.template !== "string") return null;
+  if (!Object.hasOwn(TEMPLATES, raw.template)) return null;
+  const content = c as Content;
+  const cells: Record<string, string> = {};
+  for (const row of content.tables[0].rows)
+    for (const [col, cell] of Object.entries(row.cells as object))
+      cells[`${row.id}.${col}`] = Array.isArray(cell)
+        ? cell.join("–")
+        : String(cell);
+  const d: Draft = {
+    name: typeof raw.name === "string" ? raw.name : "",
+    template: raw.template as Template,
+    status,
+    content,
+    cells,
+    ...(typeof raw.measureImage === "string" && {
+      measureImage: raw.measureImage,
+    }),
+  };
+  // Every finding must land on a field the editor shows: the units and the
+  // note, or one problems() can point at.
+  const note = `content.words.${content.tables[0].id}.note`;
+  const rest = Object.fromEntries(
+    Object.entries(errors).filter(([k]) => k !== "content.unit" && k !== note),
+  );
+  return problems(d, rest).every((p) => p.id) ? d : null;
 }

@@ -18,6 +18,7 @@ const m = vi.hoisted(() => ({
   unpublishChart: vi.fn(),
   countActiveCharts: vi.fn(),
   canReadProducts: vi.fn(),
+  pricingPlansUrl: vi.fn(),
   startResolve: vi.fn(),
 }));
 vi.mock("../shopify.server", () => ({
@@ -26,6 +27,7 @@ vi.mock("../shopify.server", () => ({
 vi.mock("../models/admin.server", async (orig) => ({
   ...(await orig<typeof import("../models/admin.server")>()),
   canReadProducts: m.canReadProducts,
+  pricingPlansUrl: m.pricingPlansUrl,
 }));
 vi.mock("../models/rules.server", () => ({ startResolve: m.startResolve }));
 vi.mock("../models/billing.server", async (orig) => ({
@@ -46,6 +48,8 @@ const { action, loader } = await import("./app.charts.$id");
 
 const SHOP = "fitted-dev.myshopify.com";
 const ID = "gid://shopify/Metaobject/42";
+const PLANS =
+  "https://admin.shopify.com/store/fitted-dev/charges/fitted-5/pricing_plans";
 const admin = { graphql: vi.fn() };
 const redirect = vi.fn(
   (url: string) =>
@@ -121,6 +125,7 @@ beforeEach(() => {
   });
   m.getPlan.mockResolvedValue({ plan: "free", checkFailed: false });
   m.countActiveCharts.mockResolvedValue(2);
+  m.pricingPlansUrl.mockResolvedValue(PLANS);
   m.getChart.mockResolvedValue(stored("DRAFT"));
   m.updateChart.mockResolvedValue(stored("DRAFT"));
   m.canReadProducts.mockResolvedValue(true);
@@ -255,9 +260,19 @@ describe("saving a chart", () => {
     m.countActiveCharts.mockResolvedValue(3);
     const r = await result(save("ACTIVE", { shop: "other.myshopify.com" }));
     expect(r.status).toBe(403);
-    expect(r.body).toMatchObject({ error: { code: "plan_limit" } });
-    // The plan is the session's shop's, never one the browser sent.
+    expect(r.body).toEqual({
+      error: {
+        code: "plan_limit",
+        message: expect.any(String),
+        limit: 3,
+        published: 3,
+        checkFailed: false,
+        plansUrl: PLANS,
+      },
+    });
+    // The plan and its page are the session's shop's, never one the browser sent.
     expect(m.getPlan).toHaveBeenCalledWith(SHOP);
+    expect(m.pricingPlansUrl).toHaveBeenCalledWith(admin, SHOP);
     expect(m.updateChart).not.toHaveBeenCalled();
     expect(m.publishChart).not.toHaveBeenCalled();
   });
@@ -410,8 +425,22 @@ describe("saving a chart", () => {
     expect(r.body).toMatchObject({
       error: {
         message: expect.stringMatching(/^Fitted couldn't check your plan/),
+        checkFailed: true,
       },
     });
+  });
+
+  it("still names Free's limit when the plans link can't be read, logging why", async () => {
+    m.countActiveCharts.mockResolvedValue(3);
+    m.pricingPlansUrl.mockRejectedValue(new AdminApiError("down", "detail"));
+    const r = await result(save("ACTIVE"));
+    expect(r.status).toBe(403);
+    expect(r.body).toMatchObject({ error: { code: "plan_limit" } });
+    expect(
+      (r.body as { error: { plansUrl?: string } }).error.plansUrl,
+    ).toBeUndefined();
+    expect(logs.join("\n")).toContain("detail");
+    expect(m.updateChart).not.toHaveBeenCalled();
   });
 
   it("maps each failure to its status (§15)", async () => {

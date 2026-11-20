@@ -379,8 +379,9 @@ export class ChartNotFoundError extends Error {
 export class ChartConflictError extends Error {}
 
 export type ChartStatus = "ACTIVE" | "DRAFT";
-// A stored chart that fails validation keeps its row, with fieldErrors in
-// place of chart, so screens can show the error on it instead of dropping it.
+// A stored chart that fails validation keeps its row, with fieldErrors and its
+// raw fields in place of chart, so screens can show the error on it instead of
+// dropping it, and the editor can open it to be fixed.
 export type StoredChart = {
   id: string;
   handle: string;
@@ -388,8 +389,12 @@ export type StoredChart = {
   updatedAt: string;
   name: string;
 } & (
-  | { chart: ChartInput; fieldErrors?: undefined }
-  | { chart?: undefined; fieldErrors: FieldErrors }
+  | { chart: ChartInput; fieldErrors?: undefined; raw?: undefined }
+  | {
+      chart?: undefined;
+      fieldErrors: FieldErrors;
+      raw: Record<string, unknown>;
+    }
 );
 
 const TYPE = "$app:chart";
@@ -453,7 +458,7 @@ function fromNode(n: Node): StoredChart {
     return { ...meta, chart: validateChart(raw) };
   } catch (err) {
     if (err instanceof ChartValidationError)
-      return { ...meta, fieldErrors: err.fieldErrors };
+      return { ...meta, fieldErrors: err.fieldErrors, raw };
     throw err;
   }
 }

@@ -9,6 +9,7 @@ import {
   parseCell,
   problems,
   setCell,
+  storedDraft,
   setUnit,
   setWord,
   toDraft,
@@ -268,4 +269,67 @@ describe("cell problems, in the Editor board's words", () => {
       { where: "", long: "Use a number above 0" },
     ]);
   });
+});
+
+describe("storedDraft", () => {
+  const raw = () => {
+    const c = chart();
+    c.content.tables[0].rows[0].cells.bust = [32, 31];
+    c.content.tables[0].rows[1].cells.bust = [0];
+    return { ...c, content: JSON.parse(JSON.stringify(c.content)) };
+  };
+
+  it("opens a stored chart that fails the checks with its bad values as text", () => {
+    const d = storedDraft(raw(), "ACTIVE", {
+      "content.tables.0.rows.0.cells.bust": "Use a range from low to high",
+      "content.words.t1.xs.us": "Too long",
+      name: "Too long",
+    })!;
+    expect(d.cells).toMatchObject({ "xs.bust": "32–31", "s.bust": "0" });
+    expect(d.name).toBe("Women's tops");
+    const r = toInput(d);
+    expect("fieldErrors" in r && Object.keys(r.fieldErrors)).toEqual([
+      "content.tables.0.rows.0.cells.bust",
+      "content.tables.0.rows.1.cells.bust",
+    ]);
+  });
+
+  it.each([
+    ["no content", { name: "X", template: "tops" }],
+    ["an unknown template", { ...raw(), template: "hats" }],
+    ["no tables", { ...raw(), content: { ...raw().content, tables: [] } }],
+    [
+      "a row without cells",
+      {
+        ...raw(),
+        content: {
+          ...raw().content,
+          tables: [
+            { id: "t1", columns: [{ id: "size" }], rows: [{ id: "a" }] },
+          ],
+        },
+      },
+    ],
+    [
+      "words that aren't text",
+      { ...raw(), content: { ...raw().content, words: { a: 1 } } },
+    ],
+  ])("gives up on %s, which the table can't draw", (_, r) => {
+    expect(storedDraft(r, "DRAFT", {})).toBeNull();
+  });
+
+  it.each([
+    "content.v",
+    "content.roundTo",
+    "content.tables.1.rows.0.cells.len",
+  ])("gives up when a finding (%s) is outside what the editor shows", (key) => {
+    expect(storedDraft(raw(), "DRAFT", { [key]: "Wrong" })).toBeNull();
+  });
+
+  it.each(["content.unit", "content.words.t1.note"])(
+    "opens a chart whose finding (%s) the units or the note can fix",
+    (key) => {
+      expect(storedDraft(raw(), "DRAFT", { [key]: "Wrong" })).not.toBeNull();
+    },
+  );
 });
