@@ -59,6 +59,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     ]);
     return {
       name: stored.name,
+      // Sent with the data: the client can't import a .server module.
+      limit: VERSION_LIMIT,
       current: stored.chart ?? null,
       versions: versions.map((v) => ({
         id: v.id,
@@ -182,7 +184,7 @@ export default function VersionHistory() {
       </s-page>
     );
 
-  const { versions, current } = loaded;
+  const { versions, current, limit } = loaded;
   const picked =
     versions.find((v) => v.id === sel) ?? versions[1] ?? versions[0];
   const list = (
@@ -207,7 +209,7 @@ export default function VersionHistory() {
         </button>
       ))}
       <p className="help">
-        Fitted keeps the last {VERSION_LIMIT} versions of each chart.
+        Fitted keeps the last {limit} versions of each chart.
       </p>
     </section>
   );

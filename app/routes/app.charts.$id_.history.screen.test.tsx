@@ -53,6 +53,7 @@ const v = (id: number, when: string, by: string, c: ChartInput) => ({
   chart: c,
 });
 const loaded = (n = 3) => ({
+  limit: 30,
   name: "Women's tops",
   current: chart([33, 34]),
   versions: [

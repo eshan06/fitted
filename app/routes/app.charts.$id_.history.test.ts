@@ -95,6 +95,7 @@ describe("loading a chart's versions", () => {
   it("lists the shop's versions of the chart, newest first, in the store's time zone", async () => {
     expect(await load()).toEqual({
       name: "Women's tops",
+      limit: 30,
       current: chart(),
       versions: [
         expect.objectContaining({ id: 2, when: "Nov 14, 2026 · 3:42 PM" }),

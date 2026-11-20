@@ -296,6 +296,9 @@
   flex: 3 1 420px;
   min-width: 0;
 }
+.history h1 {
+  margin: 4px 0;
+}
 .history h2 {
   margin: 0;
   font-size: 1rem;
