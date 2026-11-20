@@ -175,10 +175,16 @@ const edits = (patch: Record<string, unknown> = {}) => ({
 
 describe("loading and saving the fit finder", () => {
   it("says the settings didn't load, logging why, when only the chart list fails", async () => {
-    store.chartsDown = true; // after its retries
-    expect((await load()).fitFinder).toEqual({
+    store.chartsDown = true;
+    vi.useFakeTimers();
+    const got = load();
+    await vi.advanceTimersByTimeAsync(2_000); // its retries
+    vi.useRealTimers();
+    const { fitFinder } = await got;
+    expect(fitFinder).toEqual({
       error: { code: "load", message: expect.any(String) },
     });
+    expect(JSON.stringify(fitFinder)).not.toContain("Throttled");
     expect(JSON.parse(logs[0])).toMatchObject({
       level: "error",
       shop: SHOP,
