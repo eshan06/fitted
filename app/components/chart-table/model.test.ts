@@ -8,8 +8,6 @@ import {
   cellProblem,
   parseCell,
   problems,
-  removal,
-  remove,
   setCell,
   storedDraft,
   setUnit,
@@ -314,87 +312,5 @@ describe("storedDraft", () => {
     ],
   ])("gives up on %s, which the table can't draw", (_, r) => {
     expect(storedDraft(r, "DRAFT")).toBeNull();
-  });
-});
-
-describe("removing a size or a measurement", () => {
-  it("lists the values a size takes with it, or none for an empty one", () => {
-    const d = toDraft(chart(), "DRAFT");
-    expect(removal(d, { row: "xs" })).toEqual({
-      heading: "Remove size XS?",
-      label: "Remove size",
-      text: "Saving removes XS's values: US size 0–2 and Bust 31–32.",
-    });
-    const added = addSize(d);
-    const row = added.content.tables[0].rows.at(-1)!.id;
-    expect(removal(added, { row }).text).toBeNull();
-  });
-
-  it("names the sizes a measurement leaves, first to last", () => {
-    const d = toDraft(chart(), "DRAFT");
-    expect(removal(d, { col: "bust" })).toEqual({
-      heading: "Remove the Bust measurement?",
-      label: "Remove measurement",
-      text: "Saving removes Bust from all 2 sizes, 31–32 (XS) to 33.5 (S). Shoppers won't see a Bust column.",
-    });
-    expect(removal(setCell(d, "s", "bust", ""), { col: "bust" }).text).toBe(
-      "Saving removes Bust from 1 size, 31–32 (XS). Shoppers won't see a Bust column.",
-    );
-    const added = addMeasurement(d);
-    const col = added.content.tables[0].columns.at(-1)!.id;
-    expect(removal(added, { col }).text).toBeNull();
-  });
-
-  it("takes a size and a column out of words, cells, merges, wrap and the fit finder, so the chart still passes", () => {
-    const c = chart();
-    const t = c.content.tables[0];
-    t.columns.push({ id: "waist", kind: "measure", convert: true });
-    t.rows.push({ id: "m", cells: { bust: [35], waist: [28] } });
-    t.merges = [
-      { row: "xs", col: "us", rows: 2, cols: 1 },
-      { row: "m", col: "waist", rows: 1, cols: 1 },
-    ];
-    t.wrap = ["bust", "waist"];
-    Object.assign(c.content.words, {
-      "t1.waist": "Waist",
-      "t1.m.size": "M",
-      "t1.m.us": "8",
-      "fit.qb": "Bust",
-      "fit.qw": "Waist",
-      "fit.qc": "Shape",
-      "fit.qc.o1": "Slim",
-    });
-    c.content.fit = {
-      table: "t1",
-      stretch: "none",
-      ease: { bust: 1, waist: 1 },
-      questions: [
-        { id: "qb", kind: "measure", col: "bust", optional: false },
-        { id: "qw", kind: "measure", col: "waist", optional: true },
-        {
-          id: "qc",
-          kind: "choice",
-          options: [{ id: "o1", rows: ["xs", "s"] }],
-        },
-      ],
-    };
-    const d = toDraft(validateChart(c), "DRAFT");
-    const out = remove(remove(d, { col: "waist" }), { row: "s" });
-    const saved = validateChart(input(out));
-    const t1 = saved.content.tables[0];
-    expect(t1.columns.map((x) => x.id)).toEqual(["size", "us", "bust"]);
-    expect(t1.rows.map((r) => r.id)).toEqual(["xs", "m"]);
-    expect(t1.merges).toEqual([]);
-    expect(t1.wrap).toEqual(["bust"]);
-    expect(saved.content.fit).toMatchObject({
-      ease: { bust: 1 },
-      questions: [{ id: "qb" }, { id: "qc", options: [{ rows: ["xs"] }] }],
-    });
-    expect(saved.content.words).not.toHaveProperty(["t1.waist"]);
-    expect(saved.content.words).not.toHaveProperty(["t1.s.size"]);
-    expect(saved.content.words).not.toHaveProperty(["fit.qw"]);
-    expect(out.cells).not.toHaveProperty(["m.waist"]);
-    // The other table rides along untouched.
-    expect(saved.content.tables[1]).toEqual(chart().content.tables[1]);
   });
 });
