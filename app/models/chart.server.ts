@@ -560,6 +560,35 @@ export async function countChartProducts(admin: Admin, ids: string[]) {
   return counts;
 }
 
+type Count = { count: number; precision: string };
+const count = ({ count, precision }: Count) => ({
+  count,
+  atLeast: precision !== "EXACT",
+});
+// For Home (§6): how many products show a chart, and the first few that don't.
+export async function productCoverage(admin: Admin) {
+  const data = await adminGraphql<{
+    all: Count;
+    covered: Count;
+    missing: { nodes: { id: string; title: string }[] };
+  }>(
+    admin,
+    `#graphql
+    query ProductCoverage {
+      all: productsCount { count precision }
+      covered: productsCount(query: "metafields.$app.chart:*") { count precision }
+      missing: products(first: 3, query: "-metafields.$app.chart:*", sortKey: TITLE) { nodes { id title } }
+    }`,
+    {},
+    { retry: true },
+  );
+  return {
+    all: count(data.all),
+    covered: count(data.covered),
+    missing: data.missing.nodes,
+  };
+}
+
 // For Free's limit of Active charts (§8).
 // ponytail: pages through every chart; filter by status in the query if stores keep hundreds of drafts.
 export async function countActiveCharts(admin: Admin) {

@@ -10,6 +10,7 @@ import {
   deleteChart,
   getChart,
   listCharts,
+  productCoverage,
   publishChart,
   unpublishChart,
   updateChart,
@@ -799,6 +800,28 @@ describe("chart reads and writes", () => {
     expect(counts[ids[50]]).toEqual({ count: 10000, atLeast: true });
     expect(await countChartProducts(admin, [])).toEqual({});
     expect(graphql).toHaveBeenCalledTimes(2);
+  });
+
+  it("counts products with and without a chart and names the first few without", async () => {
+    const graphql = vi.fn(async () =>
+      Response.json({
+        data: {
+          all: { count: 340, precision: "EXACT" },
+          covered: { count: 10000, precision: "AT_LEAST" },
+          missing: {
+            nodes: [{ id: "gid://shopify/Product/1", title: "Socks" }],
+          },
+        },
+      }),
+    );
+    expect(await productCoverage({ graphql } as unknown as Admin)).toEqual({
+      all: { count: 340, atLeast: false },
+      covered: { count: 10000, atLeast: true },
+      missing: [{ id: "gid://shopify/Product/1", title: "Socks" }],
+    });
+    const [query] = graphql.mock.calls[0] as unknown as [string];
+    expect(query).toContain('productsCount(query: "metafields.$app.chart:*")');
+    expect(query).toContain('query: "-metafields.$app.chart:*"');
   });
 
   it("treats malformed, missing and other-type ids as not found", async () => {
