@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createdSummary,
   recordVersion,
+  shopTimeZone,
+  versionTime,
   staffName,
   summarize,
 } from "./chart-history.server";
@@ -154,5 +156,24 @@ describe("recording a version", () => {
       detail: "Error",
     });
     expect(logs.join()).not.toContain("Priya");
+  });
+});
+
+describe("a version's time", () => {
+  it("asks Shopify for the store's time zone", async () => {
+    const graphql = vi.fn(async () =>
+      Response.json({ data: { shop: { ianaTimezone: "Europe/Paris" } } }),
+    );
+    expect(await shopTimeZone({ graphql } as never)).toBe("Europe/Paris");
+  });
+
+  it("reads in the store's time zone", () => {
+    const at = "2026-11-14T23:42:00Z";
+    expect(versionTime(at, "America/Los_Angeles")).toBe(
+      "Nov 14, 2026 · 3:42 PM",
+    );
+    expect(versionTime(new Date(at), "Asia/Kolkata")).toBe(
+      "Nov 15, 2026 · 5:12 AM",
+    );
   });
 });
