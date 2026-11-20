@@ -684,6 +684,30 @@ describe("chart editor screen", () => {
     ]);
   });
 
+  it("drops the warning once the edits are stored, even when the status then fails", async () => {
+    await open(
+      [numbersInText()],
+      [
+        {
+          status: 502,
+          body: {
+            error: { code: "status", message: "Still a Draft" },
+            updatedAt: "2026-11-19T10:05:00Z",
+          },
+        },
+      ],
+    );
+    await type(byLabel("Chart status"), "ACTIVE");
+    expect(missed()).toBe("Saving drops 2 values in US size");
+    await click("Save");
+    expect(
+      document
+        .querySelector('s-banner[tone="critical"]')
+        ?.getAttribute("heading"),
+    ).toBe("Edits saved, but the chart is still a Draft");
+    expect(missed()).toBeUndefined();
+  });
+
   it("says Remove column for a country column, and announces the selection", async () => {
     await open([numbersInText()]);
     await act(async () => byLabel("Column 3 name").focus());

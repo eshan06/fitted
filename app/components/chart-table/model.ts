@@ -300,6 +300,7 @@ export function storedDraft(
         kind === "measure" ||
         (kind !== undefined &&
           Array.isArray(cell) &&
+          (cell.length === 1 || cell.length === 2) &&
           cell.every((n) => typeof n === "number"))
       );
     }),

@@ -180,7 +180,9 @@ export function Editor(props: {
     action("Try saving again", () => save()),
   ];
   const n = listed.length;
-  const drops = model.dropped(draft);
+  // Once a save is stored, the numbers are gone, even when only the status
+  // failed and the editor stays open.
+  const drops = base.updatedAt === props.updatedAt ? model.dropped(draft) : [];
 
   return (
     <s-page>

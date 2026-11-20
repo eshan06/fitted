@@ -339,6 +339,8 @@ describe("storedDraft", () => {
   it.each([
     ["a column the table doesn't have", cellAt("hips", [30])],
     ["text in a country column", cellAt("us", "4")],
+    ["no numbers in a country column", cellAt("us", [])],
+    ["three numbers in a country column", cellAt("us", [1, 2, 3])],
   ])("gives up on a cell in %s, which a save would drop unsaid", (_, r) => {
     expect(storedDraft(r, "DRAFT", {})).toBeNull();
   });
@@ -369,6 +371,10 @@ describe("storedDraft", () => {
       label: "Remove column",
     });
     expect(removal(d, { col: "bust" }).label).toBe("Remove measurement");
+    // Removing a size names its stored numbers too, since they go with it.
+    expect(removal(d, { row: "s" }).text).toBe(
+      "Saving removes S's values: US size 4–6 and Bust 0.",
+    );
   });
 
   it.each(["content.unit", "content.words.t1.note"])(
