@@ -154,30 +154,32 @@ async function load(admin: Admin, shop: string) {
 type Ok = Exclude<Awaited<ReturnType<typeof load>>, { error: unknown }>;
 
 // The live line's Try again: the count alone, so the screen keeps its edits.
+// A failed count answers 502 (§15).
 async function recount(admin: Admin, shop: string) {
+  let counts: Ok["counts"] = "error";
   try {
     const [{ plan }, all] = await Promise.all([
       getPlan(shop),
       listCharts(admin),
     ]);
-    return await liveCounts(admin, shop, plan, all.flatMap(fitChart));
+    counts = await liveCounts(admin, shop, plan, all.flatMap(fitChart));
   } catch (err) {
     if (!(err instanceof AdminApiError)) throw err;
     log(shop, err);
-    return "error" as const;
   }
+  if (counts !== "error") return { counts };
+  const error = { code: "count", message: "Fitted couldn't count them." };
+  return data({ counts, error }, { status: 502 });
 }
 type Recount = { counts: Ok["counts"] };
 type Screen = { fitFinder: ReturnType<typeof load>; storeUrl: string };
 
 // Streamed, so the screen shows its loading state while Shopify answers.
 // `?count` answers the live line's Try again.
-export const loader = async ({
-  request,
-}: LoaderFunctionArgs): Promise<Screen | Recount> => {
+export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   if (new URL(request.url).searchParams.has("count"))
-    return { counts: await recount(admin, session.shop) };
+    return recount(admin, session.shop);
   return {
     fitFinder: load(admin, session.shop),
     storeUrl: `https://${session.shop}`,
@@ -569,7 +571,7 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
   const n = own?.questions.length ?? 0;
   // The live line's Try again counts once more, keeping the screen.
   const counter = useFetcher<Recount>();
-  const counts = counter.data?.counts ?? loaded.counts;
+  const counts = counter.data ? counter.data.counts : loaded.counts;
   const count = chart && counts !== "error" ? counts?.[chart.id] : undefined;
   const countFailed = counts === "error" && !!picked?.fit.questions.length;
   const putFit = (patch: Partial<Draft["fits"][string]>) =>

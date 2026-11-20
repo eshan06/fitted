@@ -1159,14 +1159,23 @@ describe("a chart's ease and stretch", () => {
     expect(store.admin.graphql).not.toHaveBeenCalled();
   });
 
-  it("answers a failed recount with the count's error, logging why", async () => {
+  // §15: a failed Shopify call answers 502 with { error }.
+  it("answers 502 to a failed recount, logging why", async () => {
     await countFails();
-    store.chartsDown = true;
-    const got = recount();
-    await vi.advanceTimersByTimeAsync(4_000);
+    for (const down of ["count", "list"]) {
+      store.chartsDown = down === "list";
+      const got = recount();
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(await got).toMatchObject({
+        init: { status: 502 },
+        data: {
+          counts: "error",
+          error: { code: "count", message: expect.any(String) },
+        },
+      });
+    }
     vi.useRealTimers();
-    expect(await got).toEqual({ counts: "error" });
-    expect(logs).toHaveLength(1);
+    expect(logs).toHaveLength(2);
   });
 });
 
