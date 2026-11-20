@@ -2014,6 +2014,38 @@ describe("More tables", () => {
     expect(validateChart(sent[0].chart).content.tables).toHaveLength(1);
   });
 
+  it("takes a removed table's findings off the banner, and caps its heading at 500 characters", async () => {
+    await open([twoTables()]);
+    await click("Edit table");
+    for (const id of ["#t2-title", "#t2-sub"])
+      expect(document.querySelector(id)?.getAttribute("maxlength")).toBe("500");
+    await type(byLabel("XS, Length"), "0");
+    await type(document.querySelector<HTMLInputElement>("#name")!, "");
+    await click("Save");
+    const banner = () => document.querySelector('s-banner[tone="critical"]');
+    expect(banner()?.textContent).toContain("XS, Length is 0");
+    await click("Remove table");
+    expect(tables()).toEqual([]);
+    expect(banner()?.textContent).not.toContain("XS, Length");
+    expect(banner()?.textContent).toContain("Chart name");
+  });
+
+  it("moves a later table's findings up when a table before it is removed", async () => {
+    await open([twoTables()]);
+    await click("Clone table");
+    await type(byLabel("XS, Length"), "0");
+    await click("Save");
+    await click("2. Garment measurements");
+    await click("Remove table");
+    expect(document.querySelectorAll(".tablerow")).toHaveLength(1);
+    const banner = document.querySelector('s-banner[tone="critical"]')!;
+    await act(async () => banner.querySelector("a")!.click());
+    await settle();
+    expect(tables()).toContain("2. Garment measurements *");
+    expect(document.activeElement).toBe(byLabel("XS, Length"));
+    expect(byLabel("XS, Length").getAttribute("aria-invalid")).toBe("true");
+  });
+
   it("asks before leaving with unsaved edits in table 2", async () => {
     bridge.saveBar.leaveConfirmation.mockReturnValue(new Promise(() => {}));
     await open([twoTables()]);

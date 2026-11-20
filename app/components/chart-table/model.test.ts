@@ -417,6 +417,18 @@ describe("storedDraft", () => {
     expect(storedDraft(raw(), "DRAFT", { [key]: "Wrong" })).toBeNull();
   });
 
+  it("opens a stored bad video link with it marked, and gives up on one that isn't text", () => {
+    const r = raw();
+    const errors = { "content.videoUrl": "Use an https link" };
+    r.content.videoUrl = "https://www.tiktok.com/@a/video/1";
+    const d = storedDraft(r, "DRAFT", errors)!;
+    expect(problems(d, errors)).toEqual([
+      expect.objectContaining({ id: "video", where: "Fit video" }),
+    ]);
+    r.content.videoUrl = 5;
+    expect(storedDraft(r, "DRAFT", errors)).toBeNull();
+  });
+
   it("opens a later table's bad values and dropped numbers, as the first table's", () => {
     const r = raw();
     r.content.tables[1].rows[0].cells.len = [0];
@@ -1184,11 +1196,14 @@ describe("tables", () => {
       "content.words.t2.len": "b",
       "content.tables.2.rows": "c",
       "content.tables.0.rows": "d",
+      "content.tables.1": "e",
+      "content.tables.2": "f",
     };
     expect(canRemoveTable(d, 0)).toBe(false);
     expect(removeTableErrors(d, 1, errs)).toEqual({
       "content.tables.1.rows": "c",
       "content.tables.0.rows": "d",
+      "content.tables.1": "f",
     });
     const gone = removeTable(d, 1);
     expect(gone.content.tables.map((t) => t.id)).toEqual(["t1"]);

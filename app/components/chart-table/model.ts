@@ -332,10 +332,10 @@ export function removeTableErrors(
   const words = `content.words.${d.content.tables[i].id}.`;
   const out: FieldErrors = {};
   for (const [k, v] of Object.entries(errors)) {
-    const m = /^content\.tables\.(\d+)\.(.*)$/.exec(k);
+    const m = /^content\.tables\.(\d+)(\..*)?$/.exec(k);
     const n = m ? Number(m[1]) : -1;
     if (n === i || k.startsWith(words)) continue;
-    out[m && n > i ? `content.tables.${n - 1}.${m[2]}` : k] = v;
+    out[m && n > i ? `content.tables.${n - 1}${m[2] ?? ""}` : k] = v;
   }
   return out;
 }
@@ -485,6 +485,7 @@ export function storedDraft(
     Array.isArray(c.measure.steps) &&
     isObj(c.words) &&
     Object.values(c.words).every((w) => typeof w === "string") &&
+    (c.videoUrl === undefined || typeof c.videoUrl === "string") &&
     (c.fit === undefined || (isObj(c.fit) && hasIds(c.fit.questions)));
   if (!drawable || typeof raw.template !== "string") return null;
   if (!Object.hasOwn(TEMPLATES, raw.template)) return null;
