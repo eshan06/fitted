@@ -2,6 +2,7 @@
 // through validateChart: the editor, imports, restores, templates, duplicates
 // and OpenAI output.
 import { isDeepStrictEqual } from "node:util";
+import { VIDEO_ERROR, videoSite } from "../lib/video";
 import { type Admin, AdminApiError, adminGraphql } from "./admin.server";
 
 export const TEMPLATES = [
@@ -75,8 +76,6 @@ const isObj = (v: unknown): v is Record<string, unknown> =>
 const ID = /^[a-z0-9]{1,8}$/;
 const RESERVED = new Set(["title", "sub", "note"]);
 const IMAGE = /^gid:\/\/shopify\/MediaImage\/\d+$/;
-const VIDEO_HOST =
-  /^((www\.|m\.)?youtube\.com|youtu\.be|(www\.|player\.)?vimeo\.com)$/;
 const oneOf = (v: unknown, list: readonly unknown[]) => list.includes(v);
 
 export function validateChart(input: unknown): ChartInput {
@@ -275,21 +274,8 @@ export function validateChart(input: unknown): ChartInput {
     });
   }
 
-  if (c.videoUrl !== undefined) {
-    let url: URL | undefined;
-    try {
-      url = new URL(String(c.videoUrl));
-    } catch {
-      // reported below
-    }
-    if (
-      typeof c.videoUrl !== "string" ||
-      c.videoUrl.includes("\0") ||
-      url?.protocol !== "https:" ||
-      !VIDEO_HOST.test(url.hostname)
-    )
-      fail("content.videoUrl", "Use an https YouTube or Vimeo link");
-  }
+  if (c.videoUrl !== undefined && !videoSite(c.videoUrl))
+    fail("content.videoUrl", VIDEO_ERROR);
 
   if (c.fit !== undefined) {
     const f = c.fit;

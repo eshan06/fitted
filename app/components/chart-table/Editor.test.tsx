@@ -1481,7 +1481,7 @@ describe("How to measure and Fit tips tabs", () => {
     const { sent } = await open([stored()]);
     expect(
       [...document.querySelectorAll(".tab")].map((b) => b.textContent),
-    ).toEqual(["Size table", "How to measure", "Fit tips"]);
+    ).toEqual(["Size table", "How to measure", "Fit tips", "Media"]);
     expect(tab("Size table").getAttribute("aria-pressed")).toBe("true");
     await openTab("How to measure");
     expect(tab("How to measure").getAttribute("aria-pressed")).toBe("true");
@@ -1758,5 +1758,257 @@ describe("How to measure and Fit tips tabs", () => {
     await back();
     expect(text()).toContain("Left for /app/charts");
     expect(discards(sent)).toEqual([{ discard: IMG.id, sig: IMG.sig }]);
+  });
+});
+
+describe("Media tab", () => {
+  const field = () => document.querySelector<HTMLInputElement>("#video")!;
+  const openMedia = async () => {
+    await act(async () =>
+      [...document.querySelectorAll<HTMLButtonElement>(".tab")]
+        .find((b) => b.textContent === "Media")!
+        .click(),
+    );
+  };
+
+  it("marks a link that isn't YouTube or Vimeo as it's typed, and saves a good one", async () => {
+    const { sent } = await open([stored()]);
+    await openMedia();
+    expect(text()).toContain("A YouTube or Vimeo link, one per chart.");
+    await type(field(), "https://www.tiktok.com/@north-linen/video/1");
+    expect(field().getAttribute("aria-invalid")).toBe("true");
+    expect(field().getAttribute("aria-describedby")).toBe("video-err");
+    expect(document.querySelector("#video-err")?.textContent).toBe(
+      "Use an https link from YouTube or Vimeo.",
+    );
+    expect(text()).not.toContain("YouTube video");
+    await click("Save");
+    expect(sent).toEqual([]);
+    const banner = document.querySelector('s-banner[tone="critical"]')!;
+    expect(banner.querySelector("a")?.getAttribute("href")).toBe("#video");
+    await type(field(), "https://www.youtube.com/watch?v=abc");
+    expect(field().getAttribute("aria-invalid")).toBeNull();
+    expect(text()).toContain("YouTube video");
+    expect(text()).toContain("Plays inside the size guide.");
+    await click("Save");
+    expect(validateChart(sent[0].chart).content.videoUrl).toBe(
+      "https://www.youtube.com/watch?v=abc",
+    );
+  });
+
+  it("opens from the Fit video box, and Remove video saves the chart without it", async () => {
+    const withVideo = stored();
+    withVideo.stored.chart.content.videoUrl = "https://vimeo.com/76979871";
+    const { sent } = await open([withVideo]);
+    await act(async () => {
+      [...document.querySelectorAll<HTMLButtonElement>(".boxes .drop")]
+        .find((b) => b.textContent?.startsWith("Fit video"))!
+        .click();
+    });
+    await settle();
+    expect(document.activeElement).toBe(field());
+    expect(field().value).toBe("https://vimeo.com/76979871");
+    expect(text()).toContain("Vimeo video");
+    await click("Remove video");
+    expect(field().value).toBe("");
+    await click("Save");
+    expect("videoUrl" in validateChart(sent[0].chart).content).toBe(false);
+  });
+});
+
+describe("More tables", () => {
+  // The Editor board's two tables: body and garment measurements.
+  const twoTables = (fit = false) => {
+    const s = stored();
+    const c = s.stored.chart.content;
+    c.tables.push({
+      id: "t2",
+      columns: [
+        { id: "sz", kind: "size" },
+        { id: "len", kind: "measure", convert: true },
+        { id: "slv", kind: "measure", convert: true },
+      ],
+      rows: [{ id: "r1", cells: { len: [24], slv: [23] } }],
+    });
+    Object.assign(c.words, {
+      "t1.title": "Body measurements",
+      "t2.title": "Garment measurements",
+      "t2.sz": "Size",
+      "t2.len": "Length",
+      "t2.slv": "Sleeve",
+      "t2.r1.sz": "XS",
+    });
+    if (fit) {
+      c.fit = {
+        table: "t2",
+        stretch: "none",
+        ease: {},
+        questions: [{ id: "ql", kind: "measure", col: "len", optional: false }],
+      };
+      c.words["fit.ql"] = "Length";
+    }
+    return s;
+  };
+  const tables = () =>
+    [
+      ...document.querySelectorAll<HTMLButtonElement>(
+        '[aria-label="Tables in this chart"] button',
+      ),
+    ].map(
+      (b) =>
+        `${b.textContent}${b.getAttribute("aria-pressed") === "true" ? " *" : ""}`,
+    );
+
+  it("lists table 2 under the first, edits it with the table tools, and saves both", async () => {
+    const { sent } = await open([twoTables()]);
+    const row = document.querySelector(".tablerow")!;
+    expect(row.textContent).toContain("Table 2: Garment measurements");
+    expect(row.textContent).toContain(
+      "Length and sleeve, shown under its own heading in the same chart",
+    );
+    expect(text()).not.toContain("A chart holds up to 4 tables");
+    await click("Edit table");
+    expect(tables()).toEqual([
+      "1. Body measurements",
+      "2. Garment measurements *",
+    ]);
+    expect(document.querySelector(".tablerow")).toBeNull();
+    expect(text()).toContain(
+      "A chart holds up to 4 tables. Shoppers see them in order, each under its heading.",
+    );
+    expect(byLabel("XS, Bust")).toBeNull();
+    await type(byLabel("XS, Length"), "24.5");
+    await type(
+      document.querySelector<HTMLInputElement>("#t2-sub")!,
+      "Measured flat, across the garment.",
+    );
+    await click("Add size");
+    await type(byLabel("Size 2"), "S");
+    await type(byLabel("S, Length"), "25");
+    await click("1. Body measurements");
+    expect(byLabel("XS, Bust").value).toBe("31–32");
+    await click("Save");
+    const c = validateChart(sent[0].chart).content;
+    expect(c.tables.map((t) => t.id)).toEqual(["t1", "t2"]);
+    expect(c.tables[1].rows.map((r) => r.cells)).toEqual([
+      { len: [24.5], slv: [23] },
+      { len: [25] },
+    ]);
+    expect(c.words["t2.sub"]).toBe("Measured flat, across the garment.");
+  });
+
+  it("marks a bad value in table 2 and links the banner to it from the first table", async () => {
+    const { sent } = await open([twoTables()]);
+    await click("Edit table");
+    await type(byLabel("XS, Length"), "0");
+    await click("1. Body measurements");
+    await click("Save");
+    expect(sent).toEqual([]);
+    const banner = document.querySelector('s-banner[tone="critical"]')!;
+    expect(banner.getAttribute("heading")).toBe("Fix 1 cell to save");
+    expect(banner.textContent).toContain("XS, Length is 0");
+    // Table 1's list shows only its own cells.
+    expect(document.querySelector(".list.err")).toBeNull();
+    await act(async () => banner.querySelector("a")!.click());
+    await settle();
+    expect(tables()).toContain("2. Garment measurements *");
+    expect(document.activeElement).toBe(byLabel("XS, Length"));
+    expect(byLabel("XS, Length").getAttribute("aria-invalid")).toBe("true");
+    expect(text()).toContain(
+      "XS, Length: Use a number above 0, or clear the cell.",
+    );
+  });
+
+  it("opens a stored table 2 with its bad values marked and its dropped numbers warned", async () => {
+    const s = twoTables();
+    const raw = JSON.parse(JSON.stringify(s.stored.chart));
+    raw.content.tables[1].rows[0].cells = { len: [25, 24], sz: [6] };
+    const { id, status, updatedAt } = s.stored;
+    await open([
+      {
+        mode: "edit",
+        stored: {
+          id,
+          status,
+          updatedAt,
+          raw,
+          fieldErrors: {
+            "content.tables.1.rows.0.cells.len": "Use a range from low to high",
+            "content.tables.1.rows.0.cells.sz": "Not a measurement column",
+          },
+        },
+      },
+    ]);
+    expect(
+      document
+        .querySelector('s-banner[tone="critical"]')
+        ?.getAttribute("heading"),
+    ).toBe("Fix 1 value to save this chart");
+    expect(text()).toContain("XS, Length runs from high to low");
+    expect(missed()).toBe("Saving drops 1 value in Size");
+    await click("Edit table");
+    expect(byLabel("XS, Length").value).toBe("25–24");
+    expect(byLabel("XS, Length").getAttribute("aria-invalid")).toBe("true");
+    expect(byLabel("Size 1").className).toContain("drop");
+  });
+
+  it("keeps table 2's fit finder measurement, and never removes the fit finder's table", async () => {
+    const { sent } = await open([twoTables(true)]);
+    await click("Edit table");
+    await act(async () => byLabel("Column 2 name").focus());
+    await click("Remove measurement");
+    expect(missed()).toBe("Length can't be removed");
+    expect((button("Remove table") as HTMLButtonElement).disabled).toBe(true);
+    await type(document.querySelector<HTMLInputElement>("#name")!, "Tops");
+    await click("Save");
+    expect(validateChart(sent[0].chart).content.fit?.table).toBe("t2");
+  });
+
+  it("clones and adds tables up to 4, removes one, and discards back to the stored two", async () => {
+    const { sent } = await open([twoTables()]);
+    await click("Clone table");
+    expect(tables()).toEqual([
+      "1. Body measurements",
+      "2. Garment measurements",
+      "3. Garment measurements *",
+    ]);
+    expect(byLabel("XS, Length").value).toBe("24");
+    await click("Add another table");
+    expect(tables()).toEqual([
+      "1. Body measurements",
+      "2. Garment measurements",
+      "3. Garment measurements",
+      "4. Table 4 *",
+    ]);
+    expect(byLabel("Size 1").value).toBe("XS");
+    for (const b of ["Add another table", "Clone table"])
+      expect((button(b) as HTMLButtonElement).disabled).toBe(true);
+    await click("Remove table");
+    expect(tables()).toContain("3. Garment measurements *");
+    expect((button("Add another table") as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+    await click("Discard");
+    expect(document.querySelectorAll(".tablerow")).toHaveLength(0);
+    expect(tables()).toContain("2. Garment measurements *");
+    await click("Remove table");
+    await click("Save");
+    expect(validateChart(sent[0].chart).content.tables).toHaveLength(1);
+  });
+
+  it("asks before leaving with unsaved edits in table 2", async () => {
+    bridge.saveBar.leaveConfirmation.mockReturnValue(new Promise(() => {}));
+    await open([twoTables()]);
+    await click("Edit table");
+    await type(byLabel("XS, Length"), "30");
+    await act(async () =>
+      [...document.querySelectorAll<HTMLElement>("a")]
+        .find((a) => a.textContent === "Size charts")!
+        .click(),
+    );
+    await settle();
+    expect(bridge.saveBar.leaveConfirmation).toHaveBeenCalledTimes(1);
+    expect(text()).not.toContain("Left for");
+    expect(byLabel("XS, Length").value).toBe("30");
   });
 });

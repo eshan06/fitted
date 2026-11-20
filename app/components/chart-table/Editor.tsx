@@ -1,7 +1,7 @@
 // The Editor board (Fitted canvas): name, template, status, and the tabs: the
-// size table with its tools, units and note, How to measure, and Fit tips,
-// saved through App Bridge's save bar. Later steps add the Media tab, a
-// second table and the live preview.
+// size tables with their tools, units and notes, How to measure, Fit tips and
+// Media, saved through App Bridge's save bar. A later step adds the live
+// preview.
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
   Link,
@@ -15,6 +15,7 @@ import type { FieldErrors, Template } from "../../models/chart.server";
 import { ChartTable } from "./ChartTable";
 import { PasteDialog } from "./PasteDialog";
 import { MeasureTab, useMeasureImage } from "./MeasureTab";
+import { VIDEO_ERROR, videoSite } from "../../lib/video";
 import * as model from "./model";
 import "./editor.css";
 
@@ -23,11 +24,18 @@ const TABS = {
   table: "Size table",
   measure: "How to measure",
   tips: "Fit tips",
+  media: "Media",
 };
 type Tab = keyof typeof TABS;
 // The tab that holds a field the banner links to (model.problems).
 const tabOf = (id: string): Tab =>
-  id === "tips" ? "tips" : id.startsWith("m-") ? "measure" : "table";
+  id === "tips"
+    ? "tips"
+    : id === "video"
+      ? "media"
+      : id.startsWith("m-")
+        ? "measure"
+        : "table";
 
 /** What the action answers (ARCHITECTURE §15). */
 type Answer = {
@@ -75,6 +83,7 @@ export function Editor(props: {
   const [draft, setDraft] = useState(props.initial);
   const [pasting, setPasting] = useState(false);
   const [tab, setTab] = useState<Tab>("table");
+  const [at, setAt] = useState(0);
   const drawing = useMeasureImage(draft.measureImage, props.imageUrl, (id) =>
     setDraft((d) => {
       const next = { ...d, measureImage: id };
@@ -92,10 +101,10 @@ export function Editor(props: {
     if (!invalid) return null;
     const own = model.toInput(props.initial);
     const mine = "fieldErrors" in own ? own.fieldErrors : {};
-    const t0 = props.initial.content.tables[0];
     const rest = Object.entries(invalid).filter(([k]) => {
-      const col = /^content\.tables\.0\.rows\.\d+\.cells\.(.+)$/.exec(k)?.[1];
-      return !col || t0.columns.find((c) => c.id === col)?.kind === "measure";
+      const at = /^content\.tables\.(\d+)\.rows\.\d+\.cells\.(.+)$/.exec(k);
+      const cols = props.initial.content.tables[Number(at?.[1])]?.columns;
+      return !at || cols?.find((c) => c.id === at[2])?.kind === "measure";
     });
     const all = { ...Object.fromEntries(rest), ...mine };
     return Object.keys(all).length ? { stored: true, fieldErrors: all } : null;
@@ -120,7 +129,14 @@ export function Editor(props: {
   const notice = local ?? (answer === dismissed ? undefined : answer);
   const errors = notice?.fieldErrors ?? {};
   const listed = model.problems(draft, errors);
-  const t = draft.content.tables[0];
+  // The table being edited goes first in `view`, for the table tools.
+  const tables = draft.content.tables;
+  const ti = Math.min(at, tables.length - 1);
+  const view = model.focus(draft, ti);
+  const edit = (d: model.Draft) => setDraft(model.focus(d, ti));
+  const t = view.content.tables[0];
+  const video = draft.content.videoUrl ?? "";
+  const site = videoSite(video.trim());
   const set = (patch: Partial<model.Draft>) => setDraft({ ...draft, ...patch });
   const created = answer?.created;
   const dirty =
@@ -195,7 +211,8 @@ export function Editor(props: {
   // A filled table comes in with the cells Fitted can't read marked, as after
   // a save (the Editor board's "Fix the marked fields").
   const fill = (p: model.Pasted) => {
-    const next = model.replaceTable(draft, p);
+    const filled = model.replaceTable(view, p);
+    const next = model.focus(filled, ti);
     setDraft(next);
     setPasting(false);
     dismiss();
@@ -207,7 +224,7 @@ export function Editor(props: {
           )
         : {};
     if (Object.keys(marked).length) setLocal({ fieldErrors: marked });
-    const t0 = next.content.tables[0];
+    const t0 = filled.content.tables[0];
     setTimeout(() =>
       document
         .getElementById(`cell-${t0.rows[0].id}-${t0.columns[0].id}`)
@@ -292,6 +309,77 @@ export function Editor(props: {
   // Once a save is stored, the numbers are gone, even when only the status
   // failed and the editor stays open.
   const drops = base.updatedAt === props.updatedAt ? model.dropped(draft) : [];
+  const badVideo = !!video.trim() && !site;
+  // Findings left after a remove; with none, the banner goes, as after a fix
+  // and save.
+  const settle = (left: FieldErrors) =>
+    Object.keys(left).length
+      ? setLocal({ ...notice, fieldErrors: left })
+      : dismiss();
+
+  // The Editor board's "Editing table 2". A new or cloned table opens.
+  const full = tables.length >= model.MAX_TABLES;
+  const title = (i: number) => model.tableTitle(draft, i);
+  const clone = (i: number) => {
+    setDraft(model.cloneTable(draft, i));
+    setAt(tables.length);
+  };
+  const word = (key: string, name: string) => (
+    <label className="grow">
+      {name}
+      <input
+        id={key.replace(".", "-")}
+        className="field"
+        value={draft.content.words[key] ?? ""}
+        onChange={(e) => setDraft(model.setWord(draft, key, e.target.value))}
+      />
+    </label>
+  );
+  const tableHead = (
+    <>
+      <div className="row">
+        <div role="group" aria-label="Tables in this chart" className="segs">
+          {tables.map((x, i) => (
+            <button
+              key={x.id}
+              type="button"
+              aria-pressed={i === ti}
+              onClick={() => setAt(i)}
+            >
+              {`${i + 1}. ${title(i) || `Table ${i + 1}`}`}
+            </button>
+          ))}
+        </div>
+        <div className="row start">
+          <button
+            type="button"
+            className="btn2"
+            disabled={full}
+            onClick={() => clone(ti)}
+          >
+            Clone table
+          </button>
+          <button
+            type="button"
+            className="btn2 danger"
+            disabled={!model.canRemoveTable(draft, ti)}
+            onClick={() => {
+              const errs = notice?.fieldErrors;
+              setDraft(model.removeTable(draft, ti));
+              setAt(ti - 1);
+              if (errs) settle(model.removeTableErrors(draft, ti, errs));
+            }}
+          >
+            Remove table
+          </button>
+        </div>
+      </div>
+      <div className="row">
+        {word(`${t.id}.title`, "Heading")}
+        {word(`${t.id}.sub`, "Line under the heading")}
+      </div>
+    </>
+  );
 
   return (
     <s-page>
@@ -353,6 +441,7 @@ export function Editor(props: {
                       onClick={(e) => {
                         e.preventDefault();
                         setTab(tabOf(p.id!));
+                        setAt(p.table);
                         setTimeout(() =>
                           document.getElementById(p.id!)?.focus(),
                         );
@@ -492,6 +581,64 @@ export function Editor(props: {
               </div>
             </div>
           )}
+          {tab === "media" && (
+            <div className="col">
+              <label>
+                Fit video
+                <input
+                  id="video"
+                  type="url"
+                  className={badVideo ? "field bad" : "field"}
+                  aria-invalid={badVideo || undefined}
+                  aria-describedby={badVideo ? "video-err" : undefined}
+                  value={video}
+                  onChange={(e) =>
+                    setDraft(model.setVideo(draft, e.target.value))
+                  }
+                />
+              </label>
+              {badVideo ? (
+                <div id="video-err" className="fielderr">
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    aria-hidden="true"
+                  >
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 7.5v5.5M12 16.5v.01" />
+                  </svg>
+                  <span>{VIDEO_ERROR}</span>
+                </div>
+              ) : (
+                <p className="help">A YouTube or Vimeo link, one per chart.</p>
+              )}
+              {site && (
+                <div className="video">
+                  <div className="thumb" aria-hidden="true">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="#fff">
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
+                  </div>
+                  <div className="grow">
+                    <strong>{site} video</strong>
+                    <div className="help">Plays inside the size guide.</div>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn2"
+                    onClick={() => setDraft(model.setVideo(draft, ""))}
+                  >
+                    Remove video
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           {tab === "table" && (
             <>
               <div className="row">
@@ -510,40 +657,43 @@ export function Editor(props: {
                 <s-stack direction="inline" gap="small-200">
                   <s-button
                     disabled={t.rows.length >= model.MAX_ROWS}
-                    onClick={() => setDraft(model.addSize(draft))}
+                    onClick={() => edit(model.addSize(view))}
                   >
                     Add size
                   </s-button>
                   <s-button
                     disabled={t.columns.length >= model.MAX_COLUMNS}
-                    onClick={() => setDraft(model.addMeasurement(draft))}
+                    onClick={() => edit(model.addMeasurement(view))}
                   >
                     Add measurement
                   </s-button>
                 </s-stack>
               </div>
+              {ti > 0 && !t.rows.length && tableHead}
               {t.rows.length ? (
                 <ChartTable
-                  draft={draft}
-                  errors={errors}
-                  problems={listed}
+                  key={t.id}
+                  draft={view}
+                  errors={model.focusErrors(errors, ti)}
+                  problems={listed.filter((p) => p.table === ti)}
                   dropped={drops.flatMap((x) => x.cells)}
-                  onChange={setDraft}
+                  onChange={edit}
                   onPaste={() => setPasting(true)}
                   onRemove={(sel) => {
-                    setDraft(model.remove(draft, sel));
+                    edit(model.remove(view, sel));
                     // Cell findings name sizes by position, so they move up too.
                     if (!notice?.fieldErrors) return;
-                    const left = model.removeErrors(
-                      draft,
-                      sel,
-                      notice.fieldErrors,
+                    const left = model.focusErrors(
+                      model.removeErrors(
+                        view,
+                        sel,
+                        model.focusErrors(notice.fieldErrors, ti),
+                      ),
+                      ti,
                     );
-                    // With none left, the banner goes, as after a fix and save.
-                    if (Object.keys(left).length)
-                      setLocal({ ...notice, fieldErrors: left });
-                    else dismiss();
+                    settle(left);
                   }}
+                  head={ti > 0 && tableHead}
                 />
               ) : (
                 <div className="blank">
@@ -582,6 +732,57 @@ export function Editor(props: {
                 Type in inches or centimeters. Fitted converts the other unit
                 for shoppers automatically.
               </p>
+              {ti === 0 &&
+                tables.slice(1).map((x, j) => (
+                  <div key={x.id} className="tablerow">
+                    <div>
+                      <strong>
+                        {`Table ${j + 2}${title(j + 1) && `: ${title(j + 1)}`}`}
+                      </strong>
+                      <div className="help">
+                        {model.measuresOf(draft, j + 1)
+                          ? `${model.measuresOf(draft, j + 1)}, shown under its own heading in the same chart`
+                          : "Shown under its own heading in the same chart"}
+                      </div>
+                    </div>
+                    <div className="row start">
+                      <button
+                        type="button"
+                        className="btn2"
+                        disabled={full}
+                        onClick={() => clone(j + 1)}
+                      >
+                        Clone table
+                      </button>
+                      <button
+                        type="button"
+                        className="btn2"
+                        onClick={() => setAt(j + 1)}
+                      >
+                        Edit table
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              <div className="row start">
+                <button
+                  type="button"
+                  className="btn2"
+                  disabled={full}
+                  onClick={() => {
+                    setDraft(model.addTable(draft));
+                    setAt(tables.length);
+                  }}
+                >
+                  Add another table
+                </button>
+                {ti > 0 && (
+                  <span className="help">
+                    A chart holds up to 4 tables. Shoppers see them in order,
+                    each under its heading.
+                  </span>
+                )}
+              </div>
               <label>
                 Note under the table
                 <textarea
@@ -609,6 +810,18 @@ export function Editor(props: {
                   <span className="help">
                     PNG or JPG, shown in the How to measure tab
                   </span>
+                </button>
+                {/* The same link as the Media tab's, edited there. */}
+                <button
+                  type="button"
+                  className="drop"
+                  onClick={() => {
+                    setTab("media");
+                    setTimeout(() => document.getElementById("video")?.focus());
+                  }}
+                >
+                  <strong>Fit video</strong>
+                  <span className="help">Paste a YouTube or Vimeo link</span>
                 </button>
               </div>
             </>

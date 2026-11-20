@@ -37,6 +37,17 @@ import {
   addStep,
   removeStep,
   MAX_STEPS,
+  MAX_TABLES,
+  addTable,
+  canRemoveTable,
+  cloneTable,
+  focus,
+  focusErrors,
+  measuresOf,
+  removeTable,
+  removeTableErrors,
+  setVideo,
+  tableTitle,
 } from "./model";
 
 const chart = (): ChartInput =>
@@ -257,19 +268,59 @@ describe("cell problems, in the Editor board's words", () => {
     const r = toInput({ ...d, name: "" });
     if (!("fieldErrors" in r)) throw new Error("expected errors");
     expect(problems(d, r.fieldErrors)).toEqual([
-      { id: "name", where: "Chart name", long: "Give the chart a name" },
+      {
+        id: "name",
+        where: "Chart name",
+        long: "Give the chart a name",
+        table: 0,
+      },
       {
         id: "cell-h-c2",
         where: "Column 4 name",
         long: "Name this measurement",
+        table: 0,
       },
       {
         id: "cell-xs-bust",
         where: "XS, Bust",
         short: "runs from high to low",
         long: "Put the smaller number first, like 31–32.",
+        table: 0,
       },
-      { id: "cell-r2-size", where: "Size 3", long: "Name this size" },
+      {
+        id: "cell-r2-size",
+        where: "Size 3",
+        long: "Name this size",
+        table: 0,
+      },
+    ]);
+  });
+
+  it("checks every table, and names a later table's problems in it", () => {
+    let d = toDraft(chart(), "ACTIVE");
+    d = setCell(d, "r1", "len", "0");
+    d = setWord(d, "t2.len", "");
+    const r = toInput(d);
+    if (!("fieldErrors" in r)) throw new Error("expected errors");
+    expect(r.fieldErrors).toEqual({
+      "content.words.t2.len": "Name this measurement",
+      "content.tables.1.rows.0.cells.len":
+        "Use a number above 0, or clear the cell.",
+    });
+    expect(problems(d, r.fieldErrors)).toEqual([
+      {
+        id: "cell-h-len",
+        where: "Column 2 name",
+        long: "Name this measurement",
+        table: 1,
+      },
+      {
+        id: "cell-r1-len",
+        where: "XS, Measurement",
+        short: "is 0",
+        long: "Use a number above 0, or clear the cell.",
+        table: 1,
+      },
     ]);
   });
 
@@ -280,16 +331,32 @@ describe("cell problems, in the Editor board's words", () => {
         "content.words.t1.xs.us": "Too long",
         "content.tables.0.rows.1.cells.bust": "Use a number above 0",
         "content.tables.1.rows.0.cells.len": "Use a number above 0",
+        "content.tables.5.rows": "Unknown",
+        "content.videoUrl": "Use an https link from YouTube or Vimeo.",
       }),
     ).toEqual([
-      { id: "cell-xs-us", where: "XS, US size", long: "Too long" },
+      { id: "cell-xs-us", where: "XS, US size", long: "Too long", table: 0 },
       {
         id: "cell-s-bust",
         where: "S, Bust",
         short: undefined,
         long: "Use a number above 0",
+        table: 0,
       },
-      { where: "", long: "Use a number above 0" },
+      {
+        id: "cell-r1-len",
+        where: "XS, Length",
+        short: undefined,
+        long: "Use a number above 0",
+        table: 1,
+      },
+      { where: "", long: "Unknown", table: 0 },
+      {
+        id: "video",
+        where: "Fit video",
+        long: "Use an https link from YouTube or Vimeo.",
+        table: 0,
+      },
     ]);
   });
 });
@@ -341,12 +408,36 @@ describe("storedDraft", () => {
     expect(storedDraft(r, "DRAFT", {})).toBeNull();
   });
 
-  it.each([
-    "content.v",
-    "content.roundTo",
-    "content.tables.1.rows.0.cells.len",
-  ])("gives up when a finding (%s) is outside what the editor shows", (key) => {
-    expect(storedDraft(raw(), "DRAFT", { [key]: "Wrong" })).toBeNull();
+  it.each(["content.v", "content.roundTo", "content.tables.1.merges"])(
+    "gives up when a finding (%s) is outside what the editor shows",
+    (key) => {
+      expect(storedDraft(raw(), "DRAFT", { [key]: "Wrong" })).toBeNull();
+    },
+  );
+
+  it("opens a later table's bad values and dropped numbers, as the first table's", () => {
+    const r = raw();
+    r.content.tables[1].rows[0].cells.len = [0];
+    r.content.tables[1].rows[0].cells.sz = [6];
+    const d = storedDraft(r, "DRAFT", {
+      "content.tables.1.rows.0.cells.len": "Use a number above 0",
+      "content.words.t2.title": "Too long",
+    })!;
+    expect(d.cells["r1.len"]).toBe("0");
+    const errs = toInput(d);
+    expect("fieldErrors" in errs && Object.keys(errs.fieldErrors)).toContain(
+      "content.tables.1.rows.0.cells.len",
+    );
+    expect(dropped(d)).toEqual([
+      expect.objectContaining({
+        col: "sz",
+        cells: ["r1.sz"],
+        heading: "Saving drops 1 value in Size",
+      }),
+    ]);
+    // A later table's column it doesn't have still can't be named.
+    r.content.tables[1].rows[0].cells.bust = [30];
+    expect(storedDraft(r, "DRAFT", {})).toBeNull();
   });
 
   // A stored cell outside a measurement that dropped() couldn't name.
@@ -995,12 +1086,136 @@ describe("How to measure steps", () => {
         id: "m-m1-text",
         where: "Step 2",
         long: "Must be text of at most 500 characters",
+        table: 0,
       },
       {
         id: "tips",
         where: "Fit tips",
         long: "Must be text of at most 2000 characters",
+        table: 0,
       },
     ]);
+  });
+});
+
+describe("tables", () => {
+  it("edits a later table with the table tools once it's focused, and puts it back", () => {
+    const d = toDraft(chart(), "DRAFT");
+    const view = focus(d, 1);
+    expect(view.content.tables.map((t) => t.id)).toEqual(["t2", "t1"]);
+    const back = focus(addMeasurement(addSize(view)), 1);
+    expect(back.content.tables.map((t) => t.id)).toEqual(["t1", "t2"]);
+    expect(back.content.tables[1].rows).toHaveLength(2);
+    expect(back.content.tables[1].columns).toHaveLength(3);
+    expect(focus(d, 0)).toBe(d);
+    const errs = {
+      "content.tables.0.rows": "a",
+      "content.tables.1.rows.0.cells.len": "b",
+      "content.tables.2.rows": "c",
+      name: "d",
+    };
+    expect(focusErrors(errs, 1)).toEqual({
+      "content.tables.1.rows": "a",
+      "content.tables.0.rows.0.cells.len": "b",
+      "content.tables.2.rows": "c",
+      name: "d",
+    });
+    expect(focusErrors(focusErrors(errs, 1), 1)).toEqual(errs);
+  });
+
+  it("adds a table with the first table's sizes, which saves as it is", () => {
+    const d = addTable(toDraft(chart(), "DRAFT"));
+    const t = d.content.tables[2];
+    expect(t.columns).toEqual([{ id: "c2", kind: "size" }]);
+    expect(t.rows.map((r) => d.content.words[`${t.id}.${r.id}.c2`])).toEqual([
+      "XS",
+      "S",
+    ]);
+    expect(d.content.words[`${t.id}.c2`]).toBe("Size");
+    expect(() => validateChart(input(d))).not.toThrow();
+    expect(addTable(addTable(d)).content.tables).toHaveLength(MAX_TABLES);
+  });
+
+  it("clones a table with its own ids, words and typed values", () => {
+    let d = toDraft(chart(), "DRAFT");
+    d = setWord(d, "t2.title", "Garment measurements");
+    d = setCell(d, "r1", "len", "25.5");
+    d = cloneTable(d, 1);
+    const [, t2, t3] = d.content.tables;
+    expect(t3.id).not.toBe(t2.id);
+    const [size, len] = t3.columns.map((c) => c.id);
+    const row = t3.rows[0].id;
+    expect(d.content.words[`${t3.id}.title`]).toBe("Garment measurements");
+    expect(d.content.words[`${t3.id}.${len}`]).toBe("Length");
+    expect(d.content.words[`${t3.id}.${row}.${size}`]).toBe("XS");
+    expect(d.cells[`${row}.${len}`]).toBe("25.5");
+    const saved = input(d);
+    expect(validateChart(saved).content.tables[2].rows[0].cells).toEqual({
+      [len]: [25.5],
+    });
+    // Ids stay unique across the chart.
+    const ids = saved.content.tables.flatMap((t) => [
+      t.id,
+      ...t.columns.map((c) => c.id),
+      ...t.rows.map((r) => r.id),
+    ]);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(cloneTable(cloneTable(d, 0), 0).content.tables).toHaveLength(4);
+  });
+
+  it("removes a later table with its words and values, never the first or the fit finder's", () => {
+    let d = setCell(toDraft(chart(), "DRAFT"), "r1", "len", "26");
+    const errs = {
+      "content.tables.1.rows.0.cells.len": "a",
+      "content.words.t2.len": "b",
+      "content.tables.2.rows": "c",
+      "content.tables.0.rows": "d",
+    };
+    expect(canRemoveTable(d, 0)).toBe(false);
+    expect(removeTableErrors(d, 1, errs)).toEqual({
+      "content.tables.1.rows": "c",
+      "content.tables.0.rows": "d",
+    });
+    const gone = removeTable(d, 1);
+    expect(gone.content.tables.map((t) => t.id)).toEqual(["t1"]);
+    expect(
+      Object.keys(gone.content.words).filter((k) => k.startsWith("t2.")),
+    ).toEqual([]);
+    expect(gone.cells["r1.len"]).toBeUndefined();
+    d = { ...d, content: { ...d.content, fit: { table: "t2" } as never } };
+    expect(canRemoveTable(d, 1)).toBe(false);
+    expect(removeTable(d, 1)).toBe(d);
+  });
+
+  it("names a table by its heading and lists its measurements", () => {
+    const d = setWord(toDraft(chart(), "DRAFT"), "t2.title", " Garment ");
+    expect(tableTitle(d, 1)).toBe("Garment");
+    expect(tableTitle(d, 0)).toBe("");
+    const two = addMeasurement(focus(d, 1));
+    const col = two.content.tables[0].columns[2].id;
+    const back = focus(setWord(two, `t2.${col}`, "Sleeve"), 1);
+    expect(measuresOf(back, 1)).toBe("Length and sleeve");
+    expect(measuresOf(addTable(d), 2)).toBe("");
+  });
+});
+
+describe("fit video", () => {
+  it("saves an https YouTube or Vimeo link, trimmed, and leaves out an emptied one", () => {
+    const d = setVideo(toDraft(chart(), "DRAFT"), " https://vimeo.com/1 ");
+    expect(input(d).content.videoUrl).toBe("https://vimeo.com/1");
+    const none = setVideo(d, "");
+    expect("videoUrl" in none.content).toBe(false);
+    expect("videoUrl" in input(none).content).toBe(false);
+  });
+
+  it.each([
+    "http://youtube.com/watch?v=x",
+    "https://www.tiktok.com/@a/video/1",
+    "youtube.com/watch?v=x",
+  ])("refuses %s in the editor's words", (link) => {
+    const r = toInput(setVideo(toDraft(chart(), "DRAFT"), link));
+    expect("fieldErrors" in r && r.fieldErrors).toEqual({
+      "content.videoUrl": "Use an https link from YouTube or Vimeo.",
+    });
   });
 });
