@@ -252,7 +252,6 @@ const systemOf = (country: string) =>
       .map((p) => p.split(":") as [string, string]),
   ).get(country) ?? country;
 const FORM = 'form[action*="/cart/add"]';
-const UNITS: Unit[] = ["in", "cm", "lb", "kg"];
 
 /**
  * Tells Fitted what the shopper did in the guide (ARCHITECTURE §12): the type,
@@ -427,8 +426,9 @@ export function render(root: HTMLElement, g: Guide) {
   };
 
   // The theme's size controls: radios and selects around the product form
-  // nearest the block, never past its section, skipping variant ids and
-  // quantities. Read fresh each time, as themes redraw them.
+  // nearest the block, never past its section, skipping variant ids,
+  // quantities and the guide's own fields. Read fresh each time, as themes
+  // redraw them.
   const controls = () => {
     const block = root.closest(".fitted-guide");
     const end = block?.closest(".shopify-section");
@@ -438,7 +438,11 @@ export function render(root: HTMLElement, g: Guide) {
       "input[type=radio], select",
     );
     return [...(els ?? [])].filter(
-      (el) => !el.disabled && el.name !== "id" && el.name !== "quantity",
+      (el) =>
+        !el.disabled &&
+        el.name !== "id" &&
+        el.name !== "quantity" &&
+        !el.closest(".fitted-guide"),
     );
   };
   const option = (el: HTMLSelectElement, size: string) =>
@@ -544,14 +548,14 @@ export function render(root: HTMLElement, g: Guide) {
     // A measurement as typed, like "35.5", "35,5 cm" or "90cm": in the unit
     // it names, else the units the guide shows. Leaving the field writes it
     // out, so the shopper sees which unit Fitted read.
+    const kinds = (c: Measure): Unit[] =>
+      ["in", "cm"].includes(c.unit ?? g.unit) ? ["in", "cm"] : ["lb", "kg"];
     const typed = (text: string, c: Measure) => {
       const m = /^\s*(\d+(?:[.,]\d+)?)\s*(.*)$/.exec(text);
       const value = Number(m?.[1].replace(",", "."));
       if (!m || !isNum(value)) return undefined;
-      const own = c.unit ?? g.unit;
-      const kind = own === "in" || own === "cm" ? ["in", "cm"] : ["lb", "kg"];
-      const unit = kind.find((u) => [u, norm(t(u))].includes(norm(m[2])));
-      return { value, unit: (unit ?? shown(own, c.convert, sys)) as Unit };
+      const unit = kinds(c).find((u) => [u, norm(t(u))].includes(norm(m[2])));
+      return { value, unit: unit ?? shown(c.unit ?? g.unit, c.convert, sys) };
     };
     const written = (m: { value: number; unit: Unit }) =>
       `${String(m.value).replace(".", comma ? "," : ".")} ${t(m.unit)}`;
@@ -612,8 +616,9 @@ export function render(root: HTMLElement, g: Guide) {
       if (q.kind === "usual_size" && hint)
         form.append(h("p", { class: "fitted-fine" }, hint));
     }
-    const out = h("div", { class: "fitted-result", "aria-live": "polite" });
-    form.append(out);
+    const out = h("div", { class: "fitted-result" });
+    const status = h("p", { class: "fitted-sr", role: "status" });
+    form.append(out, status);
     const fields = (q: Question) => [
       ...form.querySelectorAll<HTMLInputElement | HTMLSelectElement>(
         `[data-q="${q.id}"]`,
@@ -641,7 +646,9 @@ export function render(root: HTMLElement, g: Guide) {
         for (const el of fields(q))
           if (q.kind === "measure")
             el.value =
-              isObj(a) && isNum(a.value) && UNITS.includes(a.unit as Unit)
+              isObj(a) &&
+              isNum(a.value) &&
+              kinds(col(q.col)).includes(a.unit as Unit)
                 ? written(a as { value: number; unit: Unit })
                 : "";
           else if (el.type === "radio")
@@ -706,40 +713,54 @@ export function render(root: HTMLElement, g: Guide) {
         ...(r ? [h("h3", { class: "fitted-h3" }, ...head)] : []),
         ...(said ? [h("p", { class: "fitted-note" }, said)] : []),
       );
+      status.textContent = [...out.children]
+        .map((k) => k.textContent)
+        .join(" ");
     };
     let sent: string | undefined; // the last result Fitted was told
-    const update = (changed: boolean) => {
+    const update = () => {
       const a = read();
       try {
         if (key) sessionStorage.setItem(key, JSON.stringify(a));
       } catch {
         // No storage: the answers last until the page goes.
       }
+      // Every answer a shopper can't skip, and one besides a fit to go on.
       const ready =
-        Object.values(a).some((x) => x !== undefined) &&
+        qs.some((q) => q.kind !== "fit" && a[q.id] !== undefined) &&
         qs.every(
           (q) => (q.kind === "measure" && q.optional) || a[q.id] !== undefined,
         );
       const r = ready
         ? findSize({ unit: g.unit, tables: g.tables, fit }, a)
         : null;
-      // Leaving a field, or picking, tells Fitted a result unlike the last.
-      if (changed && r && (r.row ?? "") !== sent) {
+      // A result unlike the last one told.
+      if (r && (r.row ?? "") !== sent) {
         sent = r.row ?? "";
         track(root, "fit_result", r.row ?? undefined);
       }
       show(r);
     };
-    form.addEventListener("submit", (e) => e.preventDefault());
-    form.addEventListener("input", () => update(false));
-    form.addEventListener("change", (e) => {
-      const el = e.target as HTMLInputElement;
-      const q = measured.find((x) => x.id === el.dataset.q);
+    // The result follows a field the shopper leaves, a pick, or Enter, and
+    // none of the form's events reach a theme's form around the guide.
+    const settle = (el: HTMLInputElement) => {
+      const q = measured.find((x) => x.id === el.dataset?.q);
       const m = q && typed(el.value, col(q.col));
       if (m) el.value = written(m);
-      update(true);
-    });
-    update(false);
+      update();
+    };
+    for (const type of ["submit", "input", "change"])
+      form.addEventListener(type, (e) => {
+        e.stopPropagation();
+        if (type === "submit") e.preventDefault();
+        if (type !== "input")
+          settle(
+            (type === "change"
+              ? e.target
+              : document.activeElement) as HTMLInputElement,
+          );
+      });
+    update();
     form.hidden = true;
     return form;
   }

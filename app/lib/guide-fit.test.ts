@@ -87,7 +87,10 @@ const data = (f: unknown = {}, over: Record<string, unknown> = {}) =>
   });
 // The guide with the extension's words on its root, as the block passes them,
 // on the page, where its radios work.
-const open = (json: string, root = document.createElement("div")) => {
+const open = (
+  json: string,
+  root: HTMLElement = document.createElement("div"),
+) => {
   const g = parseGuide(json);
   if (!g) throw new Error("expected a guide");
   for (const [k, v] of Object.entries<string>(en))
@@ -318,6 +321,15 @@ describe("Find my size", () => {
       "We recommend M",
       "Your 35.5 in bust falls in M on this chart.",
     ]);
+    // A fit alone is nothing to go on: no "no size fits" before a measurement.
+    sessionStorage.clear();
+    const bare = open(
+      data({ questions: [fit.questions[0], fit.questions[2]] }),
+    );
+    pick(bare, "q3", "regular");
+    expect(said(bare)).toBeNull();
+    type(bare, "q1", "35.5");
+    expect(said(bare)?.[0]).toBe("We recommend M");
   });
 
   it("recommends the Storefront board's size, saying why", () => {
@@ -327,6 +339,10 @@ describe("Find my size", () => {
       "Your 35.5 in bust falls in M on this chart, and you like a regular fit.",
     ]);
     expect(root.querySelector(".fitted-result h3 span")?.textContent).toBe("M");
+    // Screen readers hear it from a status line that's there from the start.
+    expect(root.querySelector(".fitted-fit [role=status]")?.textContent).toBe(
+      "We recommend M Your 35.5 in bust falls in M on this chart, and you like a regular fit.",
+    );
   });
 
   // The engine's tests' shoppers, in the words the shopper reads.
@@ -483,6 +499,14 @@ describe("Find my size", () => {
     expect(type(root, "q1", "90")).toBe("90 cm");
   });
 
+  it("names the ease in the unit the shopper typed, rounded as the chart rounds", () => {
+    const root = open(data({ ease: { bust: 2 } }));
+    expect(answer(root, { q1: "90 cm", q2: "m", q3: "regular" })).toEqual([
+      "We recommend L",
+      "Your 90 cm bust with 5 cm of ease falls between M and L on this chart, and you like a regular fit, so L.",
+    ]);
+  });
+
   it("assumes the shopper's units: centimeters and kilograms outside the US, with commas where they're written", () => {
     const weight = { id: "q6", kind: "measure", col: "wt", optional: true };
     const root = open(
@@ -533,6 +557,12 @@ describe("Find my size", () => {
       JSON.stringify({ q1: { value: 35, unit: "mm" } }),
     );
     expect(fields(open(data()), "q1")[0].value).toBe("");
+    // A weight's unit under a question that measures a length.
+    sessionStorage.setItem(
+      key,
+      JSON.stringify({ q1: { value: 35, unit: "kg" } }),
+    );
+    expect(fields(open(data()), "q1")[0].value).toBe("");
     sessionStorage.setItem(key, "{");
     expect(fields(open(data()), "q1")[0].value).toBe("");
   });
@@ -571,6 +601,66 @@ describe("Find my size", () => {
       ),
     ).toEqual(Array(6).fill("radio"));
   });
+
+  it("keeps its form's events from a theme's form around the guide, so Enter adds nothing to the cart", () => {
+    // The embed's link placed inside a theme's product form.
+    document.body.innerHTML = `<form action="/cart/add"><div class="fitted-guide"><div></div></div></form>`;
+    const theme = document.querySelector("form")!;
+    const heard: string[] = [];
+    for (const type of ["submit", "input", "change"])
+      theme.addEventListener(type, (e) => heard.push(e.type));
+    const root = open(
+      data(),
+      document.querySelector<HTMLElement>(".fitted-guide > div")!,
+    );
+    const pane = root.querySelector<HTMLFormElement>(".fitted-fit")!;
+    // What pressing Enter in the bust field fires.
+    const enter = new Event("submit", { bubbles: true, cancelable: true });
+    pane.dispatchEvent(enter);
+    expect(enter.defaultPrevented).toBe(true);
+    answer(root, { q1: "35.5", q2: "m", q3: "regular" });
+    expect(heard).toEqual([]);
+    expect(said(root)?.[0]).toBe("We recommend M");
+  });
+});
+
+describe("Find my size beside the theme's product form", () => {
+  // The block above a theme's size radios, whose size rows' ids are their
+  // lowercased labels, as the usual-size answers' values are.
+  const page = () => {
+    document.body.innerHTML = `<div class="shopify-section"><div><div class="fitted-guide"><dialog><div class="fitted-body"></div></dialog></div>${[
+      "XS",
+      "S",
+      "M",
+    ]
+      .map(
+        (s) =>
+          `<input type="radio" name="Size" value="${s}"${s === "M" ? " checked" : ""}>`,
+      )
+      .join("")}<form action="/cart/add"></form></div></div>`;
+    const root = document.querySelector<HTMLElement>(".fitted-body")!;
+    return open(data(), root);
+  };
+  const theme = (size: string) =>
+    document.querySelector<HTMLInputElement>(
+      `input[name="Size"][value="${size}"]`,
+    )!;
+
+  it("never takes Find my size's own answers for the theme's size controls", () => {
+    sessionStorage.setItem(
+      "fitted:answers:c-tops000001",
+      JSON.stringify({ q2: "s", q3: "regular" }),
+    );
+    const root = page();
+    // Opens on the size the form shows, not the shopper's usual size.
+    expect(texts(root, ".fitted-on th")).toEqual(["M"]);
+    root.querySelector<HTMLElement>("tbody tr:nth-child(2) td")!.click();
+    const go = root.querySelector<HTMLButtonElement>("[data-fitted-select]")!;
+    expect([go.hidden, go.textContent]).toEqual([false, "Select S"]);
+    go.click();
+    expect(theme("S").checked).toBe(true);
+    expect(fields(root, "q2")[0].value).toBe("s");
+  });
 });
 
 describe("Find my size's events (§12)", () => {
@@ -589,14 +679,18 @@ describe("Find my size's events (§12)", () => {
     const beacon = vi.spyOn(navigator, "sendBeacon").mockReturnValue(true);
     const root = block();
     beacon.mockClear(); // the open
-    // Typing alone tells nothing.
+    answer(root, { q1: "35.5", q2: "m", q3: "regular" });
+    // Typing, digit by digit, changes nothing until the shopper leaves the
+    // field: no passing result, and nothing told.
     const [bust] = fields(root, "q1");
-    bust.value = "35.5";
-    fire(bust, "input");
-    pick(root, "q2", "m");
-    expect(beacon).not.toHaveBeenCalled();
-    pick(root, "q3", "regular");
+    for (const text of ["3", "37"]) {
+      bust.value = text;
+      fire(bust, "input");
+      expect(said(root)?.[0]).toBe("We recommend M");
+    }
+    expect(beacon).toHaveBeenCalledTimes(1);
     fire(bust, "change");
+    // Relaxed leaves a pick between sizes as it is: the same result again.
     pick(root, "q3", "relaxed");
     type(root, "q1", "50");
     expect(sent(beacon)).toEqual([
