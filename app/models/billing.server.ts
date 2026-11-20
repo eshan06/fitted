@@ -1,4 +1,3 @@
-import type { Shop } from "@prisma/client";
 import db from "../db.server";
 import { unauthenticated } from "../shopify.server";
 
@@ -64,13 +63,12 @@ export async function getPlan(
   shop: string,
   { recheck = false } = {},
 ): Promise<PlanState> {
-  let row: Shop | null = null;
-  try {
-    if (!recheck) row = await readRow(shop);
-  } catch (error) {
-    // A failed read is a failed check, so no screen errors over it.
-    return unconfirmed(shop, error);
-  }
+  const read = recheck
+    ? null
+    : await readRow(shop).catch((error: unknown) => ({ error }));
+  // A failed read is a failed check, so no screen errors over it.
+  if (read && "error" in read) return unconfirmed(shop, read.error);
+  const row = read;
   // No await from here on, so two calls can't both start a check.
   const last = lastCheck.get(shop);
   // Join a check in flight. A re-check joins only one that hasn't started, so its read comes after the request.
