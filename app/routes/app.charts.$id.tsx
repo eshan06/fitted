@@ -21,7 +21,7 @@ import {
   canReadProducts,
   pricingPlansUrl,
 } from "../models/admin.server";
-import { readFile, uploadImage } from "../models/files.server";
+import { discardImage, readFile, uploadImage } from "../models/files.server";
 import { IMAGE_MAX, imageType } from "../lib/image-file";
 import {
   ChartConflictError,
@@ -121,7 +121,11 @@ async function upload(request: Request, admin: Admin, shop: string) {
     );
   try {
     return {
-      image: await uploadImage(admin, { name: file.name, mime, bytes }),
+      image: await uploadImage(admin, shop, {
+        name: file.name,
+        mime,
+        bytes,
+      }),
     };
   } catch (err) {
     if (!(err instanceof AdminApiError)) throw err;
@@ -134,10 +138,34 @@ async function upload(request: Request, admin: Admin, shop: string) {
   }
 }
 
+// An image the editor uploaded and then let go before a save (Replace,
+// Remove, Discard, leaving): deleted from Files, but only with the `sig` its
+// upload answered, so no other file is ever touched.
+async function discard(request: Request, admin: Admin, shop: string) {
+  const form = await request.formData().catch(() => null);
+  const id = form?.get("id");
+  const sig = form?.get("sig");
+  if (typeof id !== "string" || typeof sig !== "string")
+    return data(
+      { fieldErrors: { id: "Must be an uploaded image" } },
+      { status: 422 },
+    );
+  try {
+    if (!(await discardImage(admin, shop, id, sig)))
+      return fail(403, "not_fitted", "Fitted didn't upload this file.");
+    return { discarded: id };
+  } catch (err) {
+    if (!(err instanceof AdminApiError)) throw err;
+    logShopifyError(shop, err);
+    return fail(502, "shopify", "Shopify didn't delete the image.");
+  }
+}
+
 export const action = async ({ request, params }: ActionFunctionArgs) => {
   const { admin, session, redirect } = await authenticate.admin(request);
   if (request.headers.get("content-type")?.startsWith("multipart/form-data"))
     return upload(request, admin, session.shop);
+  if (request.method === "DELETE") return discard(request, admin, session.shop);
   const isNew = params.id === "new";
   const id = isNew ? "" : gid(params.id);
   const body = await request.json().catch(() => null);
@@ -252,10 +280,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   }
 };
 
-// An image upload changes no chart, so the chart isn't read again, and a new
-// chart keeps the handle its loader minted.
+// An image's upload or discard changes no chart, so the chart isn't read
+// again, and a new chart keeps the handle its loader minted.
 export const shouldRevalidate: ShouldRevalidateFunction = (a) =>
-  a.formEncType !== "multipart/form-data" && a.defaultShouldRevalidate;
+  a.formEncType !== "multipart/form-data" &&
+  a.formMethod?.toUpperCase() !== "DELETE" &&
+  a.defaultShouldRevalidate;
 
 // The Editor board's states: the editor itself, loading, couldn't load, and a
 // stored chart that fails the checks (opened with its values marked when the
@@ -292,6 +322,7 @@ export default function ChartEditor() {
         updatedAt={s.updatedAt}
         invalid={s.fieldErrors}
         historyMissed={missed}
+        imageUrl={s.measureImageUrl}
       />
     );
   const invalid = loaded.mode === "edit" ? loaded.stored.fieldErrors : null;

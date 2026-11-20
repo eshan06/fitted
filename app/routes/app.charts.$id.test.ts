@@ -121,6 +121,7 @@ const result = async (p: Promise<unknown>) => {
 let logs: string[];
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.stubEnv("SHOPIFY_API_SECRET", "test-secret");
   logs = [];
   vi.spyOn(console, "log").mockImplementation((line) => logs.push(line));
   m.authenticate.mockResolvedValue({
@@ -145,7 +146,10 @@ beforeEach(() => {
     (url) => new Response(null, { status: 302, headers: { Location: url } }),
   );
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
 
 describe("loading the editor", () => {
   it("loads the chart by its numeric id", async () => {
@@ -604,11 +608,21 @@ const notImage = {
 
 describe("uploading a How to measure image", () => {
   it("doesn't read the chart again after an upload, so a new chart keeps its handle", () => {
-    const after = (formEncType: string, defaultShouldRevalidate = true) =>
-      shouldRevalidate({ formEncType, defaultShouldRevalidate } as Parameters<
-        typeof shouldRevalidate
-      >[0]);
+    const after = (
+      formEncType: string,
+      defaultShouldRevalidate = true,
+      formMethod = "POST",
+    ) =>
+      shouldRevalidate({
+        formEncType,
+        defaultShouldRevalidate,
+        formMethod,
+      } as Parameters<typeof shouldRevalidate>[0]);
     expect(after("multipart/form-data")).toBe(false);
+    // Nor after a discard.
+    expect(after("application/x-www-form-urlencoded", true, "DELETE")).toBe(
+      false,
+    );
     expect(after("application/json")).toBe(true);
     expect(after("application/json", false)).toBe(false);
   });
@@ -617,7 +631,13 @@ describe("uploading a How to measure image", () => {
     const { calls, sent } = fakeFiles();
     expect(await postImage(image("My tops (1).png"))).toEqual({
       status: 200,
-      body: { image: { id: "gid://shopify/MediaImage/7", url: IMAGE_URL } },
+      body: {
+        image: {
+          id: "gid://shopify/MediaImage/7",
+          url: IMAGE_URL,
+          sig: expect.any(String),
+        },
+      },
     });
     expect(calls[0].variables).toEqual({
       input: [
@@ -700,9 +720,127 @@ describe("uploading a How to measure image", () => {
     await vi.advanceTimersByTimeAsync(2_000);
     vi.useRealTimers();
     expect((await answer).body).toEqual({
-      image: { id: "gid://shopify/MediaImage/7", url: IMAGE_URL },
+      image: {
+        id: "gid://shopify/MediaImage/7",
+        url: IMAGE_URL,
+        sig: expect.any(String),
+      },
     });
     const polls = calls.filter((c) => c.query.includes("FittedImageFile"));
     expect(polls).toHaveLength(3);
+  });
+});
+
+describe("discarding an image the editor let go", () => {
+  const FILE = "gid://shopify/MediaImage/7";
+  // The sig an upload of MediaImage/7 answers, for this shop.
+  const sigFor = async () => {
+    const { sent } = fakeFiles();
+    const { body } = await postImage(image());
+    sent.mockRestore();
+    admin.graphql.mockReset();
+    return (body as { image: { sig: string } }).image.sig;
+  };
+  const drop = (fields: Record<string, string>, id = "42") =>
+    result(
+      action({
+        request: new Request(`https://fitted.test/app/charts/${id}`, {
+          method: "DELETE",
+          body: new URLSearchParams(fields),
+        }),
+        params: { id },
+      } as unknown as ActionFunctionArgs),
+    );
+  const deleted = (userErrors: object[] = []) =>
+    admin.graphql.mockResolvedValue(
+      Response.json({
+        data: {
+          fileDelete: {
+            deletedFileIds: userErrors.length ? null : [FILE],
+            userErrors,
+          },
+        },
+      }),
+    );
+
+  it("deletes a file Fitted uploaded from Shopify Files", async () => {
+    const sig = await sigFor();
+    deleted();
+    expect(await drop({ id: FILE, sig })).toEqual({
+      status: 200,
+      body: { discarded: FILE },
+    });
+    const [query, opts] = admin.graphql.mock.calls[0];
+    expect(query).toContain("fileDelete");
+    expect(opts.variables).toEqual({ ids: [FILE] });
+    // A new chart's editor discards too; no chart is touched.
+    deleted();
+    expect((await drop({ id: FILE, sig }, "new")).status).toBe(200);
+    expect(m.updateChart).not.toHaveBeenCalled();
+  });
+
+  it("answers done again when the file is already gone", async () => {
+    const sig = await sigFor();
+    deleted([
+      { field: ["fileIds"], message: "gone", code: "FILE_DOES_NOT_EXIST" },
+    ]);
+    expect(await drop({ id: FILE, sig })).toEqual({
+      status: 200,
+      body: { discarded: FILE },
+    });
+  });
+
+  it("refuses without a session before reading the body", async () => {
+    m.authenticate.mockRejectedValue(new Response(null, { status: 401 }));
+    await expect(drop({ id: FILE, sig: "x" })).rejects.toBeInstanceOf(Response);
+    expect(admin.graphql).not.toHaveBeenCalled();
+  });
+
+  it("never deletes a file Fitted didn't upload for this shop (403)", async () => {
+    const sig = await sigFor();
+    const refused = {
+      status: 403,
+      body: {
+        error: {
+          code: "not_fitted",
+          message: "Fitted didn't upload this file.",
+        },
+      },
+    };
+    // Another file, a made-up sig, and this file's sig from another shop.
+    expect(await drop({ id: "gid://shopify/MediaImage/8", sig })).toEqual(
+      refused,
+    );
+    expect(await drop({ id: FILE, sig: "made-up" })).toEqual(refused);
+    m.authenticate.mockResolvedValue({
+      admin,
+      session: { shop: "other.myshopify.com" },
+      redirect,
+    });
+    expect(await drop({ id: FILE, sig })).toEqual(refused);
+    expect(admin.graphql).not.toHaveBeenCalled();
+  });
+
+  it("refuses a discard without an id and sig (422)", async () => {
+    expect(await drop({ id: FILE })).toEqual({
+      status: 422,
+      body: { fieldErrors: { id: "Must be an uploaded image" } },
+    });
+    expect(admin.graphql).not.toHaveBeenCalled();
+  });
+
+  it("says Shopify didn't delete it, logging why (502)", async () => {
+    const sig = await sigFor();
+    deleted([{ field: ["fileIds"], message: "locked", code: "INVALID" }]);
+    expect(await drop({ id: FILE, sig })).toEqual({
+      status: 502,
+      body: {
+        error: { code: "shopify", message: "Shopify didn't delete the image." },
+      },
+    });
+    expect(JSON.parse(logs.at(-1)!)).toMatchObject({
+      level: "error",
+      shop: SHOP,
+    });
   });
 });

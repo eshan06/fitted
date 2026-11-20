@@ -25,7 +25,8 @@ vi.mock("@shopify/app-bridge-react", () => ({
     open ? <div data-testid="save-bar">{children}</div> : null,
   useAppBridge: () => bridge,
 }));
-const { default: ChartEditor } = await import("../../routes/app.charts.$id");
+const { default: ChartEditor, shouldRevalidate } =
+  await import("../../routes/app.charts.$id");
 
 (
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -87,6 +88,14 @@ const back = async () => {
   await settle();
 };
 
+const IMG = {
+  id: "gid://shopify/MediaImage/9",
+  url: "https://cdn.shopify.com/s/files/1/files/measure-tops.png?v=1",
+  sig: "sig-9",
+};
+let uploads: { status: number; body: unknown }[] = [];
+// While set, a drawing's upload waits for it.
+let hold: Promise<unknown> | undefined;
 // Renders the editor route with a loader and an action that answer in turn.
 async function open(
   loaded: unknown[],
@@ -102,8 +111,23 @@ async function open(
       path: "/app/charts/:id",
       Component: Editing,
       HydrateFallback: () => null,
+      shouldRevalidate,
       loader,
       action: async ({ request }) => {
+        // A drawing's upload answers from `uploads`, in turn.
+        if (request.headers.get("content-type")?.includes("multipart")) {
+          const file = (await request.formData()).get("file") as File;
+          sent.push({ upload: file.name });
+          await hold;
+          const u = uploads.shift() ?? { status: 200, body: { image: IMG } };
+          return Response.json(u.body, { status: u.status });
+        }
+        // A let-go upload's discard.
+        if (request.method === "DELETE") {
+          const f = await request.formData();
+          sent.push({ discard: f.get("id"), sig: f.get("sig") });
+          return Response.json({ discarded: f.get("id") });
+        }
         sent.push(await request.json());
         const a = answers.shift() ?? { status: 200, body: { ok: true } };
         if ("redirect" in a) return redirect(a.redirect);
@@ -1437,6 +1461,21 @@ describe("How to measure and Fit tips tabs", () => {
   const openTab = async (label: string) => {
     await act(async () => tab(label).click());
   };
+  // Picks a file in the drawing's hidden file input.
+  const pick = async (name: string, bytes: number[]) => {
+    const el = byLabel("Measuring drawing file");
+    const file = new File([new Uint8Array(bytes)], name);
+    Object.defineProperty(el, "files", { value: [file], configurable: true });
+    await act(async () =>
+      el.dispatchEvent(new Event("change", { bubbles: true })),
+    );
+    await settle();
+  };
+  const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0];
+  afterEach(() => {
+    uploads = [];
+    hold = undefined;
+  });
 
   it("switches tabs, adds and names steps, removes one, and saves them", async () => {
     const { sent } = await open([stored()]);
@@ -1450,6 +1489,10 @@ describe("How to measure and Fit tips tabs", () => {
     expect(text()).toContain("No steps yet");
     expect(text()).toContain(
       "Tell shoppers where to hold the tape, one step per measurement.",
+    );
+    expect(text()).toContain("Add a measuring drawing");
+    expect(text()).toContain(
+      "PNG or JPG. Number its lines to match the steps.",
     );
     await click("Add step");
     await click("Add step");
@@ -1486,5 +1529,228 @@ describe("How to measure and Fit tips tabs", () => {
     expect(text()).toContain("20 of 2,000 characters");
     await click("Save");
     expect(saved(sent[0]).content.words.tips).toBe("Runs small.\nSize up.");
+  });
+
+  it("uploads a drawing, shows it from Shopify, and saves it with the chart", async () => {
+    const { sent } = await open([stored()]);
+    await openTab("How to measure");
+    await pick("measure-tops.png", PNG);
+    expect(sent).toEqual([{ upload: "measure-tops.png" }]);
+    const img = document.querySelector<HTMLImageElement>(".drawing img")!;
+    expect(img.src).toBe(IMG.url);
+    expect(img.alt).toBe("Measuring drawing");
+    expect(text()).toContain("measure-tops.png");
+    expect(button("Replace")).toBeTruthy();
+    await click("Save");
+    expect(saved(sent[1]).measureImage).toBe(IMG.id);
+  });
+
+  it("refuses a GIF or WebP before sending it, as not a PNG or JPG", async () => {
+    const { sent } = await open([stored()]);
+    await openTab("How to measure");
+    await pick("measure-tops.webp", [0x52, 0x49, 0x46, 0x46]);
+    expect(sent).toEqual([]);
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      "measure-tops.webp isn't a PNG or JPGSave it as one and add it again.",
+    );
+    await pick("measure-tops.png", [0x47, 0x49, 0x46, 0x38]);
+    expect(text()).toContain("measure-tops.png isn't a PNG or JPG");
+    expect(sent).toEqual([]);
+    // Try again picks another file.
+    const picker = vi.spyOn(byLabel("Measuring drawing file"), "click");
+    await click("Try again");
+    expect(picker).toHaveBeenCalledOnce();
+  });
+
+  it("shows the upload's progress until Shopify answers", async () => {
+    let answer!: (v?: unknown) => void;
+    hold = new Promise((r) => (answer = r));
+    await open([stored()]);
+    await openTab("How to measure");
+    await pick("measure-tops.png", PNG);
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(
+      "Uploading measure-tops.png",
+    );
+    await act(async () => answer());
+    await settle();
+    expect(text()).not.toContain("Uploading");
+    expect(document.querySelector(".drawing img")).not.toBeNull();
+  });
+
+  it("says an image over Shopify's 20 MB didn't upload, without sending it", async () => {
+    const { sent } = await open([stored()]);
+    await openTab("How to measure");
+    const el = byLabel("Measuring drawing file");
+    const file = new File([new Uint8Array(PNG)], "huge.png");
+    Object.defineProperty(file, "size", { value: 20 * 1024 * 1024 + 1 });
+    Object.defineProperty(el, "files", { value: [file], configurable: true });
+    await act(async () =>
+      el.dispatchEvent(new Event("change", { bubbles: true })),
+    );
+    await settle();
+    expect(text()).toContain("huge.png didn't upload");
+    expect(sent).toEqual([]);
+  });
+
+  it("adds the drawing from the box under the size table", async () => {
+    await open([stored()]);
+    expect(text()).toContain("PNG or JPG, shown in the How to measure tab");
+    const picker = vi.spyOn(byLabel("Measuring drawing file"), "click");
+    await click(
+      "How-to-measure imagePNG or JPG, shown in the How to measure tab",
+    );
+    expect(picker).toHaveBeenCalledOnce();
+    expect(tab("How to measure").getAttribute("aria-pressed")).toBe("true");
+    await pick("measure-tops.png", PNG);
+    expect(document.querySelector(".drawing img")).not.toBeNull();
+  });
+
+  it("says a drawing didn't upload, keeps the chart without one, and tries again", async () => {
+    uploads = [
+      { status: 502, body: { error: { code: "upload", message: "x" } } },
+    ];
+    const { sent } = await open([stored()]);
+    await openTab("How to measure");
+    await pick("measure-tops.png", PNG);
+    expect(text()).toContain("measure-tops.png didn't upload");
+    expect(text()).toContain(
+      "Shopify didn't answer, so the chart has no drawing yet.",
+    );
+    // Nothing changed, so there's nothing to save.
+    expect(document.querySelector('[data-testid="save-bar"]')).toBeNull();
+    await click("Try again");
+    expect(sent).toEqual([
+      { upload: "measure-tops.png" },
+      { upload: "measure-tops.png" },
+    ]);
+    expect(document.querySelector(".drawing img")).not.toBeNull();
+  });
+
+  it("shows a stored drawing by its name, and Remove saves the chart without it", async () => {
+    const s = stored();
+    const withImage = {
+      ...s,
+      stored: {
+        ...s.stored,
+        chart: {
+          ...s.stored.chart,
+          measureImage: "gid://shopify/MediaImage/3",
+        },
+        measureImageUrl:
+          "https://cdn.shopify.com/s/files/1/files/tops%20chart.jpg?v=2",
+      },
+    };
+    const { sent } = await open([withImage]);
+    await openTab("How to measure");
+    expect(text()).toContain("tops chart.jpg");
+    await click("Remove");
+    expect(text()).toContain("Add a measuring drawing");
+    await click("Save");
+    expect(saved(sent[0]).measureImage).toBeUndefined();
+  });
+
+  it("says a file the server refuses isn't a PNG or JPG", async () => {
+    uploads = [
+      {
+        status: 422,
+        body: {
+          fieldErrors: { measureImage: "Use a PNG or JPG up to 20 MB." },
+        },
+      },
+    ];
+    await open([stored()]);
+    await openTab("How to measure");
+    await pick("measure-tops.png", PNG);
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      "measure-tops.png isn't a PNG or JPG",
+    );
+  });
+
+  // Each upload answers the next MediaImage id, signed.
+  const img = (n: number) => ({
+    status: 200,
+    body: {
+      image: {
+        id: `gid://shopify/MediaImage/${n}`,
+        url: IMG.url,
+        sig: `sig-${n}`,
+      },
+    },
+  });
+  const discards = (sent: Record<string, unknown>[]) =>
+    sent.filter((b) => "discard" in b);
+
+  // The stored chart holding MediaImage `n`.
+  const withImage = (n: number, updatedAt?: string) => {
+    const s = stored(updatedAt);
+    const measureImage = `gid://shopify/MediaImage/${n}`;
+    return {
+      ...s,
+      stored: {
+        ...s.stored,
+        chart: { ...s.stored.chart, measureImage },
+        measureImageUrl: `https://cdn.shopify.com/s/files/1/files/stored-${n}.png`,
+      },
+    };
+  };
+
+  it("deletes an upload replaced, removed or discarded before a save, never a stored one", async () => {
+    const { sent } = await open([withImage(4)]);
+    await openTab("How to measure");
+    uploads = [img(10), img(11), img(12)];
+    // Replacing the stored drawing leaves it alone.
+    await pick("a.png", PNG);
+    expect(discards(sent)).toEqual([]);
+    await pick("b.png", PNG);
+    expect(discards(sent)).toEqual([
+      { discard: "gid://shopify/MediaImage/10", sig: "sig-10" },
+    ]);
+    await click("Remove");
+    await pick("c.png", PNG);
+    await click("Discard");
+    expect(discards(sent)).toEqual([
+      { discard: "gid://shopify/MediaImage/10", sig: "sig-10" },
+      { discard: "gid://shopify/MediaImage/11", sig: "sig-11" },
+      { discard: "gid://shopify/MediaImage/12", sig: "sig-12" },
+    ]);
+    expect(text()).toContain("stored-4.png");
+  });
+
+  it("keeps a saved upload, and deletes one that answers after Discard", async () => {
+    // The save reloads the chart with the drawing, which remounts the editor.
+    const { sent } = await open([
+      stored(),
+      withImage(9, "2026-11-19T10:05:00Z"),
+    ]);
+    await openTab("How to measure");
+    await pick("measure-tops.png", PNG);
+    await click("Save");
+    expect(saved(sent[1]).measureImage).toBe(IMG.id);
+    await openTab("How to measure");
+    await click("Remove");
+    let answer!: (v?: unknown) => void;
+    hold = new Promise((r) => (answer = r));
+    uploads = [img(10)];
+    await pick("late.png", PNG);
+    await click("Discard");
+    expect(text()).not.toContain("Uploading");
+    await act(async () => answer());
+    await settle();
+    expect(discards(sent)).toEqual([
+      { discard: "gid://shopify/MediaImage/10", sig: "sig-10" },
+    ]);
+  });
+
+  it("deletes an unsaved upload when the merchant leaves the editor", async () => {
+    const { sent } = await open(
+      [stored()],
+      [],
+      ["/app/charts", "/app/charts/42"],
+    );
+    await openTab("How to measure");
+    await pick("measure-tops.png", PNG);
+    await back();
+    expect(text()).toContain("Left for /app/charts");
+    expect(discards(sent)).toEqual([{ discard: IMG.id, sig: IMG.sig }]);
   });
 });
