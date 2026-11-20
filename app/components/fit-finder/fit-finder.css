@@ -90,11 +90,34 @@
   font-weight: 600;
   white-space: nowrap;
 }
-.fit-finder .badge.ok::before {
+.fit-finder .badge.ok::before,
+.fit-finder .badge.warn::before {
   content: "";
   width: 16px;
   height: 2px;
   background: currentColor;
+}
+/* Not showing: a dashed line, the canvas's warn badge. */
+.fit-finder .badge.warn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #161616;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.fit-finder .badge.warn::before {
+  background: repeating-linear-gradient(
+    90deg,
+    #161616 0 4px,
+    transparent 4px 7px
+  );
+}
+.fit-finder .live > span:not(.badge) {
+  flex: 1 1 320px;
+}
+.fit-finder .live .err {
+  color: #8e1f0b;
 }
 /* What shoppers see: a picture of the storefront's last step and result. */
 .fit-finder .shopper .step {

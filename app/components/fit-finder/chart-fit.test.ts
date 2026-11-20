@@ -164,7 +164,7 @@ group("how Fitted picks a size", () => {
   it("says the canvas's three lines for Women's tops", () => {
     expect(howItPicks(named())).toEqual([
       "Match the shopper's bust measurement to the Women's tops chart.",
-      "Relaxed fit moves one size up. Snug moves one size down, never below XS.",
+      "Between two sizes, pick the larger one, or the smaller for a snug fit. Otherwise, relaxed fit moves one size up and snug fit one size down, never past XS or XL.",
       "No measurement? Start from the size they usually wear.",
     ]);
   });
@@ -191,8 +191,26 @@ group("how Fitted picks a size", () => {
     ];
     expect(howItPicks(c)).toEqual([
       "Start from the size they usually wear.",
-      "Relaxed fit moves one size up. Snug moves one size down, never below XS.",
+      "Between two sizes, pick the larger one, or the smaller for a snug fit. Otherwise, relaxed fit moves one size up and snug fit one size down, never past XS or XL.",
     ]);
+  });
+
+  // The fit line says what findSize does: a relaxed pick between M and L is L, not XL.
+  it("matches findSize, which never moves a pick that falls between two sizes", () => {
+    const c = named({ bust: 1.25 }); // 37.5 in + 1.25 is between M (37-38) and L (39-40)
+    const pick = (fit: string, value = 37.5) =>
+      findSize(
+        { unit: c.unit, tables: [c.table], fit: { ...c.fit, stretch: "none" } },
+        { q1: { value, unit: "in" }, q3: fit },
+      ).row;
+    expect([pick("snug"), pick("regular"), pick("relaxed")]).toEqual([
+      "m",
+      "l",
+      "l",
+    ]);
+    // In a size, the fit moves it, never past either end.
+    expect([pick("snug", 36), pick("relaxed", 36)]).toEqual(["s", "l"]);
+    expect([pick("snug", 32), pick("relaxed", 40)]).toEqual(["xs", "xl"]);
   });
 });
 

@@ -132,7 +132,7 @@ export function howItPicks(c: FitChart) {
   else if (usual) lines.push("Start from the size they usually wear.");
   if (qs.some((q) => q.kind === "fit"))
     lines.push(
-      `Relaxed fit moves one size up. Snug moves one size down, never below ${size(c, c.table.rows[0].id)}.`,
+      `Between two sizes, pick the larger one, or the smaller for a snug fit. Otherwise, relaxed fit moves one size up and snug fit one size down, never past ${size(c, c.table.rows[0].id)} or ${size(c, c.table.rows.at(-1)!.id)}.`,
     );
   if (cols.length && usual)
     lines.push("No measurement? Start from the size they usually wear.");
