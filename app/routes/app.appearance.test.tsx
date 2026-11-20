@@ -21,6 +21,7 @@ const {
   default: Appearance,
   action,
   loader,
+  shouldRevalidate,
 } = await import("./app.appearance");
 
 (
@@ -288,6 +289,7 @@ async function open() {
       HydrateFallback: () => null,
       loader: (args) => loader(args as LoaderFunctionArgs),
       action: (args) => action(args as ActionFunctionArgs),
+      shouldRevalidate,
     },
   ]);
   const div = document.body.appendChild(document.createElement("div"));
@@ -587,7 +589,14 @@ function fakeFiles({
               userErrors: [],
             },
           }
-        : poll(statuses.length > 1 ? statuses.shift()! : statuses[0]);
+        : q.includes("FittedFontDrop")
+          ? {
+              fileDelete: {
+                deletedFileIds: ["gid://shopify/GenericFile/1"],
+                userErrors: [],
+              },
+            }
+          : poll(statuses.length > 1 ? statuses.shift()! : statuses[0]);
   store.admin.graphql.mockImplementation(async (query, opts) => {
     if (!query.includes("FittedFont")) return base(query, opts);
     calls.push({ query, variables: opts?.variables });
@@ -596,7 +605,11 @@ function fakeFiles({
   const sent = vi
     .spyOn(globalThis, "fetch")
     .mockImplementation(async () => new Response(null, { status: target }));
-  return { calls, sent };
+  // The files made and not deleted again.
+  const left = () =>
+    calls.filter((c) => c.query.includes("FittedFontCreate")).length -
+    calls.filter((c) => c.query.includes("FittedFontDrop")).length;
+  return { calls, sent, left };
 }
 const WOFF2 = [0x77, 0x4f, 0x46, 0x32, 0, 1, 0, 0];
 const font = (name = "Sora.woff2", bytes = WOFF2, size = bytes.length) => {
@@ -604,13 +617,14 @@ const font = (name = "Sora.woff2", bytes = WOFF2, size = bytes.length) => {
   b.set(bytes);
   return new File([b], name);
 };
-const postFont = async (file: File) => {
+const postFont = async (file: File, signal?: AbortSignal) => {
   const body = new FormData();
   body.append("file", file);
   const r = (await action({
     request: new Request("https://fitted.test/app/appearance", {
       method: "POST",
       body,
+      signal,
     }),
   } as ActionFunctionArgs)) as {
     type?: string;
@@ -721,6 +735,54 @@ describe("uploading a font", () => {
     expect(await postFont(font())).toEqual(failed);
   });
 
+  it("deletes the file it made when Shopify doesn't keep it, and only that one", async () => {
+    for (const statuses of [["FAILED"], ["READY"]]) {
+      const files = fakeFiles({ statuses, url: "https://evil.test/x.woff2" });
+      expect((await postFont(font())).status).toBe(502);
+      expect(files.left()).toBe(0);
+      expect(files.calls.at(-1)!.variables).toEqual({
+        ids: ["gid://shopify/GenericFile/1"],
+      });
+    }
+    // A failed delete is logged, and the answer stays the same.
+    const files = fakeFiles({ statuses: ["FAILED"] });
+    const base = store.admin.graphql.getMockImplementation()!;
+    store.admin.graphql.mockImplementation(async (q, o) =>
+      q.includes("FittedFontDrop")
+        ? json({ errors: [{ message: "Throttled" }] })
+        : base(q, o),
+    );
+    expect((await postFont(font())).status).toBe(502);
+    expect(files.left()).toBe(1);
+    expect(logs.map((l) => JSON.parse(l).msg)).toContain(
+      "Shopify didn't delete the dropped font",
+    );
+  });
+
+  it("deletes the file when the screen stops waiting for it", async () => {
+    // Gone once Shopify has made the file: it's deleted again.
+    const files = fakeFiles({ statuses: ["PROCESSING", "READY"] });
+    const gone = new AbortController();
+    const base = store.admin.graphql.getMockImplementation()!;
+    store.admin.graphql.mockImplementation(async (q, o) => {
+      if (q.includes("FittedFontCreate")) gone.abort();
+      return base(q, o);
+    });
+    expect((await postFont(font(), gone.signal)).status).toBe(502);
+    expect(files.left()).toBe(0);
+
+    // Gone before that: no file is made at all.
+    const early = fakeFiles();
+    const left = new AbortController();
+    early.sent.mockImplementation(async () => {
+      left.abort();
+      return new Response(null, { status: 204 });
+    });
+    expect((await postFont(font(), left.signal)).status).toBe(502);
+    expect(early.calls).toHaveLength(1);
+    expect(early.calls[0].query).toContain("FittedFontStage");
+  });
+
   it("waits while Shopify processes the file, and gives up after 20 seconds", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
     const run = async () => {
@@ -817,7 +879,7 @@ describe("font upload screen", () => {
 
   // The staged upload's POST waits until `release` is called.
   const holdUpload = () => {
-    const { calls, sent } = fakeFiles();
+    const { calls, sent, left } = fakeFiles();
     let release = () => {};
     sent.mockImplementation(
       () =>
@@ -825,7 +887,7 @@ describe("font upload screen", () => {
           release = () => r(new Response(null, { status: 204 }));
         }),
     );
-    return { calls, release: () => release() };
+    return { calls, left, release: () => release() };
   };
   const button = (label: string) =>
     [...document.querySelectorAll("button")].find(
@@ -887,18 +949,85 @@ describe("font upload screen", () => {
     expect(retry().hasAttribute("disabled")).toBe(false);
   });
 
-  it("drops an upload when Match my theme is picked while it runs", async () => {
-    const upload = holdUpload();
+  // The settings write waits until `release` is called.
+  const holdSave = () => {
+    let release = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const base = store.admin.graphql.getMockImplementation()!;
+    store.admin.graphql.mockImplementation(async (q, o) => {
+      if (q.includes("SaveFittedSettings")) await gate;
+      return base(q, o);
+    });
+    return { release: () => release() };
+  };
+
+  it.each(["before", "after"])(
+    "keeps a font picked while a save runs, uploaded %s the save ends",
+    async (when) => {
+      const upload = holdUpload();
+      await open();
+      await type(byId("label"), "Fit guide");
+      const save = holdSave();
+      await click("Save");
+      await type(labelled("Font"), "upload");
+      await choose(font("Sora-Regular.woff2"));
+      const [first, second] =
+        when === "before" ? [upload, save] : [save, upload];
+      first.release();
+      await settle();
+      second.release();
+      await settle();
+      expect(store.value!.text.en.label).toBe("Fit guide");
+      expect(text()).toContain("Sora-Regular.woff2");
+      expect(text()).toContain("saved in your Shopify Files");
+      await click("Save");
+      expect(store.value!.popup.font).toEqual({ fileUrl: FILE_URL });
+    },
+  );
+
+  it("holds Reload latest while a font uploads, and the upload reads nothing again", async () => {
     await open();
+    await type(byId("label"), "Mine");
+    store.digest = "other-tab";
+    await click("Save");
+    const upload = holdUpload();
     await type(labelled("Font"), "upload");
     await choose(font("Sora-Regular.woff2"));
-    await type(labelled("Font"), "theme");
+    const reload = () =>
+      [...document.querySelectorAll("s-button")].find(
+        (b) => b.textContent === "Reload latest",
+      )!;
+    expect(reload().hasAttribute("disabled")).toBe(true);
     upload.release();
     await settle();
-    expect(labelled("Font").value).toBe("theme");
-    expect(text()).not.toContain("Sora-Regular.woff2");
-    expect(saveBar()).toBeNull();
+    expect(reload().hasAttribute("disabled")).toBe(false);
+    expect(text()).toContain("saved in your Shopify Files");
+    // Settings changed elsewhere, yet the edits stay until Reload latest.
+    expect(byId("label").value).toBe("Mine");
   });
+
+  it.each(["Match my theme", "Discard"])(
+    "drops an upload when %s is picked while it runs, and deletes its file",
+    async (how) => {
+      const upload = holdUpload();
+      await open();
+      // An edit, so the save bar and its Discard show.
+      await type(byId("label"), "Fit guide");
+      await type(labelled("Font"), "upload");
+      await choose(font("Sora-Regular.woff2"));
+      if (how === "Discard") await click("Discard");
+      else {
+        await type(byId("label"), "Size guide");
+        await type(labelled("Font"), "theme");
+      }
+      upload.release();
+      await settle();
+      expect(labelled("Font").value).toBe("theme");
+      expect(text()).not.toContain("Sora-Regular.woff2");
+      expect(saveBar()).toBeNull();
+      expect(upload.left()).toBe(0);
+    },
+  );
 
   it("keeps a stored font through a refused Replace, and Discard brings it back after a failed one", async () => {
     const s = saved();
