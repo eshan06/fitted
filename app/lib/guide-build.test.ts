@@ -222,6 +222,18 @@ describe("size guide Liquid", () => {
     );
   });
 
+  it("names the chart and product for guide.js's events, except in the theme editor (§12)", () => {
+    expect(guide).toContain(
+      [
+        "{%- unless request.design_mode %}",
+        'data-chart="gid://shopify/Metaobject/{{ chart.system.id | escape }}"',
+        'data-product="gid://shopify/Product/{{ p.id | escape }}"',
+        "{%- endunless %}",
+      ].join("\n  "),
+    );
+    expect(guide.match(/data-(chart|product)=/g)).toHaveLength(2);
+  });
+
   it("prints the tab's styles only with the tab", () => {
     const style =
       /\{%- if place == 'tab' -%\}\s*<style>([\s\S]*?)<\/style>/.exec(

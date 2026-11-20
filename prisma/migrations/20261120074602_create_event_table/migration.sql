@@ -12,4 +12,4 @@ CREATE TABLE "Event" (
 );
 
 -- CreateIndex
-CREATE INDEX "Event_createdAt_idx" ON "Event"("createdAt");
+CREATE INDEX "Event_shop_createdAt_idx" ON "Event"("shop", "createdAt");

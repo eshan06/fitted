@@ -16,7 +16,7 @@ const h = vi.hoisted(() => {
     // What the session storage reads: its startup check, then the offline
     // session, which the endpoint doesn't need.
     session: { count: vi.fn(), findUnique: vi.fn() },
-    event: { createMany: vi.fn() },
+    event: { createMany: vi.fn(), count: vi.fn() },
   };
   return { secret, db };
 });
@@ -101,6 +101,7 @@ const written = () =>
 beforeEach(() => {
   vi.resetAllMocks();
   h.db.event.createMany.mockResolvedValue({ count: 1 });
+  h.db.event.count.mockResolvedValue(0);
   shop = `events-${randomUUID()}.myshopify.com`;
 });
 
@@ -197,6 +198,10 @@ describe("a size guide event", () => {
 });
 
 describe("the proxy signature", () => {
+  // A stopped clock, so a second can't tick between signing and the check.
+  beforeEach(() => {
+    vi.useFakeTimers({ now: Date.now(), toFake: ["Date"] });
+  });
   const other = "someone-else.myshopify.com";
   it.each<[string, Options]>([
     ["signed with another secret", { secret: "not-the-app-secret" }],
@@ -218,8 +223,19 @@ describe("the proxy signature", () => {
     },
   );
 
-  it("accepts a timestamp within 90 seconds", async () => {
-    expect(await status(open(), { ageSeconds: 85 })).toBe(204);
+  it("accepts a timestamp 90 seconds off", async () => {
+    expect(await status(open(), { ageSeconds: 90 })).toBe(204);
+    expect(await status(open(), { ageSeconds: -90 })).toBe(204);
+  });
+
+  it("refuses a shop that isn't a store's domain with 400, before the library logs it", async () => {
+    const logs = vi.spyOn(console, "log").mockImplementation(() => {});
+    const forged = 'x.example\n{"level":"error","msg":"forged"}';
+
+    expect(await status(open(), { forShop: forged })).toBe(400);
+
+    expect(logs).not.toHaveBeenCalled();
+    expect(h.db.session.findUnique).not.toHaveBeenCalled();
   });
 });
 
@@ -312,6 +328,21 @@ describe("the rate limits", () => {
     expect(await status(open())).toBe(204);
   });
 
+  it("start a minute over once it's up, even after the clock stepped back", async () => {
+    vi.useFakeTimers({
+      now: new Date("2026-11-20T12:00:00Z"),
+      toFake: ["Date"],
+    });
+    // A count started before the clock went back two hours ends last.
+    expect(await status(open(), { ip: "198.51.100.9" })).toBe(204);
+    vi.setSystemTime(new Date("2026-11-20T10:00:00Z"));
+    for (let i = 0; i < 30; i++) expect(await status(open())).toBe(204);
+    expect(await status(open())).toBe(429);
+
+    vi.setSystemTime(new Date("2026-11-20T10:01:00Z"));
+    expect(await status(open())).toBe(204);
+  });
+
   it("count the entry Shopify adds, never ones the browser sends before it", async () => {
     for (let i = 0; i < 30; i++)
       expect(
@@ -350,5 +381,45 @@ describe("the rate limits", () => {
 
     vi.setSystemTime(new Date("2026-11-21T00:00:00Z"));
     expect(await status(open(), { ip: "198.51.100.4" })).toBe(204);
+  }, 30_000);
+
+  it("count the rows a shop already stored today, once, so a restart keeps its cap", async () => {
+    vi.useFakeTimers({
+      now: new Date("2026-11-20T15:30:00Z"),
+      toFake: ["Date"],
+    });
+    h.db.event.count.mockResolvedValue(19_999);
+
+    expect(await status(open())).toBe(204);
+    expect(await status(open(), { ip: "198.51.100.4" })).toBe(429);
+
+    expect(h.db.event.count).toHaveBeenCalledExactlyOnceWith({
+      where: { shop, createdAt: { gte: new Date("2026-11-20T00:00:00Z") } },
+    });
+  });
+
+  it("answer 500 when today's rows can't be counted, and count them on the next event", async () => {
+    const logs = vi.spyOn(console, "log").mockImplementation(() => {});
+    h.db.event.count.mockRejectedValueOnce(new Error("database unavailable"));
+
+    expect(await status(open())).toBe(500);
+    expect(await status(open())).toBe(204);
+
+    expect(h.db.event.count).toHaveBeenCalledTimes(2);
+    expect(h.db.event.createMany).toHaveBeenCalledOnce();
+    const ours = logs.mock.calls.filter(([l]) => String(l).startsWith("{"));
+    expect(ours).toHaveLength(1);
+  });
+
+  it("keep 10,000 counts at most, dropping the one that started first", async () => {
+    for (let i = 0; i < 30; i++) expect(await status(open())).toBe(204);
+    expect(await status(open())).toBe(429);
+    for (let i = 0; i < 10_000; i++) {
+      const ip = `10.${i >> 16}.${(i >> 8) & 255}.${i & 255}`;
+      if ((await status(open(), { ip })) !== 204) throw new Error(`#${i}`);
+    }
+
+    // The first shopper's count was dropped, so theirs starts over.
+    expect(await status(open())).toBe(204);
   }, 30_000);
 });

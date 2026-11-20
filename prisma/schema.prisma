@@ -67,5 +67,7 @@ model Event {
   createdAt DateTime @default(now())
 
   @@id([shop, id])
-  @@index([createdAt])
+  // A shop's events by time, for its counts; Postgres 18 also skip-scans it
+  // for the 90-day delete across shops.
+  @@index([shop, createdAt])
 }
