@@ -1,14 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { findUnique, upsert, unauthenticatedAdmin, adminGraphql, fetchMock } =
-  vi.hoisted(() => ({
-    findUnique: vi.fn(),
-    upsert: vi.fn(),
-    unauthenticatedAdmin: vi.fn(),
-    adminGraphql: vi.fn(),
-    fetchMock: vi.fn(),
-  }));
-vi.mock("../db.server", () => ({ default: { shop: { findUnique, upsert } } }));
+const {
+  findUnique,
+  upsert,
+  updateMany,
+  unauthenticatedAdmin,
+  adminGraphql,
+  fetchMock,
+} = vi.hoisted(() => ({
+  findUnique: vi.fn(),
+  upsert: vi.fn(),
+  updateMany: vi.fn(),
+  unauthenticatedAdmin: vi.fn(),
+  adminGraphql: vi.fn(),
+  fetchMock: vi.fn(),
+}));
+vi.mock("../db.server", () => ({
+  default: { shop: { findUnique, upsert, updateMany } },
+}));
 vi.mock("../shopify.server", () => ({
   unauthenticated: { admin: unauthenticatedAdmin },
 }));
@@ -506,6 +515,104 @@ describe("getPlan", () => {
     await vi.advanceTimersByTimeAsync(7_000);
     await expect(billing.getPlan(shop)).resolves.toEqual(confirmed("pro"));
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  // A failed read is a failed check (§8): it never rejects, so no screen errors.
+  describe("when the database can't be read", () => {
+    const down = () =>
+      findUnique.mockRejectedValue(new Error("Can't reach database server"));
+
+    it("keeps the plan it last read, unconfirmed, and checks nothing", async () => {
+      findUnique.mockResolvedValueOnce(row("pro", 1, "pro", true));
+      await expect(billing.getPlan(shop)).resolves.toEqual(
+        confirmed("pro", true),
+      );
+
+      down();
+      await expect(billing.getPlan(shop)).resolves.toEqual(failed("pro", true));
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(unauthenticatedAdmin).not.toHaveBeenCalled();
+      const logged = vi.mocked(console.log).mock.calls.map(([line]) => line);
+      expect(logged.map((line) => JSON.parse(line))).toEqual([
+        {
+          level: "error",
+          msg: "Plan check failed",
+          shop,
+          route: "billing",
+          error: "Error: Can't reach database server",
+        },
+      ]);
+    });
+
+    it("reads as Free for a shop whose plan it never read", async () => {
+      findUnique.mockResolvedValueOnce(row("pro", 1));
+      await billing.getPlan(otherShop);
+
+      down();
+      await expect(billing.getPlan(shop)).resolves.toEqual(
+        failed("free", null),
+      );
+    });
+
+    it("keeps the plan the last check confirmed when a re-check can't read it", async () => {
+      findUnique.mockResolvedValueOnce(row("free", 6));
+      fetchMock.mockResolvedValue(subscription("pro"));
+      await expect(billing.getPlan(shop)).resolves.toEqual(confirmed("pro"));
+
+      down();
+      await vi.advanceTimersByTimeAsync(10_000);
+      await expect(billing.getPlan(shop, { recheck: true })).resolves.toEqual(
+        failed("pro"),
+      );
+      await expect(billing.getPlan(shop)).resolves.toEqual(failed("pro"));
+      expect(fetchMock).toHaveBeenCalledOnce();
+      expect(upsert).toHaveBeenCalledOnce();
+    });
+
+    it("reads as Free after an uninstall, not the plan from before", async () => {
+      findUnique.mockResolvedValueOnce(row("pro", 1, "pro", true));
+      await billing.getPlan(shop);
+      await billing.resetCachedPlan(shop);
+
+      down();
+      await expect(billing.getPlan(shop)).resolves.toEqual(
+        failed("free", null),
+      );
+    });
+
+    // A read answers with the row as it was when the read began.
+    it("keeps a plan a check confirmed during a slower read, not the read's older one", async () => {
+      let answer: (read: unknown) => void = () => {};
+      findUnique.mockReturnValueOnce(new Promise((r) => (answer = r)));
+      const load = billing.getPlan(shop);
+      findUnique.mockResolvedValueOnce(row("free", 6));
+      fetchMock.mockResolvedValue(subscription("pro"));
+      await expect(billing.getPlan(shop, { recheck: true })).resolves.toEqual(
+        confirmed("pro"),
+      );
+      answer(row("free", 6));
+      await load;
+
+      down();
+      await expect(billing.getPlan(shop)).resolves.toEqual(failed("pro"));
+    });
+
+    it("forgets the plan at an uninstall even when a read overlaps the reset", async () => {
+      findUnique.mockResolvedValueOnce(row("pro", 1));
+      await billing.getPlan(shop);
+      let reset = () => {};
+      updateMany.mockReturnValueOnce(new Promise<void>((r) => (reset = r)));
+      const uninstall = billing.resetCachedPlan(shop);
+      findUnique.mockResolvedValueOnce(row("pro", 1)); // read before the reset lands
+      await billing.getPlan(shop);
+      reset();
+      await uninstall;
+
+      down();
+      await expect(billing.getPlan(shop)).resolves.toEqual(
+        failed("free", null),
+      );
+    });
   });
 
   describe("welcome link re-check", () => {

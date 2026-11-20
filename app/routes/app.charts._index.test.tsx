@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act } from "react";
+import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { createRoutesStub } from "react-router";
@@ -16,9 +16,16 @@ const m = vi.hoisted(() => ({
   canReadProducts: vi.fn(),
   deleteChart: vi.fn(),
   startResolve: vi.fn(),
+  findUnique: vi.fn(),
 }));
 vi.mock("../shopify.server", () => ({
   authenticate: { admin: m.authenticate },
+}));
+vi.mock("../db.server", () => ({
+  default: { shop: { findUnique: m.findUnique } },
+}));
+vi.mock("@shopify/shopify-app-react-router/react", () => ({
+  AppProvider: ({ children }: { children: ReactNode }) => children,
 }));
 vi.mock("../models/chart.server", async (orig) => ({
   ...(await orig<typeof import("../models/chart.server")>()),
@@ -42,6 +49,7 @@ const {
   loader,
   filterRows,
 } = await import("./app.charts._index");
+const shell = await import("./app");
 type List = Awaited<Awaited<ReturnType<typeof loader>>["list"]>;
 type Row = Extract<List, { rows: unknown }>["rows"][number];
 
@@ -689,5 +697,78 @@ describe("the screen", () => {
         `Exported 3 charts to ${FILE}`,
       );
     });
+  });
+});
+
+// Regression (#171): a plan the database couldn't give failed the list's load,
+// so it showed its error state. The shell and the list on their real loaders
+// and the real plan read.
+describe("when the database can't give the plan", () => {
+  let root: ReturnType<typeof createRoot> | undefined;
+  afterEach(() => act(() => root?.unmount()));
+
+  it("lists the charts on Free under the plan banner, through Try again", async () => {
+    const billing = await vi.importActual<
+      typeof import("../models/billing.server")
+    >("../models/billing.server");
+    m.getPlan.mockImplementation(billing.getPlan);
+    m.findUnique.mockRejectedValue(new Error("Can't reach database server"));
+    m.chartPages.mockImplementation(() =>
+      pages(
+        [1, 2, 3].map((n) => stored(n, "ACTIVE", `2026-11-1${n}T10:00:00Z`)),
+      ),
+    );
+    const Stub = createRoutesStub([
+      {
+        path: "/app",
+        Component: shell.default,
+        HydrateFallback: () => null,
+        loader: (args) => shell.loader(args as LoaderFunctionArgs),
+        action: (args) => shell.action(args as ActionFunctionArgs),
+        shouldRevalidate: shell.shouldRevalidate,
+        children: [
+          {
+            path: "charts",
+            Component: SizeCharts,
+            loader: (args) => loader(args as LoaderFunctionArgs),
+          },
+        ],
+      },
+    ]);
+    const el = document.createElement("div");
+    document.body.replaceChildren(el);
+    root = createRoot(el);
+    await act(async () =>
+      root!.render(<Stub initialEntries={["/app/charts"]} />),
+    );
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+    const headings = () =>
+      [...el.querySelectorAll("s-banner")]
+        .map((b) => b.getAttribute("heading"))
+        .sort();
+    const shown = [
+      "Couldn't check your plan",
+      "Free plan: 3 of 3 Active charts",
+    ];
+    expect(headings()).toEqual(shown);
+    expect(el.textContent).toContain(
+      "Shopify didn't answer. Until it does, you keep Free and nothing is switched off.",
+    );
+    expect(el.querySelectorAll("s-table-row")).toHaveLength(3);
+
+    const retry = el.querySelector(
+      's-banner[heading="Couldn\'t check your plan"] s-button',
+    ) as HTMLElement;
+    const reads = m.getPlan.mock.calls.length;
+    await act(async () => retry.click());
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+    // The re-check, then the shell's and the list's loads again.
+    expect(m.getPlan.mock.calls.slice(reads)).toEqual([
+      [SHOP, { recheck: true }],
+      [SHOP],
+      [SHOP],
+    ]);
+    expect(headings()).toEqual(shown);
+    expect(el.querySelectorAll("s-table-row")).toHaveLength(3);
   });
 });

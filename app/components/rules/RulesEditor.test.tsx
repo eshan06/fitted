@@ -1,13 +1,57 @@
 // @vitest-environment happy-dom
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { createRoutesStub, data } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Rules } from "../../models/rules.server";
 
-// The route's server half needs Shopify and the database; the screen doesn't.
-vi.mock("../../shopify.server", () => ({ authenticate: { admin: vi.fn() } }));
-vi.mock("../../db.server", () => ({ default: {} }));
+// The route's server half needs Shopify and the database; the screen doesn't,
+// except inside the admin shell at the end, on the real loader and action.
+const server = vi.hoisted(() => ({
+  authenticate: vi.fn(),
+  findUnique: vi.fn(),
+  chartPages: vi.fn(),
+  countChartProducts: vi.fn(),
+  canReadProducts: vi.fn(),
+  pricingPlansUrl: vi.fn(),
+  getRules: vi.fn(),
+  saveRules: vi.fn(),
+  startResolve: vi.fn(),
+  latestResolve: vi.fn(),
+  countProducts: vi.fn(),
+  pickedNames: vi.fn(),
+  chartPreview: vi.fn(),
+}));
+vi.mock("../../shopify.server", () => ({
+  authenticate: { admin: server.authenticate },
+}));
+vi.mock("../../db.server", () => ({
+  default: { shop: { findUnique: server.findUnique } },
+}));
+vi.mock("../../models/admin.server", async (orig) => ({
+  ...(await orig<typeof import("../../models/admin.server")>()),
+  canReadProducts: server.canReadProducts,
+  pricingPlansUrl: server.pricingPlansUrl,
+}));
+vi.mock("../../models/chart.server", async (orig) => ({
+  ...(await orig<typeof import("../../models/chart.server")>()),
+  chartPages: server.chartPages,
+  countChartProducts: server.countChartProducts,
+}));
+vi.mock("../../models/rules.server", async (orig) => ({
+  ...(await orig<typeof import("../../models/rules.server")>()),
+  getRules: server.getRules,
+  saveRules: server.saveRules,
+  startResolve: server.startResolve,
+  latestResolve: server.latestResolve,
+  countProducts: server.countProducts,
+  pickedNames: server.pickedNames,
+  chartPreview: server.chartPreview,
+}));
+vi.mock("@shopify/shopify-app-react-router/react", () => ({
+  AppProvider: ({ children }: { children: ReactNode }) => children,
+}));
 const bridge = vi.hoisted(() => ({
   resourcePicker: vi.fn(),
   toast: { show: vi.fn() },
@@ -18,7 +62,9 @@ vi.mock("@shopify/app-bridge-react", () => ({
     open ? <div data-testid="save-bar">{children}</div> : null,
   useAppBridge: () => bridge,
 }));
-const { default: DisplayRules } = await import("../../routes/app.rules");
+const route = await import("../../routes/app.rules");
+const { default: DisplayRules } = route;
+const shell = await import("../../routes/app");
 
 (
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -846,5 +892,84 @@ describe("the three limits", () => {
     expect(saved.order).toHaveLength(199);
     expect(saved.order).not.toContain("gid://shopify/Metaobject/2");
     expect(saved.charts).not.toHaveProperty("gid://shopify/Metaobject/2");
+  });
+});
+
+// Regression (#171): a plan the database couldn't give failed the load and the
+// save, and the error page took the edits. The shell and the route on their
+// real loaders and action, and the real plan read.
+describe("when the database can't give the plan", () => {
+  it("keeps the rules and their edits on Free under the plan banner, and saves them", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const admin = { graphql: vi.fn() };
+    server.authenticate.mockResolvedValue({
+      admin,
+      session: { shop: "s.myshopify.com" },
+    });
+    server.findUnique.mockRejectedValue(
+      new Error("Can't reach database server"),
+    );
+    server.chartPages.mockImplementation(async function* () {
+      yield charts;
+    });
+    server.getRules.mockResolvedValue({ rules: ranked(), digest: "d1" });
+    server.saveRules.mockResolvedValue("d2");
+    server.latestResolve.mockResolvedValue(null);
+    server.countProducts.mockResolvedValue(340);
+    server.countChartProducts.mockResolvedValue({});
+    server.pickedNames.mockResolvedValue({});
+    server.chartPreview.mockResolvedValue(null);
+    server.canReadProducts.mockResolvedValue(true);
+    server.pricingPlansUrl.mockResolvedValue(PLANS);
+    const Stub = createRoutesStub([
+      {
+        path: "/app",
+        Component: shell.default,
+        HydrateFallback: () => null,
+        loader: (args) => shell.loader(args as LoaderFunctionArgs),
+        action: (args) => shell.action(args as ActionFunctionArgs),
+        shouldRevalidate: shell.shouldRevalidate,
+        children: [
+          {
+            path: "rules",
+            Component: DisplayRules,
+            loader: (args) => route.loader(args as LoaderFunctionArgs),
+            action: (args) => route.action(args as ActionFunctionArgs),
+          },
+        ],
+      },
+    ]);
+    root = createRoot(document.body.appendChild(document.createElement("div")));
+    await act(async () =>
+      root!.render(<Stub initialEntries={["/app/rules"]} />),
+    );
+    await settle();
+    const plan = () =>
+      document.querySelector('s-banner[heading="Couldn\'t check your plan"]');
+    expect(plan()?.textContent).toContain(
+      "Shopify didn't answer. Until it does, you keep Free and nothing is switched off.",
+    );
+    expect(document.querySelector("h2")?.textContent).toBe("Women's tops");
+    await act(async () =>
+      byLabel("Move Women's tops").dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
+      ),
+    );
+
+    await click(plan()!.querySelector("s-button") as HTMLElement);
+    expect(server.getRules).toHaveBeenCalledTimes(2); // the screen loaded again
+    expect(plan()).not.toBeNull();
+    expect(buttons("1. Shoes")).toHaveLength(1);
+    expect(saveBar()).not.toBeNull();
+
+    await click(buttons("Save")[0]);
+    expect(server.saveRules).toHaveBeenCalledExactlyOnceWith(
+      admin,
+      expect.objectContaining({ order: [B, A] }),
+      "d1",
+      "free",
+    );
+    expect(plan()).not.toBeNull();
+    expect(buttons("1. Shoes")).toHaveLength(1);
   });
 });
