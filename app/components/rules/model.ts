@@ -89,15 +89,9 @@ export function check(rules: Rules): FieldErrors {
   return errs;
 }
 
-const AT: Record<string, string> = {
-  key: "key",
-  op: "op",
-  value: "value",
-  ids: "value",
-};
-/** The element a field error marks. */
+/** The element a field error marks: the picker's button stands for its ids. */
 export const elementId = (path: string) => {
   const [, id, list, i, part = ""] = path.split(".");
-  const at = AT[part];
-  return `r${id?.split("/").pop()}-${list}-${i}-${at ?? "field"}`;
+  const at = part === "ids" ? "value" : part || "field";
+  return `r${id?.split("/").pop()}-${list}-${i}-${at}`;
 };
