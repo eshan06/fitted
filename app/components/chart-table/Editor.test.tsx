@@ -629,6 +629,103 @@ describe("chart editor screen", () => {
     expect(sent).toHaveLength(1);
   });
 
+  // A stored chart whose US size column holds numbers, written outside Fitted.
+  const numbersInText = () => {
+    const raw = chart() as unknown as {
+      content: {
+        tables: { columns: object[]; rows: { id: string; cells: object }[] }[];
+        words: Record<string, string>;
+      };
+    };
+    const t = raw.content.tables[0];
+    t.columns.push({ id: "us", kind: "country", country: "US" });
+    t.rows.push({ id: "s", cells: { us: [6] } });
+    t.rows[0].cells = { ...t.rows[0].cells, us: [2] };
+    Object.assign(raw.content.words, { "t1.us": "US size", "t1.s.size": "S" });
+    return {
+      mode: "edit",
+      stored: {
+        id: "gid://shopify/Metaobject/42",
+        status: "DRAFT",
+        updatedAt: "2026-11-19T10:00:00Z",
+        fieldErrors: {
+          "content.tables.0.rows.0.cells.us": "Not a measurement column",
+          "content.tables.0.rows.1.cells.us": "Not a measurement column",
+        },
+        raw,
+      },
+    };
+  };
+
+  it("warns before a save drops stored numbers in a country column, and keeps them once retyped", async () => {
+    const { sent } = await open([numbersInText()]);
+    const warn = document.querySelector('s-banner[tone="warning"]')!;
+    expect(warn.getAttribute("heading")).toBe(
+      "Saving drops 2 values in US size",
+    );
+    expect(warn.textContent).toContain(
+      "They were added outside Fitted as numbers, which this column can't hold: 2 (XS) and 6 (S).",
+    );
+    expect(warn.textContent).toContain("Type them in again to keep them.");
+    // The drop warning stands in for the checks' banner on these values.
+    expect(document.querySelector('s-banner[tone="critical"]')).toBeNull();
+    expect(byLabel("XS, US size").className).toContain("drop");
+    await type(byLabel("XS, US size"), "2");
+    expect(missed()).toBe("Saving drops 1 value in US size");
+    expect(text()).toContain("Type it in again to keep it.");
+    await type(byLabel("S, US size"), "6");
+    expect(missed()).toBeUndefined();
+    await click("Save");
+    const c = (sent[0].chart as ChartInput).content;
+    expect(c.words).toMatchObject({ "t1.xs.us": "2", "t1.s.us": "6" });
+    expect(c.tables[0].rows.map((r) => r.cells)).toEqual([
+      { bust: [31, 32] },
+      {},
+    ]);
+  });
+
+  it("drops the warning once the edits are stored, even when the status then fails", async () => {
+    await open(
+      [numbersInText()],
+      [
+        {
+          status: 502,
+          body: {
+            error: { code: "status", message: "Still a Draft" },
+            updatedAt: "2026-11-19T10:05:00Z",
+          },
+        },
+      ],
+    );
+    await type(byLabel("Chart status"), "ACTIVE");
+    expect(missed()).toBe("Saving drops 2 values in US size");
+    await click("Save");
+    expect(
+      document
+        .querySelector('s-banner[tone="critical"]')
+        ?.getAttribute("heading"),
+    ).toBe("Edits saved, but the chart is still a Draft");
+    expect(missed()).toBeUndefined();
+  });
+
+  it("says Remove column for a country column, and announces the selection", async () => {
+    await open([numbersInText()]);
+    await act(async () => byLabel("Column 3 name").focus());
+    const bar = document.querySelector('[role="status"]')!;
+    expect(bar.getAttribute("aria-live")).toBe("polite");
+    expect(bar.textContent).toContain("US size column selected");
+    await click("Remove column");
+    const dialog = document.querySelector("dialog")!;
+    expect(dialog.textContent).toContain("Remove the US size column?");
+    expect(dialog.textContent).toContain(
+      "Saving removes US size from all 2 sizes, 2 (XS) to 6 (S). Shoppers won't see a US size column.",
+    );
+    await act(async () =>
+      document.querySelector<HTMLElement>("dialog s-button[tone]")!.click(),
+    );
+    expect(missed()).toBeUndefined();
+  });
+
   it("removes a size after the dialog names its values, and an empty one straight away", async () => {
     await open([stored()]);
     await act(async () => byLabel("Size 1").focus());
