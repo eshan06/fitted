@@ -1,4 +1,5 @@
-import { Suspense } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import type {
   ActionFunctionArgs,
   HeadersFunction,
@@ -11,6 +12,7 @@ import {
   redirect,
   useFetcher,
   useLoaderData,
+  useLocation,
   useRouteError,
 } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
@@ -131,11 +133,20 @@ const PLAN_NAMES: Record<Plan, string> = {
 // The canvas's "Couldn't check plan" state, on every admin page.
 function PlanCheckBanner({ plan, checkFailed, confirmed }: PlanCheck) {
   const fetcher = useFetcher();
-  if (!checkFailed) return null;
+  // The screen's own s-page, whose supplemental-start slot puts a banner above
+  // its content, as drawn. undefined until looked for; null if it has none.
+  const { key } = useLocation();
+  const [page, setPage] = useState<Element | null>();
+  useEffect(() => setPage(document.querySelector("s-page")), [key]);
+  if (!checkFailed || page === undefined) return null;
   // A plan never confirmed has no date to give.
   const since = confirmed ? ` (last confirmed ${confirmed})` : "";
-  return (
-    <s-banner tone="warning" heading="Couldn't check your plan">
+  const banner = (
+    <s-banner
+      slot="supplemental-start"
+      tone="warning"
+      heading="Couldn't check your plan"
+    >
       <s-paragraph>
         {`Shopify didn't answer. Until it does, you keep ${PLAN_NAMES[plan]}${since} and nothing is switched off.`}
       </s-paragraph>
@@ -149,6 +160,7 @@ function PlanCheckBanner({ plan, checkFailed, confirmed }: PlanCheck) {
       </s-button>
     </s-banner>
   );
+  return page ? createPortal(banner, page) : banner;
 }
 
 // Shopify needs React Router to catch some thrown responses, so that their headers are included in the response.

@@ -196,12 +196,17 @@ describe("the shell's screen", () => {
           {
             index: true,
             Component: () => (
-              <p>
+              <s-page heading="Home">
                 Home screen <Link to="/app/charts">Size charts</Link>
-              </p>
+              </s-page>
             ),
           },
-          { path: "charts", Component: () => <p>Charts screen</p> },
+          {
+            path: "charts",
+            Component: () => (
+              <s-page heading="Size charts">Charts screen</s-page>
+            ),
+          },
         ],
       },
     ]);
@@ -251,6 +256,9 @@ describe("the shell's screen", () => {
     });
     const el = await show();
 
+    // Above the screen's content, in its page's slot for banners.
+    expect(banner(el)?.parentElement?.getAttribute("heading")).toBe("Home");
+    expect(banner(el)?.getAttribute("slot")).toBe("supplemental-start");
     expect(banner(el)?.getAttribute("tone")).toBe("warning");
     expect(banner(el)?.textContent).toContain(
       "Shopify didn't answer. Until it does, you keep Standard (last confirmed Nov 17, 2026) and nothing is switched off.",
@@ -277,7 +285,9 @@ describe("the shell's screen", () => {
 
     expect(el.textContent).toContain("Charts screen");
     expect(m.getPlan).toHaveBeenCalledTimes(2);
-    expect(banner(el)).not.toBeNull();
+    expect(banner(el)?.parentElement?.getAttribute("heading")).toBe(
+      "Size charts",
+    );
   });
 
   it("gives no date for a plan never confirmed, as on a new install", async () => {
