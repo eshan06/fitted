@@ -128,3 +128,47 @@ describe("rules draft", () => {
     expect(model.elementId(`charts.${A}.match.1`)).toBe("r1-match-1-field");
   });
 });
+
+describe("the banners' words", () => {
+  it("words a resolve job's reason for the didn't-finish banner", () => {
+    expect(model.reason(null)).toBe("Shopify stopped responding");
+    expect(model.reason("Shopify request failed")).toBe(
+      "Shopify stopped responding",
+    );
+    expect(model.reason("Shopify's bulk operation took too long")).toBe(
+      "Shopify's bulk operation took too long",
+    );
+    expect(model.reason("The job stopped before it finished")).toBe(
+      "Fitted stopped before it finished",
+    );
+    expect(model.reason("The saved display rules can't be read")).toBe(
+      "the saved display rules can't be read",
+    );
+  });
+
+  it("words saved rules' problems even when the stored document isn't rules", () => {
+    const charts = [{ id: A, name: "Tops" }];
+    const errors = {
+      [`charts.${A}.match.0.ids`]: "Pick at least one",
+      [`charts.${A}.match.1.key`]: "Rules can't use an app's own metafields",
+    };
+    const stored = {
+      charts: {
+        [A]: {
+          match: [
+            { field: "collection", ids: [] },
+            { field: "metafield", key: "app--1.fit" },
+          ],
+        },
+      },
+    };
+    expect(model.storedProblems(errors, stored, charts)).toEqual([
+      "Tops: a collection condition has nothing picked",
+      "Tops: a metafield condition belongs to an app, so rules can't use it",
+    ]);
+    expect(model.storedProblems(errors, "garbled", charts)).toEqual([
+      "Tops: pick at least one",
+      "Tops: rules can't use an app's own metafields",
+    ]);
+  });
+});

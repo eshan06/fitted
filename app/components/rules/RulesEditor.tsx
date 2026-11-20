@@ -1,22 +1,35 @@
 // The Rules board (Fitted canvas): one chart's conditions, the priority list,
-// and the save through App Bridge's save bar, which starts a resolve.
-import { useState } from "react";
+// the save through App Bridge's save bar, then the resolve's progress.
+import { useEffect, useState } from "react";
 import { Link, useFetcher, useRevalidator } from "react-router";
 import { SaveBar, useAppBridge } from "@shopify/app-bridge-react";
-import type { Condition, FieldErrors, Rules } from "../../models/rules.server";
+import type {
+  Condition,
+  FieldErrors,
+  Rules,
+  latestResolve,
+} from "../../models/rules.server";
 import * as model from "./model";
 import "./rules.css";
 
+type Job = Awaited<ReturnType<typeof latestResolve>>;
 export type Loaded = {
   charts: model.ChartInfo[];
   rules: Rules;
   digest: string | null;
-  damaged: FieldErrors | null;
+  damaged: string[] | null; // the saved rules' problems
+  job: Job;
+  products: number | null;
+  free: boolean;
+  plansUrl: string | null;
 };
 type Answer = {
   ok?: true;
+  after?: number; // the newest resolve when this one was asked for
   fieldErrors?: FieldErrors;
   error?: { code: string; message: string };
+  checkFailed?: boolean;
+  plansUrl?: string | null;
 };
 type Rule = Rules["charts"][string];
 type List = "match" | "exclude";
@@ -35,7 +48,7 @@ export const COPY: Record<string, string[]> = {
   ],
   plan: [
     "This change needs the Standard plan",
-    "On Free, tag, product type, vendor and metafield conditions keep working but can't be added or changed, so nothing was saved. Change them back or remove them, or move to Standard, $9 a month.",
+    "On Free, tag, product type, vendor and metafield conditions keep working but can't be added or changed, so nothing was saved.",
   ],
   shopify: [
     "Your rule changes weren't saved",
@@ -50,10 +63,14 @@ export const COPY: Record<string, string[]> = {
     "Fitted couldn't reach your store just now. Your charts still show on the same products as before.",
   ],
 };
-export function Banner(props: { copy: string[]; children?: React.ReactNode }) {
+export function Banner(props: {
+  copy: string[];
+  tone?: "info";
+  children?: React.ReactNode;
+}) {
   const [heading, ...lines] = props.copy;
   return (
-    <s-banner tone="critical" heading={heading}>
+    <s-banner tone={props.tone ?? "critical"} heading={heading}>
       {lines.map((l) => (
         <s-paragraph key={l}>
           {l.startsWith("**") ? <strong>{l.slice(2)}</strong> : l}
@@ -73,7 +90,10 @@ export function RulesEditor(props: {
   const { loaded } = props;
   const shopify = useAppBridge();
   const fetcher = useFetcher<Answer>();
+  const apply = useFetcher<Answer>();
+  const poll = useFetcher<{ job: Job }>();
   const revalidator = useRevalidator();
+  const [redo, setRedo] = useState(false); // Set up rules again
   const ids = new Set(loaded.charts.map((c) => c.id));
   const [base, setBase] = useState({
     digest: loaded.digest,
@@ -100,13 +120,40 @@ export function RulesEditor(props: {
   }
   const { initial } = base;
 
+  // The resolve a save or Try again started shows as applying until a job
+  // newer than the one before it ends; so does a running merchant resolve (§13).
+  const polled = poll.data?.job;
+  const job =
+    polled && polled.at >= (loaded.job?.at ?? 0) ? polled : loaded.job;
+  const asked = [fetcher.data, apply.data].filter((a) => a?.ok);
+  // ponytail: a resolve that never records its job polls until the page closes.
+  const applying =
+    (job?.status === "running" && job.merchant) ||
+    asked.some((a) => (job?.at ?? 0) <= a!.after!);
+  const { load } = poll;
+  useEffect(() => {
+    if (!applying) return;
+    const t = setInterval(() => load("/app/rules?job"), 3000);
+    return () => clearInterval(t);
+  }, [applying, load]);
+  // Try again's refusals; the didn't-finish banner stays to try once more.
+  const refused = apply.state === "idle" && apply.data?.error?.code;
+  useEffect(() => {
+    if (refused)
+      shopify.toast.show(
+        refused === "product_access"
+          ? "You need Products access to apply rules. Ask the store owner to add it in Settings › Users."
+          : "Shopify didn't respond, so the rules weren't applied. Try again.",
+        { isError: true },
+      );
+  }, [refused, apply.data, shopify]);
+
   const saving = fetcher.state !== "idle";
   const answer = saving ? undefined : fetcher.data;
   const notice = local ?? (answer === dismissed ? undefined : answer);
   const errors = notice?.fieldErrors ?? {};
   const err = notice?.error;
   const marked = Object.entries(errors);
-  const rows = marked.filter(([p]) => p.startsWith("charts.")).length;
   const name = (id: string) =>
     loaded.charts.find((c) => c.id === id)?.name ?? "";
   const current =
@@ -143,9 +190,12 @@ export function RulesEditor(props: {
         method: "post",
         encType: "application/json",
       });
-    const [first] = Object.keys(fieldErrors);
-    setSelected(first.split(".")[1]);
-    setTimeout(() => document.getElementById(model.elementId(first))?.focus());
+    focus(Object.keys(fieldErrors)[0]);
+  };
+  // Opens a marked field's chart and moves to the field.
+  const focus = (path: string) => {
+    setSelected(path.split(".")[1]);
+    setTimeout(() => document.getElementById(model.elementId(path))?.focus());
   };
   const dismiss = () => {
     setLocal(null);
@@ -171,6 +221,29 @@ export function RulesEditor(props: {
       {label}
     </s-button>
   );
+  // A banner's link to a marked field.
+  const link = (path: string, text: string) => (
+    <a
+      href={`#${model.elementId(path)}`}
+      onClick={(e) => {
+        e.preventDefault();
+        focus(path);
+      }}
+    >
+      {text}
+    </a>
+  );
+  const plan = err?.code === "plan";
+  const [paid] = plan ? marked.map(([p]) => p) : [];
+  const paidField = model.LABELS[model.at(draft, paid ?? "")?.field ?? "tag"];
+  const listed = plan
+    ? []
+    : model.problems(draft, errors, loaded.charts, current);
+  // Conditions, not problems: one can have several. At least 1 for a message about the whole document.
+  const rows =
+    new Set(
+      listed.flatMap((l) => l.path?.split(".").slice(0, 4).join(".") ?? []),
+    ).size || 1;
 
   const conditions = (list: List) =>
     rule[list].map((c, i) => {
@@ -180,12 +253,31 @@ export function RulesEditor(props: {
           list,
           rule[list].map((x, j) => (j === i ? next : x)),
         );
+      // Free's refusal of a saved paid condition that was edited.
+      // Only with nothing added or removed, and the saved one gone from the
+      // list, is this row the saved one edited.
+      const was = model.at(initial, p);
+      const saved = initial.charts[current]?.[list] ?? [];
+      const same = (x: Condition) => JSON.stringify(x) === JSON.stringify(was);
+      const old =
+        was &&
+        "value" in was &&
+        saved.length === rule[list].length &&
+        !rule[list].some(same)
+          ? `Was ${was.value}. `
+          : "";
       return (
         <ConditionRow
           key={i}
           c={c}
           path={p}
           errors={errors}
+          free={loaded.free}
+          message={
+            plan && errors[p]
+              ? `${old}On Free, change it back or remove it.`
+              : undefined
+          }
           onChange={set}
           onPick={() => pick(c, set)}
           onRemove={() =>
@@ -208,12 +300,38 @@ export function RulesEditor(props: {
     (c) => c.id !== current && !draft.order.includes(c.id),
   );
 
+  if (loaded.damaged && !redo)
+    return (
+      <s-page>
+        <div className="editor">
+          {props.heading}
+          <Banner copy={COPY.damaged}>
+            <ul className="list">
+              {loaded.damaged.map((line, i) => (
+                <li key={i}>{line}</li>
+              ))}
+            </ul>
+            <s-paragraph>
+              <strong>Set up your rules again and save to replace them.</strong>
+            </s-paragraph>
+            {button("Set up rules again", () => setRedo(true))}
+          </Banner>
+          <p className="help">
+            Not sure what changed them? Email [SUPPORT EMAIL] and we&apos;ll
+            look into it.
+          </p>
+        </div>
+      </s-page>
+    );
+
   return (
     <s-page>
       <SaveBar
         id="rules-save-bar"
         open={
           saving ||
+          // Rules set up again replace the damaged ones even when empty (§6).
+          (redo && !!loaded.damaged) ||
           JSON.stringify(model.toSave(draft)) !==
             JSON.stringify(model.toSave(initial))
         }
@@ -229,6 +347,7 @@ export function RulesEditor(props: {
           disabled={saving}
           onClick={() => {
             setDraft(initial);
+            setRedo(false);
             dismiss();
           }}
         >
@@ -236,28 +355,50 @@ export function RulesEditor(props: {
         </button>
       </SaveBar>
       <div className="editor">
-        {/* A valid save with the loaded digest replaces them (§6). */}
-        {loaded.damaged && (
+        {listed.length > 0 && (
           <Banner
             copy={[
-              ...COPY.damaged,
-              "**Set up your rules again and save to replace them.",
+              `Fix ${rows} condition${rows > 1 ? "s" : ""} to save`,
+              "Nothing was saved, so products still show the same charts.",
             ]}
-          />
+          >
+            <ul className="list">
+              {listed.map((p, i) => (
+                <li key={i}>
+                  {p.path ? link(p.path, p.where) : p.where}
+                  {p.text}
+                </li>
+              ))}
+            </ul>
+          </Banner>
         )}
-        {marked.length > 0 && (
+        {paid && (
           <Banner
             copy={[
-              `Fix ${rows || 1} condition${rows > 1 ? "s" : ""} to save`,
-              err?.code === "plan"
-                ? err.message
-                : "Nothing was saved, so products still show the same charts.",
-              // Messages about the whole document, such as a limit (§6).
-              ...marked
-                .filter(([p]) => !p.startsWith("charts."))
-                .map(([, m]) => m),
+              COPY.plan[0],
+              ...(notice?.checkFailed
+                ? [
+                    "Couldn't check your plan, so Fitted uses the last one it confirmed, Free.",
+                  ]
+                : []),
+              COPY.plan[1],
             ]}
-          />
+          >
+            <s-paragraph>
+              Change the {link(paid, `${model.lower(paidField)} condition`)}{" "}
+              back or remove it, or move to Standard, $9 a month.
+            </s-paragraph>
+            {/* A new tab: the admin's save bar holds this one while there are unsaved edits. */}
+            {notice?.plansUrl && (
+              <s-button
+                slot="secondary-actions"
+                href={notice.plansUrl}
+                target="_blank"
+              >
+                See plans
+              </s-button>
+            )}
+          </Banner>
         )}
         {err?.code === "conflict" && (
           <Banner copy={COPY.conflict}>
@@ -269,6 +410,32 @@ export function RulesEditor(props: {
           <Banner copy={COPY[err.code]}>
             {button("Try saving again", save)}
           </Banner>
+        )}
+        {applying ? (
+          <Banner
+            tone="info"
+            copy={[
+              `Applying your rules to ${loaded.products?.toLocaleString("en-US") ?? "your"} products`,
+              "Products switch charts over the next few minutes, even if you leave this page.",
+              "If you save again, Fitted applies the newer rules right after.",
+            ]}
+          />
+        ) : (
+          job?.status === "failed" && (
+            <Banner
+              copy={[
+                "Your rules didn't finish applying",
+                `They're saved, but ${model.reason(job.error)}, so some products still show their old chart. Fitted tries again within a few minutes.`,
+              ]}
+            >
+              {button("Try again", () =>
+                apply.submit({ intent: "apply" } as never, {
+                  method: "post",
+                  encType: "application/json",
+                }),
+              )}
+            </Banner>
+          )
         )}
         {props.heading}
         <section className="card" aria-labelledby="rule">
@@ -283,6 +450,20 @@ export function RulesEditor(props: {
           </p>
           {conditions("match")}
           {add("match")}
+          {loaded.free && (
+            <p className="help">
+              On Free, new conditions can use Collection or Specific products.
+              The others need {/* Without its link it reads as plain text. */}
+              <a
+                href={loaded.plansUrl ?? undefined}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Standard
+              </a>
+              .
+            </p>
+          )}
           <p className="lead">Never show it on</p>
           {conditions("exclude")}
           {add("exclude")}
@@ -376,6 +557,8 @@ function ConditionRow(props: {
   c: Condition;
   path: string;
   errors: FieldErrors;
+  free: boolean;
+  message?: string; // in place of the field error
   onChange: (c: Condition) => void;
   onPick: () => void;
   onRemove: () => void;
@@ -387,9 +570,14 @@ function ConditionRow(props: {
     className: bad ? "field bad" : "field",
     "aria-invalid": bad ? true : undefined,
   });
-  const message = [e(""), e("key"), e("op"), e("value"), e("ids")].find(
-    Boolean,
-  );
+  const message = [
+    props.message,
+    e(""),
+    e("key"),
+    e("op"),
+    e("value"),
+    e("ids"),
+  ].find(Boolean);
   const noun = c.field === "product" ? "product" : "collection";
   const n = "ids" in c ? c.ids.length : 0;
   return (
@@ -406,6 +594,7 @@ function ConditionRow(props: {
           {model.FIELDS.map((f) => (
             <option key={f} value={f}>
               {model.LABELS[f]}
+              {props.free && model.PAID.includes(f) ? " (Standard)" : ""}
             </option>
           ))}
         </select>

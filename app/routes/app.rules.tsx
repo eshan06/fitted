@@ -3,7 +3,11 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Link, data, useLoaderData, useRevalidator } from "react-router";
 import { authenticate } from "../shopify.server";
-import { AdminApiError, canReadProducts } from "../models/admin.server";
+import {
+  AdminApiError,
+  canReadProducts,
+  pricingPlansUrl,
+} from "../models/admin.server";
 import { getPlan } from "../models/billing.server";
 import { chartPages } from "../models/chart.server";
 import {
@@ -11,11 +15,14 @@ import {
   RulesPlanError,
   RulesValidationError,
   StoredRulesError,
+  countProducts,
   getRules,
+  latestResolve,
   saveRules,
   startResolve,
 } from "../models/rules.server";
 import { Banner, COPY, RulesEditor } from "../components/rules/RulesEditor";
+import { storedProblems } from "../components/rules/model";
 import "../components/chart-table/editor.css";
 
 const log = (shop: string, err: AdminApiError) =>
@@ -29,14 +36,43 @@ const log = (shop: string, err: AdminApiError) =>
     }),
   );
 
+// What the screen does without (a count, a link): logged, never shown (§15).
+const optional = <T,>(shop: string, p: Promise<T>) =>
+  p.catch((err) => {
+    if (!(err instanceof AdminApiError)) throw err;
+    log(shop, err);
+    return null;
+  });
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
+  const { shop } = session;
+  // The screen polls this while a resolve runs.
+  if (new URL(request.url).searchParams.has("job"))
+    return { mode: "job" as const, job: await latestResolve(shop) };
   try {
     const charts = [];
     for await (const page of chartPages(admin))
       charts.push(...page.map((c) => ({ id: c.id, name: c.name })));
     if (!charts.length) return { mode: "empty" as const };
-    const base = { mode: "edit" as const, charts };
+    const [job, products, { plan }] = await Promise.all([
+      latestResolve(shop),
+      // Staff without Products access can't count them.
+      optional(shop, countProducts(admin)),
+      getPlan(shop),
+    ]);
+    const free = plan === "free";
+    const plansUrl = free
+      ? await optional(shop, pricingPlansUrl(admin, shop))
+      : null;
+    const base = {
+      mode: "edit" as const,
+      charts,
+      job,
+      products,
+      free,
+      plansUrl,
+    };
     try {
       const { rules, digest } = await getRules(admin);
       return { ...base, rules, digest, damaged: null };
@@ -44,40 +80,52 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       if (!(err instanceof StoredRulesError)) throw err;
       // A valid save with this digest replaces them (§6).
       const rules = { v: 1 as const, order: [], charts: {} };
-      return { ...base, rules, digest: err.digest, damaged: err.fieldErrors };
+      const damaged = storedProblems(err.fieldErrors, err.value, charts);
+      return { ...base, rules, digest: err.digest, damaged };
     }
   } catch (err) {
     if (!(err instanceof AdminApiError)) throw err;
-    log(session.shop, err);
+    log(shop, err);
     const error = { code: "shopify", message: COPY.load[1] };
     return data({ mode: "error" as const, error }, { status: 502 });
   }
 };
 
 // The answers of §15, worded as the screen's banners.
-const fail = (status: number, code: string, fieldErrors?: object) =>
-  data({ error: { code, message: COPY[code][1] }, fieldErrors }, { status });
+const fail = (status: number, code: string, more?: object) =>
+  data({ error: { code, message: COPY[code][1] }, ...more }, { status });
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
+  const { shop } = session;
   const body = await request.json().catch(() => null);
+  let checkFailed = false;
   try {
     // The resolve runs with the offline token, so staff without Products access can't start one (§13).
     if (!(await canReadProducts(admin))) return fail(403, "product_access");
-    const { plan } = await getPlan(session.shop);
-    await saveRules(admin, body?.rules, body?.digest, plan);
+    // Try again after a resolve that didn't finish applies the saved rules.
+    if (body?.intent !== "apply") {
+      const got = await getPlan(shop);
+      checkFailed = got.checkFailed;
+      await saveRules(admin, body?.rules, body?.digest, got.plan);
+    }
+    // The screen shows the rules applying until a job newer than this one ends.
+    const after = (await latestResolve(shop))?.at ?? 0;
     // Every product follows, `auto: false` charts included (§6).
-    void startResolve(session.shop, true);
-    return { ok: true as const };
+    void startResolve(shop, true);
+    return { ok: true as const, after };
   } catch (err) {
     if (err instanceof RulesValidationError)
       return data({ fieldErrors: err.fieldErrors }, { status: 422 });
     // Free's refusal marks its conditions like a check does, with the upgrade (§8).
-    if (err instanceof RulesPlanError)
-      return fail(403, "plan", err.fieldErrors);
+    if (err instanceof RulesPlanError) {
+      const plansUrl = await optional(shop, pricingPlansUrl(admin, shop));
+      const fieldErrors = err.fieldErrors;
+      return fail(403, "plan", { fieldErrors, checkFailed, plansUrl });
+    }
     if (err instanceof RulesConflictError) return fail(409, "conflict");
     if (!(err instanceof AdminApiError)) throw err;
-    log(session.shop, err);
+    log(shop, err);
     return fail(502, "shopify");
   }
 };

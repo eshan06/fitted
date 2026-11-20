@@ -31,12 +31,30 @@ const charts = [
   { id: A, name: "Women's tops" },
   { id: B, name: "Shoes" },
 ];
-const edit = (rules: Rules, digest: string | null = "d1", damaged = null) => ({
+const edit = (
+  rules: Rules,
+  digest: string | null = "d1",
+  damaged: string[] | null = null,
+  more = {},
+) => ({
   mode: "edit",
   charts,
   rules,
   digest,
   damaged,
+  job: null,
+  products: 340,
+  free: false,
+  plansUrl: null,
+  ...more,
+});
+const PLANS =
+  "https://admin.shopify.com/store/s/charges/fitted-5/pricing_plans";
+const job = (status: string, at: number, error: string | null = null) => ({
+  status,
+  error,
+  at,
+  merchant: true,
 });
 const none = (): Rules => ({ v: 1, order: [], charts: {} });
 const ranked = (): Rules => ({
@@ -57,16 +75,25 @@ beforeEach(() => vi.resetAllMocks());
 afterEach(() => {
   act(() => root?.unmount());
   document.body.innerHTML = "";
+  vi.useRealTimers();
 });
 
 // Renders the route with a loader and an action that answer in turn.
+// The screen's polls get `polls` in turn, then the last one again.
 async function open(
   loaded: unknown[],
   answers: { status: number; body: unknown }[] = [],
+  polls: unknown[] = [],
 ) {
   const sent: Record<string, unknown>[] = [];
-  const loader = vi.fn(
-    () => loaded[Math.min(loader.mock.calls.length - 1, loaded.length - 1)],
+  let n = 0;
+  const poll = vi.fn(() => ({
+    job: polls.length > 1 ? polls.shift() : polls[0],
+  }));
+  const loader = vi.fn(({ request }: { request: Request }) =>
+    new URL(request.url).searchParams.has("job")
+      ? poll()
+      : loaded[Math.min(n++, loaded.length - 1)],
   );
   const Stub = createRoutesStub([
     {
@@ -85,7 +112,7 @@ async function open(
   root = createRoot(div);
   await act(async () => root!.render(<Stub initialEntries={["/app/rules"]} />));
   await settle();
-  return { sent, loader };
+  return { sent, loader, poll };
 }
 const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
 const text = () => document.body.textContent ?? "";
@@ -287,45 +314,100 @@ describe("display rules screen", () => {
     expect(options).toEqual(["Pick a chart", "Shoes"]);
   });
 
-  it("opens the chart whose condition the plan refused, with the upgrade and any document-wide message", async () => {
-    const plan =
-      "On Free, tag, product type, vendor and metafield conditions keep working but can't be added or changed, so nothing was saved. Change them back or remove them, or move to Standard, $9 a month.";
+  it("on Free, marks the paid fields and opens the chart whose condition the plan refused, with the plans page", async () => {
+    const tagged = ranked();
+    tagged.charts[A].match = [{ field: "tag", op: "is", value: "women-top" }];
+    const fieldErrors = {
+      [`charts.${A}.match.0`]:
+        "Tag, type, vendor and metafield rules are on Standard and Pro",
+    };
     await open(
-      [edit(ranked())],
+      [edit(tagged, "d1", null, { free: true, plansUrl: PLANS })],
       [
         {
           status: 403,
           body: {
-            error: { code: "plan", message: plan },
-            fieldErrors: {
-              [`charts.${A}.match.0`]:
-                "Tag, type, vendor and metafield rules are on Standard and Pro",
-              "": "Rules can compare at most 20 different metafields",
-            },
+            error: { code: "plan", message: "x" },
+            fieldErrors,
+            checkFailed: true,
+            plansUrl: PLANS,
           },
         },
       ],
     );
+    expect(
+      (byLabel("Field") as unknown as HTMLSelectElement).selectedOptions[0]
+        .textContent,
+    ).toBe("Tag (Standard)");
+    expect(text()).toContain(
+      "On Free, new conditions can use Collection or Specific products. The others need Standard.",
+    );
+    expect(document.querySelector(`.help a[href="${PLANS}"]`)).not.toBeNull();
+    await type(byLabel("Value"), "women-tops");
     await click(buttons("2. Shoes")[0]);
-    await click(buttons("Add condition")[1]);
-    await type(byLabel("Field", 1), "collection");
-    bridge.resourcePicker.mockResolvedValue([
-      { id: "gid://shopify/Collection/3" },
-    ]);
-    await click(byLabel("Edit the picked collections"));
     await click(buttons("Save")[0]);
     expect(document.querySelector("h2")?.textContent).toBe("Women's tops");
-    expect(headings()).toEqual(["Fix 1 condition to save"]);
-    expect(text()).toContain(plan);
+    expect(headings()).toEqual(["This change needs the Standard plan"]);
     expect(text()).toContain(
-      "Rules can compare at most 20 different metafields",
+      "Couldn't check your plan, so Fitted uses the last one it confirmed, Free.On Free, tag, product type, vendor and metafield conditions keep working but can't be added or changed, so nothing was saved.Change the tag condition back or remove it, or move to Standard, $9 a month.",
     );
     expect(text()).toContain(
-      "Tag, type, vendor and metafield rules are on Standard and Pro",
+      "Was women-top. On Free, change it back or remove it.",
     );
-    expect(document.getElementById("r1-match-0-field")?.className).toContain(
-      "bad",
+    expect(buttons("See plans")[0].getAttribute("href")).toBe(PLANS);
+    const field = document.getElementById("r1-match-0-field")!;
+    expect(field.className).toContain("bad");
+    await click(buttons("2. Shoes")[0]);
+    await click(document.querySelector<HTMLElement>("s-banner a")!);
+    expect(document.querySelector("h2")?.textContent).toBe("Women's tops");
+    await settle();
+    expect(document.activeElement).toBe(
+      document.getElementById("r1-match-0-field"),
     );
+  });
+
+  // Review round 1: "Was" named the saved condition at the same position.
+  it("on Free, says what a refused condition was only when it was edited in place", async () => {
+    const tagged = ranked();
+    tagged.charts[A].match = [
+      { field: "tag", op: "is", value: "a" },
+      { field: "tag", op: "is", value: "b" },
+    ];
+    const refuse = {
+      status: 403,
+      body: {
+        error: { code: "plan", message: "x" },
+        fieldErrors: { [`charts.${A}.match.0`]: "On Standard and Pro" },
+      },
+    };
+    await open([edit(tagged, "d1", null, { free: true })], [refuse]);
+    await click(byLabel("Remove condition"));
+    await type(byLabel("Value"), "c");
+    await click(buttons("Save")[0]);
+    expect(text()).toContain("On Free, change it back or remove it.");
+    expect(text()).not.toContain("Was ");
+  });
+
+  it("lists each problem in the Fix banner, linking it to its field, another chart's by name", async () => {
+    await open([edit(ranked())]);
+    await click(buttons("Add condition")[1]);
+    await type(byLabel("Field", 1), "tag");
+    await click(buttons("2. Shoes")[0]);
+    await click(buttons("Add condition")[0]);
+    await type(byLabel("Field", 1), "metafield");
+    await type(byLabel("Metafield key"), "app--4821.fit");
+    await type(byLabel("Value", 0), "x".repeat(256));
+    await click(buttons("Save")[0]);
+    // Two of the problems are one condition's.
+    expect(headings()).toEqual(["Fix 2 conditions to save"]);
+    const items = [...document.querySelectorAll("s-banner li")].map(
+      (li) => li.textContent,
+    );
+    expect(items).toEqual([
+      "Never show it on: Tag has no value",
+      "Shoes: Metafield belongs to an app, so rules can't use it",
+      "Shoes: Metafield is longer than 255 characters",
+    ]);
   });
 
   it("reorders by dragging a chart onto another's place", async () => {
@@ -390,32 +472,97 @@ describe("display rules screen", () => {
     );
   });
 
-  it("says saved rules that fail the checks are replaced by the next save", async () => {
-    await open([
-      edit(none(), "d0", { [`charts.${A}.match.0.value`]: "Bad" } as never),
-    ]);
+  it("names each problem in saved rules that fail the checks, and sets them up again blank", async () => {
+    const lines = ["Women's tops: a tag condition has no value"];
+    const { sent } = await open([edit(none(), "d0", lines)]);
     expect(headings()).toEqual(["Your saved display rules couldn't be read"]);
-    expect(text()).toContain(
-      "Set up your rules again and save to replace them.",
-    );
+    expect(document.querySelector("s-banner li")?.textContent).toBe(lines[0]);
+    expect(text()).toContain("Not sure what changed them? Email");
+    expect(buttons("Add condition")).toEqual([]);
+    await click(buttons("Set up rules again")[0]);
+    expect(headings()).toEqual([]);
+    // Empty rules replace them too, so the save bar opens with no edit.
+    expect(saveBar()).not.toBeNull();
+    await click(buttons("Discard")[0]);
+    expect(headings()).toEqual(["Your saved display rules couldn't be read"]);
+    await click(buttons("Set up rules again")[0]);
+    await click(buttons("Save")[0]);
+    expect(sent).toEqual([{ rules: none(), digest: "d0" }]);
   });
 
-  // Round 2: a save bar held open by damaged rules couldn't be discarded.
-  it("opens the save bar for damaged rules only on an edit, and Discard closes it", async () => {
-    const { sent } = await open([
-      edit(none(), "d0", { [`charts.${A}.match.0.value`]: "Bad" } as never),
-    ]);
-    expect(saveBar()).toBeNull();
-    await click(buttons("Add condition")[1]);
-    await click(buttons("Discard")[0]);
-    expect(saveBar()).toBeNull();
-    bridge.resourcePicker.mockResolvedValue([{ id: P }]);
-    await click(buttons("Add condition")[0]);
-    await type(byLabel("Field"), "product");
-    await click(byLabel("Edit the picked products"));
+  it("shows the rules applying after a save until a newer resolve ends, then that it didn't finish, and tries again", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { sent, poll } = await open(
+      [edit(ranked(), "d1", null, { job: job("done", 5) })],
+      [{ status: 200, body: { ok: true, after: 5 } }],
+      [
+        job("done", 5),
+        job("running", 9),
+        job("failed", 9, "Shopify request failed"),
+      ],
+    );
+    await act(async () =>
+      byLabel("Move Women's tops").dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
+      ),
+    );
     await click(buttons("Save")[0]);
-    expect(sent).toHaveLength(1);
-    expect(sent[0].digest).toBe("d0");
+    expect(headings()).toEqual(["Applying your rules to 340 products"]);
+    for (let i = 0; i < 3; i++)
+      await act(async () => vi.advanceTimersByTime(3000));
+    await settle();
+    expect(poll).toHaveBeenCalledTimes(3);
+    expect(headings()).toEqual(["Your rules didn't finish applying"]);
+    expect(text()).toContain(
+      "They're saved, but Shopify stopped responding, so some products still show their old chart. Fitted tries again within a few minutes.",
+    );
+    await act(async () => vi.advanceTimersByTime(6000));
+    expect(poll).toHaveBeenCalledTimes(3);
+    await click(buttons("Try again")[0]);
+    expect(sent[1]).toEqual({ intent: "apply" });
+  });
+
+  it("shows a merchant's running resolve as applying, but not the daily check's", async () => {
+    await open([
+      edit(ranked(), "d1", null, { job: job("running", 5), products: null }),
+    ]);
+    expect(headings()).toEqual(["Applying your rules to your products"]);
+    act(() => root?.unmount());
+    root = undefined;
+    await open([
+      edit(ranked(), "d1", null, {
+        job: { ...job("running", 5), merchant: false },
+      }),
+    ]);
+    expect(headings()).toEqual([]);
+  });
+
+  it("words the job's own reason, and says when Try again is refused", async () => {
+    await open(
+      [
+        edit(ranked(), "d1", null, {
+          job: job("failed", 5, "Shopify refused the chart for 3 products"),
+        }),
+      ],
+      [
+        { status: 403, body: { error: { code: "product_access" } } },
+        { status: 502, body: { error: { code: "shopify" } } },
+      ],
+    );
+    expect(text()).toContain(
+      "They're saved, but Shopify refused the chart for 3 products, so",
+    );
+    await click(buttons("Try again")[0]);
+    expect(bridge.toast.show).toHaveBeenCalledWith(
+      "You need Products access to apply rules. Ask the store owner to add it in Settings › Users.",
+      { isError: true },
+    );
+    expect(headings()).toEqual(["Your rules didn't finish applying"]);
+    await click(buttons("Try again")[0]);
+    expect(bridge.toast.show).toHaveBeenLastCalledWith(
+      "Shopify didn't respond, so the rules weren't applied. Try again.",
+      { isError: true },
+    );
   });
 
   it("points a store with no charts at making one", async () => {

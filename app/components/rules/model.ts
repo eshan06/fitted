@@ -95,3 +95,83 @@ export const elementId = (path: string) => {
   const at = part === "ids" ? "value" : part || "field";
   return `r${id?.split("/").pop()}-${list}-${i}-${at}`;
 };
+
+// Free's fields (§8); the rest need Standard.
+export const PAID: Field[] = ["tag", "type", "vendor", "metafield"];
+export const lower = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
+
+// What's wrong with a condition, in the banners' short words, from the
+// screen's checks or the server's.
+function short(message: string, part: string, c: unknown) {
+  const value = (c as { value?: unknown }).value;
+  if (/^(App metafields|Rules can't use an app)/.test(message))
+    return "belongs to an app, so rules can't use it";
+  if (part === "key") return "isn't a metafield key";
+  if (part === "value")
+    return typeof value === "string" && value.length > 255
+      ? "is longer than 255 characters"
+      : "has no value";
+  if (part === "ids") return "has nothing picked";
+  return null;
+}
+// The condition a field error's path names, in a document that may be damaged.
+export const at = (rules: unknown, path: string) => {
+  const [top, id, list, i] = path.split(".");
+  const c =
+    top === "charts" &&
+    (rules as Rules | null)?.charts?.[id]?.[list as "match"]?.[+i];
+  return c && typeof c === "object" ? (c as Condition) : undefined;
+};
+
+/** Each field error as the Fix banner lists it, linked by `path` when it marks a condition; another chart's names it. */
+export function problems(
+  rules: Rules,
+  errors: FieldErrors,
+  charts: ChartInfo[],
+  current: string,
+): { path?: string; where: string; text: string }[] {
+  return Object.entries(errors).map(([path, message]) => {
+    const [, id, list, , part = ""] = path.split(".");
+    const c = at(rules, path);
+    if (!c) return { where: "", text: message };
+    const s = short(message, part, c);
+    const chart =
+      id === current ? "" : `${charts.find((ch) => ch.id === id)?.name}: `;
+    return {
+      path,
+      where: `${chart}${list === "exclude" ? "Never show it on: " : ""}${LABELS[c.field]}`,
+      text: s ? ` ${s}` : `: ${message}`,
+    };
+  });
+}
+
+/** Saved rules' problems, worded from the stored document (§6). */
+export function storedProblems(
+  errors: FieldErrors,
+  value: unknown,
+  charts: ChartInfo[],
+): string[] {
+  return Object.entries(errors).map(([path, message]) => {
+    const [top, id, , , part = ""] = path.split(".");
+    const chart = charts.find((ch) => ch.id === id)?.name;
+    if (top !== "charts" || !chart) return message;
+    const c = at(value, path);
+    const s = c ? short(message, part, c) : null;
+    const key = c && "key" in c && typeof c.key === "string" && c.key;
+    if (key && s === "isn't a metafield key") return `${chart}: ${key} ${s}`;
+    if (c && s && Object.hasOwn(LABELS, c.field))
+      return `${chart}: a ${lower(LABELS[c.field])} condition ${s}`;
+    return `${chart}: ${lower(message)}`;
+  });
+}
+
+// The job's plain reason (§13), as the applying banner words it.
+const REASON: Record<string, string> = {
+  "Shopify request failed": "Shopify stopped responding",
+  "Something went wrong": "Fitted stopped before it finished",
+  "The job stopped before it finished": "Fitted stopped before it finished",
+};
+export const reason = (error: string | null) =>
+  !error
+    ? "Shopify stopped responding"
+    : (REASON[error] ?? (error.startsWith("Shopify") ? error : lower(error)));

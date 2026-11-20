@@ -260,6 +260,7 @@ export class StoredRulesError extends Error {
   constructor(
     readonly fieldErrors: FieldErrors,
     readonly digest: string,
+    readonly value?: unknown, // the stored document, for the screen to word each problem
   ) {
     super("The saved display rules can't be read");
   }
@@ -272,7 +273,11 @@ function parse(stored: Stored): Rules {
     return validateRules(stored.jsonValue);
   } catch (err) {
     if (!(err instanceof RulesValidationError)) throw err;
-    throw new StoredRulesError(err.fieldErrors, stored.compareDigest);
+    throw new StoredRulesError(
+      err.fieldErrors,
+      stored.compareDigest,
+      stored.jsonValue,
+    );
   }
 }
 
@@ -1014,4 +1019,36 @@ export function startJobChecks() {
     );
   void run();
   globalThis.fittedJobChecks = setInterval(run, 60_000).unref();
+}
+
+/** The shop's newest resolve, for the Display rules screen's progress (§13). */
+export async function latestResolve(shop: string) {
+  const job = await db.job.findFirst({
+    where: { shop, kind: "resolve" },
+    orderBy: { createdAt: "desc" },
+  });
+  const p = job?.progress;
+  return (
+    job && {
+      status: job.status,
+      error: job.error,
+      at: +job.createdAt,
+      merchant: isObj(p) && p.merchant === true,
+    }
+  );
+}
+
+/** How many products the store has, for the applying banner. */
+export async function countProducts(admin: Admin) {
+  const data = await adminGraphql<{
+    productsCount: { count: number } | null;
+  }>(
+    admin,
+    `#graphql
+    query FittedProductCount { productsCount(limit: null) { count } }`,
+    {},
+    { retry: true },
+  );
+  // The field is nullable; the banner then says "your products".
+  return data.productsCount?.count ?? null;
 }

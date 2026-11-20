@@ -16,6 +16,9 @@ const m = vi.hoisted(() => ({
   saveRules: vi.fn(),
   startResolve: vi.fn(),
   canReadProducts: vi.fn(),
+  pricingPlansUrl: vi.fn(),
+  latestResolve: vi.fn(),
+  countProducts: vi.fn(),
 }));
 vi.mock("../shopify.server", () => ({
   authenticate: { admin: m.authenticate },
@@ -24,6 +27,7 @@ vi.mock("../db.server", () => ({ default: {} }));
 vi.mock("../models/admin.server", async (orig) => ({
   ...(await orig<typeof import("../models/admin.server")>()),
   canReadProducts: m.canReadProducts,
+  pricingPlansUrl: m.pricingPlansUrl,
 }));
 vi.mock("../models/billing.server", async (orig) => ({
   ...(await orig<typeof import("../models/billing.server")>()),
@@ -39,6 +43,8 @@ vi.mock("../models/rules.server", async (orig) => ({
   getRules: m.getRules,
   saveRules: m.saveRules,
   startResolve: m.startResolve,
+  latestResolve: m.latestResolve,
+  countProducts: m.countProducts,
 }));
 const { action, loader } = await import("./app.rules");
 const { COPY } = await import("../components/rules/RulesEditor");
@@ -48,6 +54,9 @@ const answer = (code: string) => ({
 });
 
 const SHOP = "fitted-dev.myshopify.com";
+const JOB = { status: "done", error: null, at: 1000, merchant: true };
+const PLANS =
+  "https://admin.shopify.com/store/fitted-dev/charges/fitted-5/pricing_plans";
 const CHART = "gid://shopify/Metaobject/42";
 const admin = { graphql: vi.fn() };
 const rules = (): Rules => ({
@@ -65,9 +74,9 @@ async function* pages(...lists: { id: string; name: string }[][]) {
   for (const l of lists) yield l;
 }
 
-const load = () =>
+const load = (search = "") =>
   loader({
-    request: new Request("https://fitted.test/app/rules"),
+    request: new Request(`https://fitted.test/app/rules${search}`),
   } as unknown as LoaderFunctionArgs);
 const post = (body: unknown) =>
   action({
@@ -98,6 +107,9 @@ beforeEach(() => {
   m.saveRules.mockResolvedValue("d2");
   m.canReadProducts.mockResolvedValue(true);
   m.startResolve.mockResolvedValue(undefined);
+  m.latestResolve.mockResolvedValue(JOB);
+  m.countProducts.mockResolvedValue(340);
+  m.pricingPlansUrl.mockResolvedValue(PLANS);
 });
 afterEach(() => vi.restoreAllMocks());
 
@@ -118,8 +130,35 @@ describe("loading display rules", () => {
       rules: rules(),
       digest: "d1",
       damaged: null,
+      job: JOB,
+      products: 340,
+      free: false,
+      plansUrl: null,
     });
     expect(m.authenticate).toHaveBeenCalledOnce();
+    expect(m.latestResolve).toHaveBeenCalledWith(SHOP);
+    expect(m.pricingPlansUrl).not.toHaveBeenCalled();
+  });
+
+  it("answers the screen's poll with the newest resolve alone", async () => {
+    expect(await load("?job")).toEqual({ mode: "job", job: JOB });
+    expect(m.latestResolve).toHaveBeenCalledWith(SHOP);
+    expect(m.chartPages).not.toHaveBeenCalled();
+  });
+
+  it("links Free to the plans page by the app's real handle, and loads without a count or link Shopify won't give", async () => {
+    m.getPlan.mockResolvedValue({ plan: "free", checkFailed: false });
+    expect(await load()).toMatchObject({ free: true, plansUrl: PLANS });
+    expect(m.pricingPlansUrl).toHaveBeenCalledWith(admin, SHOP);
+    // Staff without Products access can't count them.
+    m.countProducts.mockRejectedValue(new AdminApiError("Denied", "raw"));
+    m.pricingPlansUrl.mockRejectedValue(new AdminApiError("Down", "raw"));
+    expect(await load()).toMatchObject({
+      mode: "edit",
+      products: null,
+      plansUrl: null,
+    });
+    expect(logs).toHaveLength(2);
   });
 
   it("says rules need a chart when the store has none", async () => {
@@ -128,15 +167,41 @@ describe("loading display rules", () => {
     expect(m.getRules).not.toHaveBeenCalled();
   });
 
-  it("starts blank with the stored digest when the saved rules fail the checks", async () => {
+  it("starts blank with the stored digest when the saved rules fail the checks, naming each problem", async () => {
+    const stored = {
+      v: 1,
+      order: [CHART],
+      charts: {
+        [CHART]: {
+          match: [
+            { field: "tag", op: "is", value: "" },
+            { field: "metafield", key: "custom fit", op: "is", value: "x" },
+          ],
+        },
+      },
+    };
     m.getRules.mockRejectedValue(
-      new StoredRulesError({ [`charts.${CHART}.match.0.value`]: "Bad" }, "d0"),
+      new StoredRulesError(
+        {
+          [`charts.${CHART}.match.0.value`]: "Use 1 to 255 characters",
+          [`charts.${CHART}.match.1.key`]: "Use namespace.key",
+          [`charts.${CHART}.auto`]: "Must be true or false",
+          "charts.gid://shopify/Metaobject/9": "Not in the priority list",
+        },
+        "d0",
+        stored,
+      ),
     );
     expect(await load()).toMatchObject({
       mode: "edit",
       rules: { v: 1, order: [], charts: {} },
       digest: "d0",
-      damaged: { [`charts.${CHART}.match.0.value`]: "Bad" },
+      damaged: [
+        "Women's tops: a tag condition has no value",
+        "Women's tops: custom fit isn't a metafield key",
+        "Women's tops: must be true or false",
+        "Not in the priority list",
+      ],
     });
   });
 
@@ -175,7 +240,7 @@ describe("saving display rules", () => {
   it("saves over the loaded digest on the shop's plan, then applies them to every product", async () => {
     expect(await result(post({ rules: rules(), digest: "d1" }))).toEqual({
       status: 200,
-      body: { ok: true },
+      body: { ok: true, after: 1000 },
     });
     expect(m.getPlan).toHaveBeenCalledWith(SHOP);
     expect(m.saveRules).toHaveBeenCalledWith(admin, rules(), "d1", "standard");
@@ -184,11 +249,28 @@ describe("saving display rules", () => {
 
   it("answers a resent save like the first: the model returns the stored digest (§15)", async () => {
     await post({ rules: rules(), digest: "d1" });
+    m.latestResolve.mockResolvedValue(null);
     expect(await result(post({ rules: rules(), digest: "d1" }))).toEqual({
       status: 200,
-      body: { ok: true },
+      body: { ok: true, after: 0 },
     });
     expect(m.saveRules).toHaveBeenCalledTimes(2);
+  });
+
+  it("applies the saved rules again on Try again, without saving", async () => {
+    expect(await result(post({ intent: "apply", rules: {} }))).toEqual({
+      status: 200,
+      body: { ok: true, after: 1000 },
+    });
+    expect(m.saveRules).not.toHaveBeenCalled();
+    expect(m.startResolve).toHaveBeenCalledExactlyOnceWith(SHOP, true);
+    // Staff without Products access can't start one either.
+    m.canReadProducts.mockResolvedValue(false);
+    expect(await result(post({ intent: "apply" }))).toEqual({
+      status: 403,
+      body: answer("product_access"),
+    });
+    expect(m.startResolve).toHaveBeenCalledOnce();
   });
 
   it("refuses staff without Products access before saving anything", async () => {
@@ -238,13 +320,18 @@ describe("saving display rules", () => {
     });
   });
 
-  it("answers 403 with the conditions Free can't add", async () => {
+  it("answers 403 with the conditions Free can't add, whether the plan check failed, and the plans page", async () => {
     const fieldErrors = { [`charts.${CHART}.match.0`]: "On Standard and Pro" };
-    m.getPlan.mockResolvedValue({ plan: "free", checkFailed: false });
+    m.getPlan.mockResolvedValue({ plan: "free", checkFailed: true });
     m.saveRules.mockRejectedValue(new RulesPlanError(fieldErrors));
     expect(await result(post({ rules: rules(), digest: "d1" }))).toEqual({
       status: 403,
-      body: { ...answer("plan"), fieldErrors },
+      body: {
+        ...answer("plan"),
+        fieldErrors,
+        checkFailed: true,
+        plansUrl: PLANS,
+      },
     });
     expect(m.startResolve).not.toHaveBeenCalled();
   });

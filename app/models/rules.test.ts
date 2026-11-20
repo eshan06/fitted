@@ -14,6 +14,7 @@ import {
   RulesPlanError,
   RulesValidationError,
   StoredRulesError,
+  countProducts,
   getRules,
   resolveChart,
   saveRules,
@@ -670,6 +671,8 @@ describe("reading and saving rules", () => {
     expect(err).toMatchObject({
       digest: "d0",
       fieldErrors: { [`charts.${C1}`]: "Missing this chart's rules" },
+      // The screen words each problem from the stored document.
+      value: { v: 1, order: [C1], charts: {} },
     });
     // On Free they keep no paid conditions.
     await expect(saveRules(store.admin, rules(), "d0", "free")).rejects.toThrow(
@@ -768,5 +771,23 @@ describe("the Free plan's rule fields (§8)", () => {
       RulesPlanError,
     );
     expect(store.stored()).toEqual(other);
+  });
+});
+
+describe("counting the store's products", () => {
+  it("counts every product, past Shopify's default cap, and says nothing when Shopify gives no count", async () => {
+    const graphql = vi.fn(async () =>
+      json({ data: { productsCount: { count: 12000 } } }),
+    );
+    const admin = { graphql } as unknown as Admin;
+    expect(await countProducts(admin)).toBe(12000);
+    expect(graphql.mock.calls[0]).toEqual([
+      expect.stringContaining("productsCount(limit: null) { count }"),
+      { variables: {} },
+    ]);
+    graphql.mockImplementation(async () =>
+      json({ data: { productsCount: null } }),
+    );
+    expect(await countProducts(admin)).toBeNull();
   });
 });
