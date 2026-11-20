@@ -290,6 +290,22 @@ export function storedDraft(
   if (!drawable || typeof raw.template !== "string") return null;
   if (!Object.hasOwn(TEMPLATES, raw.template)) return null;
   const content = c as Content;
+  // A value the save drops must be one dropped() can name: a number in a
+  // column the table has.
+  const first = content.tables[0];
+  const kept = first.rows.every((r) =>
+    Object.entries(r.cells as object).every(([col, cell]) => {
+      const kind = first.columns.find((x) => x.id === col)?.kind;
+      return (
+        kind === "measure" ||
+        (kind !== undefined &&
+          Array.isArray(cell) &&
+          (cell.length === 1 || cell.length === 2) &&
+          cell.every((n) => typeof n === "number"))
+      );
+    }),
+  );
+  if (!kept) return null;
   const cells: Record<string, string> = {};
   for (const row of content.tables[0].rows)
     for (const [col, cell] of Object.entries(row.cells as object))
@@ -329,7 +345,8 @@ const valueAt = (d: Draft, row: string, col: string) => {
   const measure = t.columns.find((c) => c.id === col)?.kind === "measure";
   const v = measure
     ? d.cells[`${row}.${col}`]
-    : d.content.words[`${t.id}.${row}.${col}`];
+    : d.content.words[`${t.id}.${row}.${col}`]?.trim() ||
+      d.cells[`${row}.${col}`];
   return v?.trim() ?? "";
 };
 const and = (l: string[]) =>
@@ -361,13 +378,51 @@ export function removal(d: Draft, sel: Selected) {
   });
   const n = vals.length;
   const all = n === t.rows.length && n > 1 ? "all " : "";
+  const measure = t.columns.find((c) => c.id === sel.col)?.kind === "measure";
   return {
-    heading: `Remove the ${name} measurement?`,
-    label: "Remove measurement",
+    heading: `Remove the ${name} ${measure ? "measurement" : "column"}?`,
+    label: measure ? "Remove measurement" : "Remove column",
     text: n
       ? `Saving removes ${name} from ${all}${n} ${n === 1 ? "size" : "sizes"}, ${n > 1 ? `${vals[0]} to ${vals[n - 1]}` : vals[0]}. Shoppers won't see a ${name} column.`
       : null,
   };
+}
+
+/**
+ * Numbers stored outside Fitted in a size, text or country column, which
+ * toInput leaves out: the Editor board's warning for each column that has
+ * any, and the cells to mark. A value retyped as the cell's words is kept.
+ */
+export function dropped(d: Draft) {
+  const t = table(d);
+  const same = (s: string) => {
+    const c = parseCell(s);
+    return Array.isArray(c) ? formatCell(c) : s.trim();
+  };
+  return t.columns.flatMap((col) => {
+    if (col.kind === "measure") return [];
+    const at = t.rows.flatMap((r, ri) => {
+      const v = d.cells[`${r.id}.${col.id}`] ?? "";
+      const w = d.content.words[`${t.id}.${r.id}.${col.id}`] ?? "";
+      return col.id in r.cells && same(w) !== same(v)
+        ? [{ key: `${r.id}.${col.id}`, val: `${v} (${sizeOf(d, ri)})` }]
+        : [];
+    });
+    const n = at.length;
+    if (!n) return [];
+    return [
+      {
+        col: col.id,
+        cells: at.map((x) => x.key),
+        heading: `Saving drops ${n} ${n === 1 ? "value" : "values"} in ${colName(d, col.id)}`,
+        text: `They were added outside Fitted as numbers, which this column can't hold: ${and(at.map((x) => x.val))}.`,
+        fix:
+          n === 1
+            ? "Type it in again to keep it."
+            : "Type them in again to keep them.",
+      },
+    ];
+  });
 }
 
 const strip = <V>(o: Record<string, V>, drop: (k: string) => boolean) =>
