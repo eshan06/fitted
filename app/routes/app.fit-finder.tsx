@@ -62,8 +62,6 @@ const COPY: Record<string, string[]> = {
     "Your fit finder settings didn't load",
     "Fitted couldn't reach your store just now. Nothing has changed for shoppers.",
   ],
-  // Not drawn yet (#128): the server's line names what saved and what didn't (§15).
-  partial: ["Only some of your fit finder changes were saved"],
   conflict: [
     "Fit finder settings changed since you opened them",
     "Your edits weren't saved, so nothing was overwritten.",
@@ -132,8 +130,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const body = await request.json().catch(() => null);
-  const done: string[] = []; // what saved, for a partial save's report
-  const left: string[] = [];
+  let wrote = false;
   try {
     // Only the digest and the edits come from the browser (§3).
     const loaded = await getSettings(admin);
@@ -145,7 +142,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       text: { ...s.text, [l]: { ...s.text[l], noFit: e.noFit } },
     };
     // Every chart is checked before anything is written.
-    const writes: [string, () => Promise<unknown>][] = [];
+    const writes: (() => Promise<unknown>)[] = [];
     const sent = Array.isArray(body?.charts) ? body.charts.slice(0, 200) : [];
     const seen = new Set();
     for (const { id, updatedAt, ease, stretch } of sent.map(Object)) {
@@ -163,24 +160,25 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // The chart's own conflict check (§5), here and again at its write.
       if (now !== updatedAt)
         throw new ChartConflictError("This chart changed since you opened it");
-      writes.push([chart.name, () => updateChart(admin, id, next, updatedAt)]);
+      writes.push(() => updateChart(admin, id, next, updatedAt));
     }
     const digest = typeof body?.digest === "string" ? body.digest : null;
-    left.push(...writes.map(([name]) => name));
     if (JSON.stringify(input) !== JSON.stringify(s)) {
       await saveSettings(admin, { ...loaded, digest }, input);
-      done.push("Your settings");
+      wrote = true;
     }
-    for (const [, write] of writes) {
+    for (const write of writes) {
       await write();
-      done.push(left.shift()!);
+      wrote = true;
     }
     return { ok: true as const };
   } catch (err) {
-    if (done.length && err instanceof Error) {
+    // ponytail: a failure after a write landed shows the drawn save-failed
+    // banner, whose "nothing changed" overclaims; Try saving again finishes
+    // the save. #137 draws a banner naming what saved.
+    if (wrote && err instanceof Error) {
       log(session.shop, err);
-      const message = `${done.join(", ")} saved, but ${left.join(", ")} didn't, so ${left.length > 1 ? "those aren't" : "that isn't"} live yet. Your edits are still here: try saving again to finish.`;
-      return data({ error: { code: "partial", message } }, { status: 502 });
+      return data(refusal("shopify"), { status: 502 });
     }
     if (
       err instanceof SettingsValidationError ||
@@ -448,13 +446,7 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
         </Banner>
       ) : (
         code && (
-          <Banner
-            copy={
-              code === "partial"
-                ? [...COPY.partial, notice!.error!.message]
-                : COPY.shopify
-            }
-          >
+          <Banner copy={COPY.shopify}>
             {button("Try saving again", save)}
           </Banner>
         )

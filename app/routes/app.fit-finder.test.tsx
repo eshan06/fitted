@@ -97,6 +97,7 @@ function fakeStore(initial: Settings | null = null) {
     chartsDown: false, // only the chart list fails
     chartWritesDown: false,
     chartWritesMax: Infinity, // chart writes past this many fail
+    chartReadsFresh: Infinity, // chart reads past this many see a newer save
     chartWrites: 0,
     charts: [chart] as (typeof chart | Node)[],
   };
@@ -115,14 +116,19 @@ function fakeStore(initial: Settings | null = null) {
                 },
               },
         });
-      if (query.includes("query ChartGet"))
+      if (query.includes("query ChartGet")) {
+        const found = store.charts.find((c) => c.id === opts!.variables!.id);
+        const stale = store.chartReadsFresh-- <= 0;
         return json({
           data: {
             metaobject:
-              store.charts.find((c) => c.id === opts!.variables!.id) ?? null,
+              found && stale
+                ? { ...found, updatedAt: "later" }
+                : (found ?? null),
             metaobjectDefinitionByType: { type: TYPE },
           },
         });
+      }
       if (query.includes("mutation ChartUpdate")) {
         if (store.chartWritesDown || store.chartWrites >= store.chartWritesMax)
           throw new Error("socket hang up");
@@ -656,28 +662,37 @@ describe("a chart's ease and stretch", () => {
     none();
   });
 
-  it("names each chart that saved and each that didn't", async () => {
+  it("offers Try saving again, not Reload latest, when a chart changes after the settings landed", async () => {
+    store.chartReadsFresh = 1; // the write's own read sees another tab's save
+    const r = await send([
+      { id: TOPS, updatedAt: AT, ease: {}, stretch: "none" },
+    ]);
+    expect(r).toMatchObject({
+      status: 502,
+      body: { error: { code: "shopify" } },
+    });
+    expect(store.writes).toBe(1);
+    expect(JSON.parse(logs[0])).toMatchObject({ route: "app.fit-finder" });
+  });
+
+  it("finishes on retry when one chart landed and the next failed", async () => {
     store.chartWritesMax = 1;
-    const r = await post({
+    const body = {
       digest: "d0",
       edits: { fitFinder: saved().fitFinder, noFit: saved().text.en.noFit },
       charts: [
         { id: TOPS, updatedAt: AT, ease: {}, stretch: "none" },
         { id: BOTTOMS, updatedAt: AT, ease: {}, stretch: "none" },
       ],
-    });
-    expect(r).toMatchObject({
+    };
+    expect(await post(body)).toMatchObject({
       status: 502,
-      body: {
-        error: {
-          code: "partial",
-          message: expect.stringMatching(
-            /^Women's tops saved, but Women's bottoms didn't, so that isn't live yet\./,
-          ),
-        },
-      },
+      body: { error: { code: "shopify" } },
     });
-    expect(store.writes).toBe(0);
+    store.chartWritesMax = Infinity;
+    expect(await post(body)).toEqual({ status: 200, body: { ok: true } });
+    expect(store.chartWrites).toBe(2);
+    expect(fitOf(store.charts[2] as Node)).toMatchObject({ stretch: "none" });
   });
 
   it("writes a chart sent twice once", async () => {
@@ -721,19 +736,13 @@ describe("a chart's ease and stretch", () => {
     none();
   });
 
-  it("answers 502 when only the settings landed, saying so; the retry finishes it", async () => {
+  it("answers 502 when only the settings landed, logging why; the retry finishes it", async () => {
     store.chartWritesDown = true;
     const body = [{ id: TOPS, updatedAt: AT, ease: {}, stretch: "none" }];
     const r = await send(body);
-    expect(r).toEqual({
+    expect(r).toMatchObject({
       status: 502,
-      body: {
-        error: {
-          code: "partial",
-          message:
-            "Your settings saved, but Women's tops didn't, so that isn't live yet. Your edits are still here: try saving again to finish.",
-        },
-      },
+      body: { error: { code: "shopify" } },
     });
     expect(JSON.stringify(r.body)).not.toContain("socket");
     expect(JSON.parse(logs[0])).toMatchObject({
@@ -823,19 +832,17 @@ describe("a chart's ease and stretch", () => {
     expect(document.activeElement).toBe(ease());
   });
 
-  it("says when only some changes saved, and Try saving again finishes them", async () => {
+  it("keeps the edits when a chart write fails after the settings, and Try saving again finishes", async () => {
     await open();
     await type(noFit(), "Message us.");
     await type(ease(), "+1 in at bust");
     store.chartWritesDown = true;
     await click("Save");
     expect(banners()).toEqual([
-      "Only some of your fit finder changes were saved",
+      "Your fit finder changes weren't saved",
       UPGRADE,
     ]);
-    expect(text()).toContain(
-      "Your settings saved, but Women's tops didn't, so that isn't live yet.",
-    );
+    expect(ease().value).toBe("+1 in at bust");
     expect(store.value!.text.en.noFit).toBe("Message us.");
 
     store.chartWritesDown = false;
