@@ -1,9 +1,15 @@
-import { type InputHTMLAttributes, useRef, useState } from "react";
+import {
+  type InputHTMLAttributes,
+  type ReactNode,
+  useRef,
+  useState,
+} from "react";
 import { Link } from "react-router";
 import type { Content, FieldErrors } from "../../models/chart.server";
 import * as model from "./model";
 
-// The first table as an editable sheet, under the Editor board's table tools.
+// The first table (the one being edited, model.focus) as an editable sheet,
+// under the Editor board's table tools.
 // Headers and size, country and text cells are words; measure cells are typed
 // numbers (model.ts). Each input's id is the one the banner links to
 // (model.problems). Focusing a size or a column name selects it, for its bar
@@ -19,6 +25,8 @@ export function ChartTable(props: {
   onRemove: (sel: model.Selected) => void;
   /** Opens Paste a whole chart. */
   onPaste: () => void;
+  /** Drawn between the tools and the sheet: a later table's heading. */
+  head?: ReactNode;
 }) {
   const { draft, errors, onChange } = props;
   const [sel, setSel] = useState<model.Selected>();
@@ -233,6 +241,7 @@ export function ChartTable(props: {
           </select>
         </label>
       </div>
+      {props.head}
       {/* Always there, so screen readers announce what gets selected. */}
       <div role="status" aria-live="polite">
         {picked && (

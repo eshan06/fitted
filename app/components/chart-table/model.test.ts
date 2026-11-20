@@ -37,6 +37,10 @@ import {
   addStep,
   removeStep,
   MAX_STEPS,
+  focus,
+  focusErrors,
+  measuresOf,
+  tableTitle,
 } from "./model";
 
 const chart = (): ChartInput =>
@@ -257,19 +261,59 @@ describe("cell problems, in the Editor board's words", () => {
     const r = toInput({ ...d, name: "" });
     if (!("fieldErrors" in r)) throw new Error("expected errors");
     expect(problems(d, r.fieldErrors)).toEqual([
-      { id: "name", where: "Chart name", long: "Give the chart a name" },
+      {
+        id: "name",
+        where: "Chart name",
+        long: "Give the chart a name",
+        table: 0,
+      },
       {
         id: "cell-h-c2",
         where: "Column 4 name",
         long: "Name this measurement",
+        table: 0,
       },
       {
         id: "cell-xs-bust",
         where: "XS, Bust",
         short: "runs from high to low",
         long: "Put the smaller number first, like 31–32.",
+        table: 0,
       },
-      { id: "cell-r2-size", where: "Size 3", long: "Name this size" },
+      {
+        id: "cell-r2-size",
+        where: "Size 3",
+        long: "Name this size",
+        table: 0,
+      },
+    ]);
+  });
+
+  it("checks every table, and names a later table's problems in it", () => {
+    let d = toDraft(chart(), "ACTIVE");
+    d = setCell(d, "r1", "len", "0");
+    d = setWord(d, "t2.len", "");
+    const r = toInput(d);
+    if (!("fieldErrors" in r)) throw new Error("expected errors");
+    expect(r.fieldErrors).toEqual({
+      "content.words.t2.len": "Name this measurement",
+      "content.tables.1.rows.0.cells.len":
+        "Use a number above 0, or clear the cell.",
+    });
+    expect(problems(d, r.fieldErrors)).toEqual([
+      {
+        id: "cell-h-len",
+        where: "Column 2 name",
+        long: "Name this measurement",
+        table: 1,
+      },
+      {
+        id: "cell-r1-len",
+        where: "XS, Measurement",
+        short: "is 0",
+        long: "Use a number above 0, or clear the cell.",
+        table: 1,
+      },
     ]);
   });
 
@@ -280,16 +324,25 @@ describe("cell problems, in the Editor board's words", () => {
         "content.words.t1.xs.us": "Too long",
         "content.tables.0.rows.1.cells.bust": "Use a number above 0",
         "content.tables.1.rows.0.cells.len": "Use a number above 0",
+        "content.tables.5.rows": "Unknown",
       }),
     ).toEqual([
-      { id: "cell-xs-us", where: "XS, US size", long: "Too long" },
+      { id: "cell-xs-us", where: "XS, US size", long: "Too long", table: 0 },
       {
         id: "cell-s-bust",
         where: "S, Bust",
         short: undefined,
         long: "Use a number above 0",
+        table: 0,
       },
-      { where: "", long: "Use a number above 0" },
+      {
+        id: "cell-r1-len",
+        where: "XS, Length",
+        short: undefined,
+        long: "Use a number above 0",
+        table: 1,
+      },
+      { where: "", long: "Unknown", table: 0 },
     ]);
   });
 });
@@ -344,9 +397,35 @@ describe("storedDraft", () => {
   it.each([
     "content.v",
     "content.roundTo",
-    "content.tables.1.rows.0.cells.len",
+    "content.tables.1.merges",
+    "content.words.t2.title",
   ])("gives up when a finding (%s) is outside what the editor shows", (key) => {
     expect(storedDraft(raw(), "DRAFT", { [key]: "Wrong" })).toBeNull();
+  });
+
+  it("opens a later table's bad values and dropped numbers, as the first table's", () => {
+    const r = raw();
+    r.content.tables[1].rows[0].cells.len = [0];
+    r.content.tables[1].rows[0].cells.sz = [6];
+    const d = storedDraft(r, "DRAFT", {
+      "content.tables.1.rows.0.cells.len": "Use a number above 0",
+      "content.words.t2.note": "Too long",
+    })!;
+    expect(d.cells["r1.len"]).toBe("0");
+    const errs = toInput(d);
+    expect("fieldErrors" in errs && Object.keys(errs.fieldErrors)).toContain(
+      "content.tables.1.rows.0.cells.len",
+    );
+    expect(dropped(d)).toEqual([
+      expect.objectContaining({
+        col: "sz",
+        cells: ["r1.sz"],
+        heading: "Saving drops 1 value in Size",
+      }),
+    ]);
+    // A later table's column it doesn't have still can't be named.
+    r.content.tables[1].rows[0].cells.bust = [30];
+    expect(storedDraft(r, "DRAFT", {})).toBeNull();
   });
 
   // A stored cell outside a measurement that dropped() couldn't name.
@@ -799,6 +878,18 @@ describe("Paste whole chart", () => {
     });
   });
 
+  it("keeps every other table's typed values when it fills one table", () => {
+    const d = setCell(toDraft(chart(), "DRAFT"), "r1", "len", "25.5");
+    const first = input(replaceTable(d, pasted("Size\tBust\nXS\t31")));
+    expect(first.content.tables[1].rows[0].cells).toEqual({ len: [25.5] });
+    // Filling table 2 through focus keeps the first table's values.
+    const second = input(
+      focus(replaceTable(focus(d, 1), pasted("Size\tLength\nXS\t26")), 1),
+    );
+    expect(second.content.tables[0].rows[0].cells).toEqual({ bust: [31, 32] });
+    expect(second.content.tables[1].rows[0].cells).toEqual({ len: [26] });
+  });
+
   it("replaces the table, keeps its note, and marks the cells it can't read", () => {
     const d = toDraft(chart(), "DRAFT");
     const next = replaceTable(
@@ -995,12 +1086,50 @@ describe("How to measure steps", () => {
         id: "m-m1-text",
         where: "Step 2",
         long: "Must be text of at most 500 characters",
+        table: 0,
       },
       {
         id: "tips",
         where: "Fit tips",
         long: "Must be text of at most 2000 characters",
+        table: 0,
       },
     ]);
+  });
+});
+
+describe("tables", () => {
+  it("edits a later table with the table tools once it's focused, and puts it back", () => {
+    const d = toDraft(chart(), "DRAFT");
+    const view = focus(d, 1);
+    expect(view.content.tables.map((t) => t.id)).toEqual(["t2", "t1"]);
+    const back = focus(addMeasurement(addSize(view)), 1);
+    expect(back.content.tables.map((t) => t.id)).toEqual(["t1", "t2"]);
+    expect(back.content.tables[1].rows).toHaveLength(2);
+    expect(back.content.tables[1].columns).toHaveLength(3);
+    expect(focus(d, 0)).toBe(d);
+    const errs = {
+      "content.tables.0.rows": "a",
+      "content.tables.1.rows.0.cells.len": "b",
+      "content.tables.2.rows": "c",
+      name: "d",
+    };
+    expect(focusErrors(errs, 1)).toEqual({
+      "content.tables.1.rows": "a",
+      "content.tables.0.rows.0.cells.len": "b",
+      "content.tables.2.rows": "c",
+      name: "d",
+    });
+    expect(focusErrors(focusErrors(errs, 1), 1)).toEqual(errs);
+  });
+
+  it("names a table by its heading and lists its measurements", () => {
+    const d = setWord(toDraft(chart(), "DRAFT"), "t2.title", " Garment ");
+    expect(tableTitle(d, 1)).toBe("Garment");
+    expect(tableTitle(d, 0)).toBe("");
+    const two = addMeasurement(focus(d, 1));
+    const col = two.content.tables[0].columns[2].id;
+    const back = focus(setWord(two, `t2.${col}`, "Sleeve"), 1);
+    expect(measuresOf(back, 1)).toBe("Length and sleeve");
   });
 });

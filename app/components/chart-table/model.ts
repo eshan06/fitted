@@ -1,5 +1,5 @@
-// The editor's working copy of a chart (ARCHITECTURE §5). It edits the first
-// table; other tables, steps and the fit finder ride along untouched. Numbers
+// The editor's working copy of a chart (ARCHITECTURE §5). The table tools
+// edit the first table; focus() puts the table being edited first. Numbers
 // stay as typed text until Save, so a half-typed range never gets lost.
 import type {
   ChartInput,
@@ -28,7 +28,7 @@ export type Draft = {
   template: Template;
   status: ChartStatus;
   content: Content;
-  /** `<row>.<col>` to the text typed in the first table's measure cells */
+  /** `<row>.<col>` to the text typed in every table's measure cells */
   cells: Record<string, string>;
   measureImage?: string;
 };
@@ -96,11 +96,11 @@ export function cellProblem(text: string) {
 }
 
 export function toDraft(chart: ChartInput, status: ChartStatus): Draft {
-  const t = chart.content.tables[0];
   const cells: Record<string, string> = {};
-  for (const row of t.rows)
-    for (const [col, cell] of Object.entries(row.cells))
-      cells[`${row.id}.${col}`] = formatCell(cell);
+  for (const t of chart.content.tables)
+    for (const row of t.rows)
+      for (const [col, cell] of Object.entries(row.cells))
+        cells[`${row.id}.${col}`] = formatCell(cell);
   return {
     name: chart.name,
     template: chart.template,
@@ -112,6 +112,39 @@ export function toDraft(chart: ChartInput, status: ChartStatus): Draft {
 }
 
 const table = (d: Draft) => d.content.tables[0];
+/**
+ * The draft with table i first, for the table tools; focusing it again puts
+ * it back. Ids are unique across the chart, so only positions change.
+ */
+export function focus(d: Draft, i: number): Draft {
+  if (!i) return d;
+  const tables = [...d.content.tables];
+  [tables[0], tables[i]] = [tables[i], tables[0]];
+  return { ...d, content: { ...d.content, tables } };
+}
+/** Findings keyed for focus(d, i): table i's paths and the first's trade places. */
+export const focusErrors = (e: FieldErrors, i: number): FieldErrors =>
+  i
+    ? Object.fromEntries(
+        Object.entries(e).map(([k, v]) => [
+          k.replace(/^content\.tables\.(\d+)\./, (m, n) =>
+            n === "0"
+              ? `content.tables.${i}.`
+              : n === String(i)
+                ? "content.tables.0."
+                : m,
+          ),
+          v,
+        ]),
+      )
+    : e;
+/** The table a finding is in: by its path, or by the words' table id. */
+const tableAt = (d: Draft, key: string) => {
+  const n = /^content\.tables\.(\d+)\./.exec(key)?.[1];
+  const id = /^content\.words\.([^.]+)\./.exec(key)?.[1];
+  const i = n ? Number(n) : d.content.tables.findIndex((t) => t.id === id);
+  return i < d.content.tables.length ? Math.max(i, 0) : 0;
+};
 const withTable = (d: Draft, patch: Partial<Content["tables"][0]>): Draft => ({
   ...d,
   content: {
@@ -189,34 +222,50 @@ export const setUnit = (d: Draft, unit: Content["unit"]): Draft => ({
   ...d,
   content: { ...d.content, unit },
 });
+/** A table's heading, as "Garment measurements"; empty until it has one. */
+export const tableTitle = (d: Draft, i: number) =>
+  d.content.words[`${d.content.tables[i].id}.title`]?.trim() ?? "";
+/** A table's measurements, as "Length and sleeve". */
+export function measuresOf(d: Draft, i: number) {
+  const t = d.content.tables[i];
+  const names = t.columns
+    .filter((c) => c.kind === "measure")
+    .map((c) => d.content.words[`${t.id}.${c.id}`]?.trim() || "Measurement")
+    .map((n, j) => (j ? n.toLowerCase() : n));
+  return names.length ? and(names) : "";
+}
 
 /** The chart to save, or the problems to fix first, keyed like validateChart's paths. */
 export function toInput(
   d: Draft,
 ): { input: ChartInput } | { fieldErrors: FieldErrors } {
   const errs: FieldErrors = {};
-  const t = table(d);
-  const measures = t.columns.filter((c) => c.kind === "measure");
   if (!d.name.trim()) errs.name = "Give the chart a name";
-  if (!t.rows.length) errs["content.tables.0.rows"] = "Add at least one size";
-  for (const col of measures)
-    if (!d.content.words[`${t.id}.${col.id}`]?.trim())
-      errs[`content.words.${t.id}.${col.id}`] = "Name this measurement";
-  // validateChart makes the first column, and only it, the size column.
-  const rows = t.rows.map((row, ri) => {
-    const name = `${t.id}.${row.id}.${t.columns[0].id}`;
-    if (!d.content.words[name]?.trim())
-      errs[`content.words.${name}`] = "Name this size";
-    const cells: Record<string, Cell> = {};
-    for (const col of measures) {
-      const text = d.cells[`${row.id}.${col.id}`] ?? "";
-      const problem = cellProblem(text);
-      const cell = parseCell(text);
-      if (problem)
-        errs[`content.tables.0.rows.${ri}.cells.${col.id}`] = problem.long;
-      else if (cell && cell !== "invalid") cells[col.id] = cell;
-    }
-    return { id: row.id, cells };
+  const tables = d.content.tables.map((t, ti) => {
+    const measures = t.columns.filter((c) => c.kind === "measure");
+    if (!t.rows.length)
+      errs[`content.tables.${ti}.rows`] = "Add at least one size";
+    for (const col of measures)
+      if (!d.content.words[`${t.id}.${col.id}`]?.trim())
+        errs[`content.words.${t.id}.${col.id}`] = "Name this measurement";
+    // validateChart makes the first column, and only it, the size column.
+    const rows = t.rows.map((row, ri) => {
+      const name = `${t.id}.${row.id}.${t.columns[0].id}`;
+      if (!d.content.words[name]?.trim())
+        errs[`content.words.${name}`] = "Name this size";
+      const cells: Record<string, Cell> = {};
+      for (const col of measures) {
+        const text = d.cells[`${row.id}.${col.id}`] ?? "";
+        const problem = cellProblem(text);
+        const cell = parseCell(text);
+        if (problem)
+          errs[`content.tables.${ti}.rows.${ri}.cells.${col.id}`] =
+            problem.long;
+        else if (cell && cell !== "invalid") cells[col.id] = cell;
+      }
+      return { id: row.id, cells };
+    });
+    return { ...t, rows };
   });
   if (Object.keys(errs).length) return { fieldErrors: errs };
   // An emptied word is left out rather than saved blank.
@@ -227,10 +276,7 @@ export function toInput(
     input: {
       name: d.name.trim(),
       template: d.template,
-      content: {
-        ...withTable(d, { rows }).content,
-        words,
-      },
+      content: { ...d.content, tables, words },
       ...(d.measureImage && { measureImage: d.measureImage }),
     },
   };
@@ -242,8 +288,17 @@ export type Problem = {
   where: string;
   short?: string;
   long: string;
+  /** The table that holds the field. */
+  table: number;
 };
-export function problems(d: Draft, errors: FieldErrors): Problem[] {
+export const problems = (d: Draft, errors: FieldErrors): Problem[] =>
+  Object.entries(errors).map(([key, long]) => {
+    const i = tableAt(d, key);
+    const [p] = problemsIn(focus(d, i), focusErrors({ [key]: long }, i));
+    return { ...p, table: i };
+  });
+/** Findings in the first table or outside the tables. */
+function problemsIn(d: Draft, errors: FieldErrors) {
   const t = table(d);
   const words = d.content.words;
   const sizeName = (ri: number) =>
@@ -325,27 +380,29 @@ export function storedDraft(
   if (!Object.hasOwn(TEMPLATES, raw.template)) return null;
   const content = c as Content;
   // A value the save drops must be one dropped() can name: a number in a
-  // column the table has.
-  const first = content.tables[0];
-  const kept = first.rows.every((r) =>
-    Object.entries(r.cells as object).every(([col, cell]) => {
-      const kind = first.columns.find((x) => x.id === col)?.kind;
-      return (
-        kind === "measure" ||
-        (kind !== undefined &&
-          Array.isArray(cell) &&
-          (cell.length === 1 || cell.length === 2) &&
-          cell.every((n) => typeof n === "number"))
-      );
-    }),
+  // column its table has.
+  const kept = content.tables.every((t) =>
+    t.rows.every((r) =>
+      Object.entries(r.cells as object).every(([col, cell]) => {
+        const kind = t.columns.find((x) => x.id === col)?.kind;
+        return (
+          kind === "measure" ||
+          (kind !== undefined &&
+            Array.isArray(cell) &&
+            (cell.length === 1 || cell.length === 2) &&
+            cell.every((n) => typeof n === "number"))
+        );
+      }),
+    ),
   );
   if (!kept) return null;
   const cells: Record<string, string> = {};
-  for (const row of content.tables[0].rows)
-    for (const [col, cell] of Object.entries(row.cells as object))
-      cells[`${row.id}.${col}`] = Array.isArray(cell)
-        ? cell.join("–")
-        : String(cell);
+  for (const t of content.tables)
+    for (const row of t.rows)
+      for (const [col, cell] of Object.entries(row.cells as object))
+        cells[`${row.id}.${col}`] = Array.isArray(cell)
+          ? cell.join("–")
+          : String(cell);
   const d: Draft = {
     name: typeof raw.name === "string" ? raw.name : "",
     template: raw.template as Template,
@@ -356,11 +413,15 @@ export function storedDraft(
       measureImage: raw.measureImage,
     }),
   };
-  // Every finding must land on a field the editor shows: the units and the
-  // note, or one problems() can point at.
-  const note = `content.words.${content.tables[0].id}.note`;
+  // Every finding must land on a field the editor shows: the units, a
+  // table's note, or one problems() can point at.
+  const shown = new Set(
+    content.tables.map((t) => `content.words.${t.id}.note`),
+  );
   const rest = Object.fromEntries(
-    Object.entries(errors).filter(([k]) => k !== "content.unit" && k !== note),
+    Object.entries(errors).filter(
+      ([k]) => k !== "content.unit" && !shown.has(k),
+    ),
   );
   return problems(d, rest).every((p) => p.id) ? d : null;
 }
@@ -441,7 +502,9 @@ export function fitOnly(d: Draft, col?: string) {
  * toInput leaves out: the Editor board's warning for each column that has
  * any, and the cells to mark. A value retyped as the cell's words is kept.
  */
-export function dropped(d: Draft) {
+export const dropped = (d: Draft) =>
+  d.content.tables.flatMap((_, i) => droppedIn(focus(d, i)));
+function droppedIn(d: Draft) {
   const t = table(d);
   const same = (s: string) => {
     const c = parseCell(s);
@@ -817,7 +880,12 @@ export function replaceTable(d: Draft, p: Pasted): Draft {
     const [a, b] = k.split(".");
     return a === t.id && !["title", "sub", "note"].includes(b) && !isKept(b);
   });
-  const cells = strip(next.cells, (k) => !isKept(k.split(".")[1]));
+  // Only this table's values go; the other tables' stay as typed.
+  const mine = new Set(t.rows.map((r) => r.id));
+  const cells = strip(next.cells, (k) => {
+    const [r, c] = k.split(".");
+    return mine.has(r) && !isKept(c);
+  });
   const old = new Map(t.columns.map((c) => [c.id, c]));
   const columns = p.columns.map((c, j): Column => {
     const was = old.get(cols[j]);

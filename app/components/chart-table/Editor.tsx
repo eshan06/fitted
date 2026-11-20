@@ -1,7 +1,7 @@
 // The Editor board (Fitted canvas): name, template, status, and the tabs: the
-// size table with its tools, units and note, How to measure, and Fit tips,
-// saved through App Bridge's save bar. Later steps add the Media tab, a
-// second table and the live preview.
+// size tables with their tools, units and notes, How to measure, and Fit tips,
+// saved through App Bridge's save bar. Later steps add the Media tab, adding,
+// cloning and removing tables, and the live preview.
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
   Link,
@@ -75,6 +75,7 @@ export function Editor(props: {
   const [draft, setDraft] = useState(props.initial);
   const [pasting, setPasting] = useState(false);
   const [tab, setTab] = useState<Tab>("table");
+  const [at, setAt] = useState(0);
   const drawing = useMeasureImage(draft.measureImage, props.imageUrl, (id) =>
     setDraft((d) => {
       const next = { ...d, measureImage: id };
@@ -92,10 +93,10 @@ export function Editor(props: {
     if (!invalid) return null;
     const own = model.toInput(props.initial);
     const mine = "fieldErrors" in own ? own.fieldErrors : {};
-    const t0 = props.initial.content.tables[0];
     const rest = Object.entries(invalid).filter(([k]) => {
-      const col = /^content\.tables\.0\.rows\.\d+\.cells\.(.+)$/.exec(k)?.[1];
-      return !col || t0.columns.find((c) => c.id === col)?.kind === "measure";
+      const m = /^content\.tables\.(\d+)\.rows\.\d+\.cells\.(.+)$/.exec(k);
+      const cols = props.initial.content.tables[Number(m?.[1])]?.columns;
+      return !m || cols?.find((c) => c.id === m[2])?.kind === "measure";
     });
     const all = { ...Object.fromEntries(rest), ...mine };
     return Object.keys(all).length ? { stored: true, fieldErrors: all } : null;
@@ -120,7 +121,12 @@ export function Editor(props: {
   const notice = local ?? (answer === dismissed ? undefined : answer);
   const errors = notice?.fieldErrors ?? {};
   const listed = model.problems(draft, errors);
-  const t = draft.content.tables[0];
+  // The table being edited goes first in `view`, for the table tools.
+  const tables = draft.content.tables;
+  const ti = Math.min(at, tables.length - 1);
+  const view = model.focus(draft, ti);
+  const edit = (d: model.Draft) => setDraft(model.focus(d, ti));
+  const t = view.content.tables[0];
   const set = (patch: Partial<model.Draft>) => setDraft({ ...draft, ...patch });
   const created = answer?.created;
   const dirty =
@@ -195,7 +201,8 @@ export function Editor(props: {
   // A filled table comes in with the cells Fitted can't read marked, as after
   // a save (the Editor board's "Fix the marked fields").
   const fill = (p: model.Pasted) => {
-    const next = model.replaceTable(draft, p);
+    const filled = model.replaceTable(view, p);
+    const next = model.focus(filled, ti);
     setDraft(next);
     setPasting(false);
     dismiss();
@@ -207,7 +214,7 @@ export function Editor(props: {
           )
         : {};
     if (Object.keys(marked).length) setLocal({ fieldErrors: marked });
-    const t0 = next.content.tables[0];
+    const t0 = filled.content.tables[0];
     setTimeout(() =>
       document
         .getElementById(`cell-${t0.rows[0].id}-${t0.columns[0].id}`)
@@ -293,6 +300,41 @@ export function Editor(props: {
   // failed and the editor stays open.
   const drops = base.updatedAt === props.updatedAt ? model.dropped(draft) : [];
 
+  // The Editor board's "Editing table 2".
+  const title = (i: number) => model.tableTitle(draft, i);
+  const word = (key: string, name: string) => (
+    <label className="grow">
+      {name}
+      <input
+        id={key.replace(".", "-")}
+        className="field"
+        value={draft.content.words[key] ?? ""}
+        onChange={(e) => setDraft(model.setWord(draft, key, e.target.value))}
+      />
+    </label>
+  );
+  const tableHead = (
+    <>
+      {/* Clone table and Remove table join it with #199. */}
+      <div role="group" aria-label="Tables in this chart" className="segs">
+        {tables.map((x, i) => (
+          <button
+            key={x.id}
+            type="button"
+            aria-pressed={i === ti}
+            onClick={() => setAt(i)}
+          >
+            {`${i + 1}. ${title(i) || `Table ${i + 1}`}`}
+          </button>
+        ))}
+      </div>
+      <div className="row">
+        {word(`${t.id}.title`, "Heading")}
+        {word(`${t.id}.sub`, "Line under the heading")}
+      </div>
+    </>
+  );
+
   return (
     <s-page>
       <SaveBar id={SAVE_BAR} open={dirty}>
@@ -353,6 +395,7 @@ export function Editor(props: {
                       onClick={(e) => {
                         e.preventDefault();
                         setTab(tabOf(p.id!));
+                        if (tabOf(p.id!) === "table") setAt(p.table);
                         setTimeout(() =>
                           document.getElementById(p.id!)?.focus(),
                         );
@@ -510,40 +553,46 @@ export function Editor(props: {
                 <s-stack direction="inline" gap="small-200">
                   <s-button
                     disabled={t.rows.length >= model.MAX_ROWS}
-                    onClick={() => setDraft(model.addSize(draft))}
+                    onClick={() => edit(model.addSize(view))}
                   >
                     Add size
                   </s-button>
                   <s-button
                     disabled={t.columns.length >= model.MAX_COLUMNS}
-                    onClick={() => setDraft(model.addMeasurement(draft))}
+                    onClick={() => edit(model.addMeasurement(view))}
                   >
                     Add measurement
                   </s-button>
                 </s-stack>
               </div>
+              {ti > 0 && !t.rows.length && tableHead}
               {t.rows.length ? (
                 <ChartTable
-                  draft={draft}
-                  errors={errors}
-                  problems={listed}
+                  key={t.id}
+                  draft={view}
+                  errors={model.focusErrors(errors, ti)}
+                  problems={listed.filter((p) => p.table === ti)}
                   dropped={drops.flatMap((x) => x.cells)}
-                  onChange={setDraft}
+                  onChange={edit}
                   onPaste={() => setPasting(true)}
                   onRemove={(sel) => {
-                    setDraft(model.remove(draft, sel));
+                    edit(model.remove(view, sel));
                     // Cell findings name sizes by position, so they move up too.
                     if (!notice?.fieldErrors) return;
-                    const left = model.removeErrors(
-                      draft,
-                      sel,
-                      notice.fieldErrors,
+                    const left = model.focusErrors(
+                      model.removeErrors(
+                        view,
+                        sel,
+                        model.focusErrors(notice.fieldErrors, ti),
+                      ),
+                      ti,
                     );
                     // With none left, the banner goes, as after a fix and save.
                     if (Object.keys(left).length)
                       setLocal({ ...notice, fieldErrors: left });
                     else dismiss();
                   }}
+                  head={ti > 0 && tableHead}
                 />
               ) : (
                 <div className="blank">
@@ -582,6 +631,28 @@ export function Editor(props: {
                 Type in inches or centimeters. Fitted converts the other unit
                 for shoppers automatically.
               </p>
+              {ti === 0 &&
+                tables.slice(1).map((x, j) => (
+                  <div key={x.id} className="tablerow">
+                    <div>
+                      <strong>
+                        {`Table ${j + 2}${title(j + 1) && `: ${title(j + 1)}`}`}
+                      </strong>
+                      <div className="help">
+                        {model.measuresOf(draft, j + 1)
+                          ? `${model.measuresOf(draft, j + 1)}, shown under its own heading in the same chart`
+                          : "Shown under its own heading in the same chart"}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn2"
+                      onClick={() => setAt(j + 1)}
+                    >
+                      Edit table
+                    </button>
+                  </div>
+                ))}
               <label>
                 Note under the table
                 <textarea

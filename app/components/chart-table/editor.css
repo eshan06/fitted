@@ -647,3 +647,17 @@
   max-width: 100%;
   max-height: 240px;
 }
+/* Later tables (Editor board). */
+.editor .segs {
+  flex-wrap: wrap;
+}
+.editor .tablerow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border: 1px solid #e1e3e5;
+  border-radius: 8px;
+}
