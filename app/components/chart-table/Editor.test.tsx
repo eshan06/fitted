@@ -87,6 +87,11 @@ const back = async () => {
   await settle();
 };
 
+const IMG = {
+  id: "gid://shopify/MediaImage/9",
+  url: "https://cdn.shopify.com/s/files/1/files/measure-tops.png?v=1",
+};
+let uploads: { status: number; body: unknown }[] = [];
 // Renders the editor route with a loader and an action that answer in turn.
 async function open(
   loaded: unknown[],
@@ -104,6 +109,13 @@ async function open(
       HydrateFallback: () => null,
       loader,
       action: async ({ request }) => {
+        // A drawing's upload answers from `uploads`, in turn.
+        if (request.headers.get("content-type")?.includes("multipart")) {
+          const file = (await request.formData()).get("file") as File;
+          sent.push({ upload: file.name });
+          const u = uploads.shift() ?? { status: 200, body: { image: IMG } };
+          return Response.json(u.body, { status: u.status });
+        }
         sent.push(await request.json());
         const a = answers.shift() ?? { status: 200, body: { ok: true } };
         if ("redirect" in a) return redirect(a.redirect);
@@ -1394,5 +1406,155 @@ describe("Country sizes", () => {
     expect(byLabel("Column 3 name").value).toBe("Bust");
     expect(countries().value).toBe("us");
     expect(text()).not.toContain("Shoppers see one country's sizes");
+  });
+});
+
+describe("How to measure and Fit tips tabs", () => {
+  const saved = (b: Record<string, unknown>) =>
+    validateChart(b.chart as ChartInput);
+  const tab = (label: string) =>
+    [...document.querySelectorAll<HTMLButtonElement>(".tab")].find(
+      (b) => b.textContent === label,
+    )!;
+  const openTab = async (label: string) => {
+    await act(async () => tab(label).click());
+  };
+  // Picks a file in the drawing's hidden file input.
+  const pick = async (name: string, bytes: number[]) => {
+    const el = byLabel("Measuring drawing file");
+    const file = new File([new Uint8Array(bytes)], name);
+    Object.defineProperty(el, "files", { value: [file], configurable: true });
+    await act(async () =>
+      el.dispatchEvent(new Event("change", { bubbles: true })),
+    );
+    await settle();
+  };
+  const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0];
+  afterEach(() => {
+    uploads = [];
+  });
+
+  it("switches tabs, adds and names steps, removes one, and saves them", async () => {
+    const { sent } = await open([stored()]);
+    expect(
+      [...document.querySelectorAll(".tab")].map((b) => b.textContent),
+    ).toEqual(["Size table", "How to measure", "Fit tips"]);
+    expect(tab("Size table").getAttribute("aria-pressed")).toBe("true");
+    await openTab("How to measure");
+    expect(tab("How to measure").getAttribute("aria-pressed")).toBe("true");
+    expect(byLabel("XS, Bust")).toBeNull();
+    expect(text()).toContain("No steps yet");
+    expect(text()).toContain(
+      "Tell shoppers where to hold the tape, one step per measurement.",
+    );
+    expect(text()).toContain("Add a measuring drawing");
+    expect(text()).toContain(
+      "PNG or JPG. Number its lines to match the steps.",
+    );
+    await click("Add step");
+    await click("Add step");
+    expect(document.activeElement).toBe(byLabel("Step 2 name"));
+    expect(text()).toContain(
+      "Step 1 is line 1 on the drawing. Up to 20 steps.",
+    );
+    await type(byLabel("Step 1 name"), "Bust");
+    await type(byLabel("Step 1, how to measure"), "Around the fullest part.");
+    await type(byLabel("Step 2 name"), "Waist");
+    await act(async () => byLabel("Remove step 1").click());
+    expect(byLabel("Step 1 name").value).toBe("Waist");
+    await click("Save");
+    const c = saved(sent[0]).content;
+    expect(c.measure.steps).toHaveLength(1);
+    expect(c.words[`m.${c.measure.steps[0]}.name`]).toBe("Waist");
+    expect(Object.keys(c.words).filter((k) => k.startsWith("m."))).toHaveLength(
+      1,
+    );
+  });
+
+  it("counts the fit tips as they're typed and saves them", async () => {
+    const { sent } = await open([stored()]);
+    await openTab("Fit tips");
+    const tips = document.getElementById("tips") as HTMLTextAreaElement;
+    expect(tips.placeholder).toBe(
+      "For example, Runs small through the shoulders. Size up if you're between sizes.",
+    );
+    expect(tips.maxLength).toBe(2000);
+    expect(text()).toContain("Shoppers see these under the size table.");
+    expect(text()).toContain("0 of 2,000 characters");
+    await type(tips, "Runs small.\nSize up.");
+    expect(text()).toContain("20 of 2,000 characters");
+    await click("Save");
+    expect(saved(sent[0]).content.words.tips).toBe("Runs small.\nSize up.");
+  });
+
+  it("uploads a drawing, shows it from Shopify, and saves it with the chart", async () => {
+    const { sent } = await open([stored()]);
+    await openTab("How to measure");
+    await pick("measure-tops.png", PNG);
+    expect(sent).toEqual([{ upload: "measure-tops.png" }]);
+    const img = document.querySelector<HTMLImageElement>(".drawing img")!;
+    expect(img.src).toBe(IMG.url);
+    expect(img.alt).toBe("Measuring drawing");
+    expect(text()).toContain("measure-tops.png");
+    expect(button("Replace")).toBeTruthy();
+    await click("Save");
+    expect(saved(sent[1]).measureImage).toBe(IMG.id);
+  });
+
+  it("refuses a GIF or WebP before sending it, as not a PNG or JPG", async () => {
+    const { sent } = await open([stored()]);
+    await openTab("How to measure");
+    await pick("measure-tops.webp", [0x52, 0x49, 0x46, 0x46]);
+    expect(sent).toEqual([]);
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      "measure-tops.webp isn't a PNG or JPGSave it as one and add it again.",
+    );
+    await pick("measure-tops.png", [0x47, 0x49, 0x46, 0x38]);
+    expect(text()).toContain("measure-tops.png isn't a PNG or JPG");
+    expect(sent).toEqual([]);
+  });
+
+  it("says a drawing didn't upload, keeps the chart without one, and tries again", async () => {
+    uploads = [
+      { status: 502, body: { error: { code: "upload", message: "x" } } },
+    ];
+    const { sent } = await open([stored()]);
+    await openTab("How to measure");
+    await pick("measure-tops.png", PNG);
+    expect(text()).toContain("measure-tops.png didn't upload");
+    expect(text()).toContain(
+      "Shopify didn't answer, so the chart has no drawing yet.",
+    );
+    // Nothing changed, so there's nothing to save.
+    expect(document.querySelector('[data-testid="save-bar"]')).toBeNull();
+    await click("Try again");
+    expect(sent).toEqual([
+      { upload: "measure-tops.png" },
+      { upload: "measure-tops.png" },
+    ]);
+    expect(document.querySelector(".drawing img")).not.toBeNull();
+  });
+
+  it("shows a stored drawing by its name, and Remove saves the chart without it", async () => {
+    const s = stored();
+    const withImage = {
+      ...s,
+      stored: {
+        ...s.stored,
+        chart: {
+          ...s.stored.chart,
+          measureImage: "gid://shopify/MediaImage/3",
+        },
+        measureImageUrl:
+          "https://cdn.shopify.com/s/files/1/files/tops%20chart.jpg?v=2",
+      },
+    };
+    const { sent } = await open([withImage]);
+    await openTab("How to measure");
+    expect(text()).toContain("tops chart.jpg");
+    await click("Remove");
+    expect(text()).toContain("Add a measuring drawing");
+    await click("Save");
+    expect(saved(sent[0]).measureImage).toBeUndefined();
   });
 });
