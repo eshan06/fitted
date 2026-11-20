@@ -24,16 +24,22 @@ import {
   ChartValidationError,
   type StoredChart,
   chartPages,
+  countChartProducts,
   getChart,
   updateChart,
   validateChart,
 } from "../models/chart.server";
-import { STRETCH, type Fit } from "../lib/fit-finder";
+import { STRETCH, type Fit, findSize } from "../lib/fit-finder";
 import {
   type FitChart,
   describe,
   formatEase,
+  howItPicks,
+  lastStep,
   parseEase,
+  reasonText,
+  sampleAnswers,
+  size,
 } from "../components/fit-finder/chart-fit";
 import { getPlan } from "../models/billing.server";
 import {
@@ -102,7 +108,22 @@ async function load(admin: Admin, shop: string) {
       })(),
     ]);
     const charts = all.flatMap(fitChart);
-    return { ...settings, plan, plansUrl, hasCharts: all.length > 0, charts };
+    // Only Pro's live banner names how many products show the picked chart.
+    const counts =
+      plan === "pro" && charts.length
+        ? await countChartProducts(
+            admin,
+            charts.map((c) => c.id),
+          )
+        : null;
+    return {
+      ...settings,
+      plan,
+      plansUrl,
+      hasCharts: all.length > 0,
+      charts,
+      counts,
+    };
   } catch (err) {
     if (!(
       err instanceof SettingsReadWriteError || err instanceof AdminApiError
@@ -409,6 +430,7 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
     setDraft((d) => ({ ...d, fitFinder: { ...d.fitFinder, ...patch } }));
   const f = draft.fitFinder;
   const own = chart && draft.fits[chart.id];
+  const count = chart && loaded.counts?.[chart.id];
   const putFit = (patch: Partial<Draft["fits"][string]>) =>
     setDraft((d) => ({
       ...d,
@@ -517,7 +539,23 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
         }
         body={
           <>
-            {loaded.plan !== "pro" && (
+            {loaded.plan === "pro" ? (
+              chart &&
+              count && (
+                <div role="status" className="live">
+                  <span className="badge ok">Live</span>
+                  <span>
+                    Find my size shows on the{" "}
+                    {count.count.toLocaleString("en-US")}
+                    {count.atLeast ? "+" : ""}{" "}
+                    {count.count === 1 && !count.atLeast
+                      ? "product"
+                      : "products"}{" "}
+                    with {chart.name}. Changes go live when you save.
+                  </span>
+                </div>
+              )
+            ) : (
               <Banner
                 tone="info"
                 copy={[
@@ -534,161 +572,265 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
               </Banner>
             )}
 
-            <section className="card" aria-labelledby="h-type">
-              <h2 id="h-type">Fit finder type</h2>
-              <div className="types">
-                {type(
-                  "basic",
-                  "Basic",
-                  "Height, weight, age and fit preference. No tape measure needed.",
-                )}
-                {type(
-                  "advanced",
-                  "Advanced",
-                  "Body measurements, with ease and stretch set per garment.",
-                )}
-                {type(
-                  "custom",
-                  "Custom",
-                  "Your own questions and rules, from hats to dog coats.",
-                )}
-              </div>
-              <div className="fields">
-                <label>
-                  Answer style
-                  <select
-                    className="field"
-                    value={f.answers}
-                    onChange={(e) =>
-                      put({ answers: e.target.value as typeof f.answers })
-                    }
-                  >
-                    <option value="inputs">Input boxes</option>
-                    <option value="sliders">Sliders</option>
-                  </select>
-                </label>
-                {own && (
-                  <>
-                    <div>
-                      <label>
-                        Ease
-                        <input
-                          id="ease"
-                          className={errors.ease ? "field bad" : "field"}
-                          aria-invalid={errors.ease ? true : undefined}
-                          aria-describedby={
-                            errors.ease ? "ease-err" : undefined
-                          }
-                          value={own.ease}
-                          onChange={(e) => putFit({ ease: e.target.value })}
-                        />
-                      </label>
-                      {errors.ease &&
-                        errorLine(
-                          "ease",
-                          "Start with a number, like +2 in at bust.",
-                        )}
-                    </div>
+            <div className="split">
+              <div className="form">
+                <section className="card" aria-labelledby="h-type">
+                  <h2 id="h-type">Fit finder type</h2>
+                  <div className="types">
+                    {type(
+                      "basic",
+                      "Basic",
+                      "Height, weight, age and fit preference. No tape measure needed.",
+                    )}
+                    {type(
+                      "advanced",
+                      "Advanced",
+                      "Body measurements, with ease and stretch set per garment.",
+                    )}
+                    {type(
+                      "custom",
+                      "Custom",
+                      "Your own questions and rules, from hats to dog coats.",
+                    )}
+                  </div>
+                  <div className="fields">
                     <label>
-                      Stretch
+                      Answer style
                       <select
                         className="field"
-                        value={own.stretch}
+                        value={f.answers}
                         onChange={(e) =>
-                          putFit({
-                            stretch: e.target.value as Fit["stretch"],
-                          })
+                          put({ answers: e.target.value as typeof f.answers })
                         }
                       >
-                        {Object.entries(STRETCH_NAMES).map(([v, name]) => (
-                          <option key={v} value={v}>
-                            {name}
-                          </option>
-                        ))}
+                        <option value="inputs">Input boxes</option>
+                        <option value="sliders">Sliders</option>
                       </select>
                     </label>
-                  </>
+                    {own && (
+                      <>
+                        <div>
+                          <label>
+                            Ease
+                            <input
+                              id="ease"
+                              className={errors.ease ? "field bad" : "field"}
+                              aria-invalid={errors.ease ? true : undefined}
+                              aria-describedby={
+                                errors.ease ? "ease-err" : undefined
+                              }
+                              value={own.ease}
+                              onChange={(e) => putFit({ ease: e.target.value })}
+                            />
+                          </label>
+                          {errors.ease &&
+                            errorLine(
+                              "ease",
+                              "Start with a number, like +2 in at bust.",
+                            )}
+                        </div>
+                        <label>
+                          Stretch
+                          <select
+                            className="field"
+                            value={own.stretch}
+                            onChange={(e) =>
+                              putFit({
+                                stretch: e.target.value as Fit["stretch"],
+                              })
+                            }
+                          >
+                            {Object.entries(STRETCH_NAMES).map(([v, name]) => (
+                              <option key={v} value={v}>
+                                {name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </>
+                    )}
+                  </div>
+                </section>
+
+                {chart && (
+                  <section className="card" aria-labelledby="h-qs">
+                    <div className="row">
+                      <h2 id="h-qs">Questions</h2>
+                      <label>
+                        Recommend sizes from
+                        <select
+                          className="field"
+                          value={chart.id}
+                          onChange={(e) => setChartId(e.target.value)}
+                        >
+                          {loaded.charts.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                    <ol className="qs">
+                      {chart.fit.questions.map((q, i) => {
+                        const d = describe(chart, q);
+                        return (
+                          <li key={q.id}>
+                            <span className="num" aria-hidden="true">
+                              {i + 1}
+                            </span>
+                            <span>
+                              <strong>{d.words}</strong>
+                              <span className="help">{d.kind}</span>
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ol>
+                  </section>
                 )}
-              </div>
-            </section>
 
-            {chart && (
-              <section className="card" aria-labelledby="h-qs">
-                <div className="row">
-                  <h2 id="h-qs">Questions</h2>
-                  <label>
-                    Recommend sizes from
-                    <select
-                      className="field"
-                      value={chart.id}
-                      onChange={(e) => setChartId(e.target.value)}
-                    >
-                      {loaded.charts.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name}
-                        </option>
+                {chart && (
+                  <section className="card" aria-labelledby="h-logic">
+                    <h2 id="h-logic">How Fitted picks a size</h2>
+                    <ol className="list">
+                      {howItPicks(chart).map((line) => (
+                        <li key={line}>{line}</li>
                       ))}
-                    </select>
-                  </label>
-                </div>
-                <ol className="qs">
-                  {chart.fit.questions.map((q, i) => {
-                    const d = describe(chart, q);
-                    return (
-                      <li key={q.id}>
-                        <span className="num" aria-hidden="true">
-                          {i + 1}
-                        </span>
-                        <span>
-                          <strong>{d.words}</strong>
-                          <span className="help">{d.kind}</span>
-                        </span>
-                      </li>
-                    );
-                  })}
-                </ol>
-              </section>
-            )}
+                    </ol>
+                    <p className="help">
+                      Shoppers always see why a size was picked, so they can
+                      trust it.
+                    </p>
+                  </section>
+                )}
 
-            <section className="card" aria-labelledby="h-result">
-              <h2 id="h-result">Result screen</h2>
-              {box(
-                "fitBars",
-                "Show fit bars, tight to loose, for each measurement",
-              )}
-              {box("otherSizes", "Let shoppers see how other sizes would fit")}
-              {box(
-                "addToCart",
-                "Add the recommended size to cart from the result",
-              )}
-              {box("onButton", "Show the result on the product page button")}
-              {box(
-                "similar",
-                "Suggest similar products when the size is sold out",
-              )}
-              {box("note", "Show a note on how measurements are used")}
-              {box("askAge", "Ask for age (Basic only)")}
-              <div>
-                <label>
-                  When no size fits
-                  <input
-                    id="noFit"
-                    className={errors.noFit ? "field bad" : "field"}
-                    aria-invalid={errors.noFit ? true : undefined}
-                    aria-describedby={errors.noFit ? "noFit-err" : undefined}
-                    maxLength={200}
-                    value={draft.noFit}
-                    onChange={(e) =>
-                      setDraft((d) => ({ ...d, noFit: e.target.value }))
-                    }
-                  />
-                </label>
-                {errors.noFit && errorLine("noFit", NO_FIT)}
+                <section className="card" aria-labelledby="h-result">
+                  <h2 id="h-result">Result screen</h2>
+                  {box(
+                    "fitBars",
+                    "Show fit bars, tight to loose, for each measurement",
+                  )}
+                  {box(
+                    "otherSizes",
+                    "Let shoppers see how other sizes would fit",
+                  )}
+                  {box(
+                    "addToCart",
+                    "Add the recommended size to cart from the result",
+                  )}
+                  {box(
+                    "onButton",
+                    "Show the result on the product page button",
+                  )}
+                  {box(
+                    "similar",
+                    "Suggest similar products when the size is sold out",
+                  )}
+                  {box("note", "Show a note on how measurements are used")}
+                  {box("askAge", "Ask for age (Basic only)")}
+                  <div>
+                    <label>
+                      When no size fits
+                      <input
+                        id="noFit"
+                        className={errors.noFit ? "field bad" : "field"}
+                        aria-invalid={errors.noFit ? true : undefined}
+                        aria-describedby={
+                          errors.noFit ? "noFit-err" : undefined
+                        }
+                        maxLength={200}
+                        value={draft.noFit}
+                        onChange={(e) =>
+                          setDraft((d) => ({ ...d, noFit: e.target.value }))
+                        }
+                      />
+                    </label>
+                    {errors.noFit && errorLine("noFit", NO_FIT)}
+                  </div>
+                </section>
               </div>
-            </section>
+              {chart && own && (
+                <ShopperPreview
+                  chart={chart}
+                  own={own}
+                  saved={initial.fits[chart.id].ease}
+                  noFit={draft.noFit}
+                />
+              )}
+            </div>
           </>
         }
       />
     </>
+  );
+}
+
+// "What shoppers see": findSize on the picked chart for sample answers, with
+// the screen's unsaved stretch, and its unsaved ease while that reads. A
+// picture of the storefront's last step, so nothing in it is a control.
+function ShopperPreview(props: {
+  chart: FitChart;
+  own: Draft["fits"][string];
+  saved: string;
+  noFit: string;
+}) {
+  const { chart: c, own } = props;
+  const ease =
+    own.ease === props.saved
+      ? c.fit.ease
+      : (parseEase(c, own.ease) ?? c.fit.ease);
+  const answers = sampleAnswers(c);
+  const result = findSize(
+    {
+      unit: c.unit,
+      tables: [c.table],
+      fit: { ...c.fit, ease, stretch: own.stretch },
+    },
+    answers,
+  );
+  const step = lastStep(c, answers);
+  const n = c.fit.questions.length;
+  return (
+    <aside className="card shopper" aria-label="Shopper preview">
+      <div className="row">
+        <h2>What shoppers see</h2>
+        <span className="badge">Preview</span>
+      </div>
+      <div className="step">
+        <div className="count">
+          <span>
+            Question {n} of {n}
+          </span>
+          <span>Find my size</span>
+        </div>
+        <span className="bar" />
+        <strong className="words">{step.words}</strong>
+        {step.options.map((o) => (
+          <span key={o.label} className={o.on ? "opt on" : "opt"}>
+            {o.label}
+          </span>
+        ))}
+        <div className="row">
+          <span className="back">Back</span>
+          <span className="cart">See my size</span>
+        </div>
+      </div>
+      <div className="yours">
+        {result.row === null ? (
+          <>
+            <span>{props.noFit}</span>
+            <span>{reasonText(c, result)}</span>
+          </>
+        ) : (
+          <>
+            <strong>Your size</strong>
+            <span className="size">{size(c, result.row)}</span>
+            <span>{reasonText(c, result)}</span>
+            <span className="cart">Select {size(c, result.row)}</span>
+          </>
+        )}
+      </div>
+    </aside>
   );
 }

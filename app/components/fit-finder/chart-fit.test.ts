@@ -1,5 +1,15 @@
 import { describe as group, expect, it } from "vitest";
-import { type FitChart, describe, formatEase, parseEase } from "./chart-fit";
+import { type Answers, findSize } from "../../lib/fit-finder";
+import {
+  type FitChart,
+  describe,
+  formatEase,
+  howItPicks,
+  lastStep,
+  parseEase,
+  reasonText,
+  sampleAnswers,
+} from "./chart-fit";
 
 // The FitFinder board's Women's tops: bust in inches and a weight in pounds.
 const tops = (ease: Record<string, number> = { bust: 2 }): FitChart => ({
@@ -126,5 +136,160 @@ group("the questions list", () => {
     delete c.words["t1.xs.size"];
     c.fit.questions = [{ id: "q2", kind: "usual_size" }];
     expect(describe(c, c.fit.questions[0]).kind).toBe("Choice: xs to XL.");
+  });
+});
+
+const shoulders = {
+  id: "q4",
+  kind: "choice" as const,
+  options: [
+    { id: "a", rows: ["xs", "s"] },
+    { id: "b", rows: ["m", "l"] },
+  ],
+};
+// Women's tops with every size named, as a chart from the editor has them.
+const named = (ease: Record<string, number> = { bust: 2 }) => {
+  const c = tops(ease);
+  Object.assign(c.words, {
+    "t1.s.size": "S",
+    "t1.m.size": "M",
+    "t1.l.size": "L",
+  });
+  c.words["fit.q4"] = "Which best describes your shoulders?";
+  c.words["fit.q4.b"] = "Broad";
+  return c;
+};
+
+group("how Fitted picks a size", () => {
+  it("says the canvas's three lines for Women's tops", () => {
+    expect(howItPicks(named())).toEqual([
+      "Match the shopper's bust measurement to the Women's tops chart.",
+      "Relaxed fit moves one size up. Snug moves one size down, never below XS.",
+      "No measurement? Start from the size they usually wear.",
+    ]);
+  });
+
+  it("names choices first, then every measurement once, largest size winning", () => {
+    const c = named();
+    c.fit.questions = [
+      { id: "q1", kind: "measure", col: "bust", optional: true },
+      { id: "q5", kind: "measure", col: "waist", optional: false },
+      { id: "q6", kind: "measure", col: "bust", optional: false },
+      shoulders,
+    ];
+    expect(howItPicks(c)).toEqual([
+      `Shoppers who answer "Which best describes your shoulders?" only get that answer's sizes.`,
+      "Match the shopper's bust and waist measurements to the Women's tops chart. The largest size wins.",
+    ]);
+  });
+
+  it("starts from the usual size when nothing is measured", () => {
+    const c = named();
+    c.fit.questions = [
+      { id: "q2", kind: "usual_size" },
+      { id: "q3", kind: "fit" },
+    ];
+    expect(howItPicks(c)).toEqual([
+      "Start from the size they usually wear.",
+      "Relaxed fit moves one size up. Snug moves one size down, never below XS.",
+    ]);
+  });
+});
+
+group("what shoppers see", () => {
+  it("answers as a shopper in the middle size who likes a regular fit", () => {
+    const c = named();
+    c.fit.questions.push(shoulders, {
+      id: "q5",
+      kind: "measure",
+      col: "waist", // M has no waist, so it goes unanswered
+      optional: true,
+    });
+    expect(sampleAnswers(c)).toEqual({
+      q1: { value: 37.5, unit: "in" },
+      q2: "m",
+      q3: "regular",
+      q4: "b",
+    });
+  });
+
+  it("draws the last question with the sample's answer marked", () => {
+    const c = named();
+    const step = (q: FitChart["fit"]["questions"][number]) => {
+      c.fit.questions = [q];
+      return lastStep(c, sampleAnswers(c));
+    };
+    expect(step({ id: "q3", kind: "fit" })).toEqual({
+      words: "How do you like tops to fit?",
+      options: [
+        { label: "Snug", on: false },
+        { label: "Regular", on: true },
+        { label: "Relaxed", on: false },
+      ],
+    });
+    expect(step({ id: "q2", kind: "usual_size" }).options).toEqual(
+      ["XS", "S", "M", "L", "XL"].map((label) => ({
+        label,
+        on: label === "M",
+      })),
+    );
+    expect(
+      step({ id: "q1", kind: "measure", col: "bust", optional: true }),
+    ).toEqual({
+      words: "What's your bust measurement?",
+      options: [{ label: "37.5 in", on: true }],
+    });
+    expect(step(shoulders).options).toEqual([
+      { label: "a", on: false },
+      { label: "Broad", on: true },
+    ]);
+  });
+
+  // Each reason as findSize gives it on Women's tops (bust 33-34 for XS, two
+  // inches a size), and the sample's 37.5 in bust.
+  const reason = (
+    c: FitChart,
+    answers: Answers = sampleAnswers(c),
+    stretch: FitChart["fit"]["stretch"] = "none",
+  ) =>
+    reasonText(
+      c,
+      findSize(
+        { unit: c.unit, tables: [c.table], fit: { ...c.fit, stretch } },
+        answers,
+      ),
+    );
+  it("says why, in the canvas's words, with the ease applied", () => {
+    expect(reason(named({}))).toBe(
+      "Your 37.5 in bust falls in M on this chart, and you like a regular fit.",
+    );
+    expect(reason(named())).toBe(
+      "Your 37.5 in bust falls in L on this chart, and you like a regular fit.",
+    );
+    expect(reason(named({ bust: 1.25 }))).toBe(
+      "Your 37.5 in bust falls between M and L on this chart, and you like a regular fit, so L.",
+    );
+    // Some stretch lets M reach 38.75 in.
+    expect(reason(named({ bust: 1.25 }), undefined, "some")).toBe(
+      "Your 37.5 in bust falls in M on this chart, and you like a regular fit.",
+    );
+  });
+
+  it("says why off the chart, and from the usual size or the choices", () => {
+    expect(reason(named({ bust: 10 }))).toBe(
+      "Your 37.5 in bust is past XL, the largest size on this chart.",
+    );
+    expect(reason(named({ bust: -10 }))).toBe(
+      "Your 37.5 in bust is below XS, the smallest size on this chart.",
+    );
+    expect(reason(named(), { q2: "m", q3: "regular" })).toBe(
+      "You usually wear M, and you like a regular fit.",
+    );
+    const c = named();
+    c.fit.questions = [{ ...shoulders, options: [{ id: "a", rows: ["s"] }] }];
+    expect(reason(c, { q4: "a" })).toBe(
+      "Your answers leave only S on this chart.",
+    );
+    expect(reason(named(), {})).toBe("");
   });
 });
