@@ -10,6 +10,8 @@ export function ChartTable(props: {
   draft: model.Draft;
   errors: FieldErrors;
   problems: model.Problem[];
+  /** `<row>.<col>` of the stored numbers a save drops (model.dropped). */
+  dropped: string[];
   onChange: (d: model.Draft) => void;
   onRemove: (sel: model.Selected) => void;
 }) {
@@ -35,10 +37,11 @@ export function ChartTable(props: {
     label: string,
     f: { value: string; set: (v: string) => model.Draft; error?: string },
     select?: model.Selected,
+    drop?: boolean,
   ) => (
     <input
       id={id}
-      className={f.error ? "field cell bad" : "field cell"}
+      className={`field cell${f.error ? " bad" : ""}${drop ? " drop" : ""}`}
       aria-label={label}
       aria-invalid={f.error ? true : undefined}
       aria-describedby={f.error ? `${id}-err` : undefined}
@@ -75,18 +78,21 @@ export function ChartTable(props: {
   const listed = props.problems.filter((p) => p.id?.startsWith("cell-"));
   return (
     <>
-      {picked && (
-        <div className="selbar">
-          <strong>
-            {picked.row !== undefined
-              ? `Size ${words[`${t.id}.${picked.row}.${t.columns[0].id}`]?.trim() || ri + 1} selected`
-              : `${model.colName(draft, picked.col)} column selected`}
-          </strong>
-          <s-button onClick={ask}>
-            {picked.row !== undefined ? "Remove size" : "Remove measurement"}
-          </s-button>
-        </div>
-      )}
+      {/* Always there, so screen readers announce what gets selected. */}
+      <div role="status" aria-live="polite">
+        {picked && (
+          <div className="selbar">
+            <strong>
+              {picked.row !== undefined
+                ? `Size ${words[`${t.id}.${picked.row}.${t.columns[0].id}`]?.trim() || ri + 1} selected`
+                : `${model.colName(draft, picked.col)} column selected`}
+            </strong>
+            <s-button onClick={ask}>
+              {model.removal(draft, picked).label}
+            </s-button>
+          </div>
+        )}
+      </div>
       <div className="scroll">
         <table className="sheet">
           <thead>
@@ -140,6 +146,7 @@ export function ChartTable(props: {
                               }
                             : word(`${t.id}.${k}`),
                           i ? undefined : { row: row.id },
+                          props.dropped.includes(k),
                         )}
                       </td>
                     );

@@ -49,12 +49,20 @@ export function Editor(props: {
   const [draft, setDraft] = useState(props.initial);
   // The editor's own check, or the action's answer until it's dismissed. A
   // stored chart that fails the checks opens with them, in the editor's words
-  // where it has them.
+  // where it has them. A number in a column that isn't a measurement isn't
+  // one to fix: the save leaves it out, and the drop warning names it unless
+  // the cell's words already hold it.
   const [opened] = useState<Answer | null>(() => {
     if (!invalid) return null;
     const own = model.toInput(props.initial);
     const mine = "fieldErrors" in own ? own.fieldErrors : {};
-    return { stored: true, fieldErrors: { ...invalid, ...mine } };
+    const t0 = props.initial.content.tables[0];
+    const rest = Object.entries(invalid).filter(([k]) => {
+      const col = /^content\.tables\.0\.rows\.\d+\.cells\.(.+)$/.exec(k)?.[1];
+      return !col || t0.columns.find((c) => c.id === col)?.kind === "measure";
+    });
+    const all = { ...Object.fromEntries(rest), ...mine };
+    return Object.keys(all).length ? { stored: true, fieldErrors: all } : null;
   });
   const [local, setLocal] = useState(opened);
   const [dismissed, setDismissed] = useState<Answer>();
@@ -172,6 +180,7 @@ export function Editor(props: {
     action("Try saving again", () => save()),
   ];
   const n = listed.length;
+  const drops = model.dropped(draft);
 
   return (
     <s-page>
@@ -254,6 +263,14 @@ export function Editor(props: {
             {actions}
           </s-banner>
         )}
+        {drops.map((x) => (
+          <s-banner key={x.col} tone="warning" heading={x.heading}>
+            <s-paragraph>{x.text}</s-paragraph>
+            <s-paragraph>
+              <strong>{x.fix}</strong>
+            </s-paragraph>
+          </s-banner>
+        ))}
         <div>
           <Link to="/app/charts">Size charts</Link>
           <div className="row">
@@ -334,6 +351,7 @@ export function Editor(props: {
               draft={draft}
               errors={errors}
               problems={listed}
+              dropped={drops.flatMap((x) => x.cells)}
               onChange={setDraft}
               onRemove={(sel) => {
                 setDraft(model.remove(draft, sel));

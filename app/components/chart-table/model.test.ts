@@ -4,6 +4,7 @@ import {
   addMeasurement,
   addSize,
   blankDraft,
+  dropped,
   formatCell,
   cellProblem,
   parseCell,
@@ -327,6 +328,47 @@ describe("storedDraft", () => {
     "content.tables.1.rows.0.cells.len",
   ])("gives up when a finding (%s) is outside what the editor shows", (key) => {
     expect(storedDraft(raw(), "DRAFT", { [key]: "Wrong" })).toBeNull();
+  });
+
+  // A stored cell outside a measurement that dropped() couldn't name.
+  const cellAt = (col: string, cell: unknown) => {
+    const r = raw();
+    r.content.tables[0].rows[1].cells[col] = cell;
+    return r;
+  };
+  it.each([
+    ["a column the table doesn't have", cellAt("hips", [30])],
+    ["text in a country column", cellAt("us", "4")],
+  ])("gives up on a cell in %s, which a save would drop unsaid", (_, r) => {
+    expect(storedDraft(r, "DRAFT", {})).toBeNull();
+  });
+
+  it("names the stored numbers a save drops outside the measurements, until retyped", () => {
+    const r = cellAt("us", [4, 6]);
+    r.content.tables[0].rows[0].cells.us = [0, 2];
+    r.content.tables[0].rows[0].cells.size = [1];
+    const d = storedDraft(r, "DRAFT", {})!;
+    // XS already says 0–2 in words, so only S's 4–6 and XS's size number go.
+    expect(dropped(d)).toEqual([
+      {
+        col: "size",
+        cells: ["xs.size"],
+        heading: "Saving drops 1 value in Size",
+        text: "They were added outside Fitted as numbers, which this column can't hold: 1 (XS).",
+        fix: "Type it in again to keep it.",
+      },
+      expect.objectContaining({
+        cells: ["s.us"],
+        heading: "Saving drops 1 value in US size",
+      }),
+    ]);
+    const typed = setWord(setWord(d, "t1.s.us", " 4 - 6"), "t1.xs.size", "1");
+    expect(dropped(typed)).toEqual([]);
+    expect(removal(d, { col: "us" })).toMatchObject({
+      heading: "Remove the US size column?",
+      label: "Remove column",
+    });
+    expect(removal(d, { col: "bust" }).label).toBe("Remove measurement");
   });
 
   it.each(["content.unit", "content.words.t1.note"])(
