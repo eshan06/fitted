@@ -121,7 +121,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
               limit: FREE_ACTIVE_CHARTS,
               published,
               checkFailed,
-              plansUrl: await pricingPlansUrl(admin, session.shop),
+              // Without the link the banner still says why and offers Save as Draft.
+              plansUrl: await pricingPlansUrl(admin, session.shop).catch(
+                (err) => {
+                  if (!(err instanceof AdminApiError)) throw err;
+                  logShopifyError(session.shop, err);
+                  return undefined;
+                },
+              ),
             },
           },
           { status: 403 },
@@ -185,7 +192,7 @@ export default function ChartEditor() {
   const s = loaded.mode === "edit" ? loaded.stored : undefined;
   const initial = s?.chart
     ? toDraft(s.chart, s.status)
-    : s && storedDraft(s.raw, s.status);
+    : s && storedDraft(s.raw, s.status, s.fieldErrors);
   if (s && initial)
     return (
       <Editor

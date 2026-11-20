@@ -280,7 +280,11 @@ describe("storedDraft", () => {
   };
 
   it("opens a stored chart that fails the checks with its bad values as text", () => {
-    const d = storedDraft(raw(), "ACTIVE")!;
+    const d = storedDraft(raw(), "ACTIVE", {
+      "content.tables.0.rows.0.cells.bust": "Use a range from low to high",
+      "content.words.t1.xs.us": "Too long",
+      name: "Too long",
+    })!;
     expect(d.cells).toMatchObject({ "xs.bust": "32–31", "s.bust": "0" });
     expect(d.name).toBe("Women's tops");
     const r = toInput(d);
@@ -311,6 +315,13 @@ describe("storedDraft", () => {
       { ...raw(), content: { ...raw().content, words: { a: 1 } } },
     ],
   ])("gives up on %s, which the table can't draw", (_, r) => {
-    expect(storedDraft(r, "DRAFT")).toBeNull();
+    expect(storedDraft(r, "DRAFT", {})).toBeNull();
   });
+
+  it.each(["content.v", "content.unit", "content.tables.1.rows.0.cells.len"])(
+    "gives up when a finding (%s) is outside what the editor shows",
+    (key) => {
+      expect(storedDraft(raw(), "DRAFT", { [key]: "Wrong" })).toBeNull();
+    },
+  );
 });

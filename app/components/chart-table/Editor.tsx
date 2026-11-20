@@ -126,9 +126,15 @@ export function Editor(props: {
       ],
       <>
         {/* A new tab: the admin's save bar holds this one while there are unsaved edits. */}
-        <s-button slot="secondary-actions" href={err?.plansUrl} target="_blank">
-          See plans
-        </s-button>
+        {err?.plansUrl && (
+          <s-button
+            slot="secondary-actions"
+            href={err.plansUrl}
+            target="_blank"
+          >
+            See plans
+          </s-button>
+        )}
         {action("Save as Draft", () => save({ ...draft, status: "DRAFT" }))}
       </>,
     ],
@@ -178,7 +184,8 @@ export function Editor(props: {
           onClick={() => {
             setDraft(initial);
             dismiss();
-            setLocal(opened);
+            // The opening findings hold only until a save stores new content.
+            setLocal(base.updatedAt === props.updatedAt ? opened : null);
           }}
         >
           Discard

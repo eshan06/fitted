@@ -430,6 +430,19 @@ describe("saving a chart", () => {
     });
   });
 
+  it("still names Free's limit when the plans link can't be read, logging why", async () => {
+    m.countActiveCharts.mockResolvedValue(3);
+    m.pricingPlansUrl.mockRejectedValue(new AdminApiError("down", "detail"));
+    const r = await result(save("ACTIVE"));
+    expect(r.status).toBe(403);
+    expect(r.body).toMatchObject({ error: { code: "plan_limit" } });
+    expect(
+      (r.body as { error: { plansUrl?: string } }).error.plansUrl,
+    ).toBeUndefined();
+    expect(logs.join("\n")).toContain("detail");
+    expect(m.updateChart).not.toHaveBeenCalled();
+  });
+
   it("maps each failure to its status (§15)", async () => {
     m.updateChart.mockRejectedValueOnce(
       new ChartConflictError("This chart changed since you opened it"),

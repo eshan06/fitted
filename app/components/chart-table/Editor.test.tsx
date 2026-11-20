@@ -432,24 +432,116 @@ describe("chart editor screen", () => {
     expect(document.querySelector("input")).toBeNull();
   });
 
-  it("opens a saved chart that fails the checks with its bad values marked, and saves once they're fixed", async () => {
+  // A stored chart with XS, Bust saved as 32–31, and the server's findings.
+  const broken = (fieldErrors: Record<string, string> = {}) => {
     const raw = chart();
     raw.content.tables[0].rows[0].cells.bust = [32, 31];
-    const { sent } = await open([
-      {
-        mode: "edit",
-        stored: {
-          id: "gid://shopify/Metaobject/42",
-          status: "DRAFT",
-          updatedAt: "2026-11-19T10:00:00Z",
-          fieldErrors: {
-            "content.tables.0.rows.0.cells.bust":
-              "Use a range from low to high",
-          },
-          raw,
+    return {
+      mode: "edit",
+      stored: {
+        id: "gid://shopify/Metaobject/42",
+        status: "DRAFT",
+        updatedAt: "2026-11-19T10:00:00Z",
+        fieldErrors: {
+          "content.tables.0.rows.0.cells.bust": "Use a range from low to high",
+          ...fieldErrors,
         },
+        raw,
       },
-    ]);
+    };
+  };
+
+  it("keeps the server's own findings listed, and Discard brings the banner back", async () => {
+    await open([broken({ "content.words.t1.xs.size": "Too long" })]);
+    expect(document.querySelector("s-banner")?.getAttribute("heading")).toBe(
+      "Fix 2 values to save this chart",
+    );
+    expect(text()).toContain("Size 1: Too long");
+    await type(byLabel("Size 1"), "");
+    await click("Save");
+    expect(document.querySelector("s-banner")?.getAttribute("heading")).toBe(
+      "Fix 2 fields to save",
+    );
+    await click("Discard");
+    expect(document.querySelector("s-banner")?.getAttribute("heading")).toBe(
+      "Fix 2 values to save this chart",
+    );
+    expect(byLabel("XS, Bust").value).toBe("32–31");
+  });
+
+  it("shows only the banner when a finding is outside what the editor can change", async () => {
+    await open([broken({ "content.unit": "Pick in or cm" })]);
+    expect(document.querySelector("s-banner")?.getAttribute("heading")).toBe(
+      "Fix 2 values to save this chart",
+    );
+    expect(document.querySelector("input")).toBeNull();
+  });
+
+  it("drops the opening banner once the fixed chart is stored, even if the status then fails", async () => {
+    await open(
+      [broken()],
+      [
+        {
+          status: 403,
+          body: {
+            error: { code: "product_access", message: "x" },
+            updatedAt: "2026-11-19T10:05:00Z",
+          },
+        },
+      ],
+    );
+    await type(byLabel("XS, Bust"), "31–32");
+    await type(byLabel("Chart status"), "ACTIVE");
+    await click("Save");
+    await click("Discard");
+    expect(document.querySelector("s-banner")).toBeNull();
+    expect(byLabel("XS, Bust").value).toBe("31–32");
+    expect(byLabel("XS, Bust").getAttribute("aria-invalid")).toBeNull();
+  });
+
+  it("leaves out See plans when the server couldn't read the link", async () => {
+    await open(
+      [stored()],
+      [
+        {
+          status: 403,
+          body: {
+            error: { code: "plan_limit", message: "x", limit: 3, published: 3 },
+          },
+        },
+      ],
+    );
+    await type(byLabel("Chart status"), "ACTIVE");
+    await click("Save");
+    expect(button("Save as Draft")).toBeDefined();
+    expect(button("See plans")).toBeUndefined();
+  });
+
+  it("asks for Products access to unpublish too", async () => {
+    const published = stored();
+    published.stored.status = "ACTIVE";
+    await open(
+      [published],
+      [
+        {
+          status: 403,
+          body: {
+            error: { code: "product_access", message: "x" },
+            updatedAt: "2026-11-19T10:05:00Z",
+          },
+        },
+      ],
+    );
+    await type(byLabel("Chart status"), "DRAFT");
+    await click("Save");
+    expect(text()).toContain(
+      "You need Products access to unpublish charts, since that also updates your products.",
+    );
+    expect(button("Try unpublishing again")).toBeDefined();
+  });
+
+  it("opens a saved chart that fails the checks with its bad values marked, and saves once they're fixed", async () => {
+    const { sent } = await open([broken()]);
     const banner = document.querySelector("s-banner")!;
     expect(banner.getAttribute("heading")).toBe(
       "Fix 1 value to save this chart",

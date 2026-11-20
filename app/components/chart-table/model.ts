@@ -258,11 +258,16 @@ const isObj = (v: unknown): v is Record<string, unknown> =>
 const hasIds = (v: unknown): v is { id: string }[] =>
   Array.isArray(v) && v.every((x) => isObj(x) && typeof x.id === "string");
 /**
- * A stored chart that fails the checks, as a draft the editor can draw, or
- * null when its shape is too broken for the table. Bad values stay as typed
- * text, so the editor's own check marks them.
+ * A stored chart that fails the checks, as a draft the editor can draw and
+ * fix, or null when its shape is too broken for the table or a finding is in
+ * something the editor can't change. Bad values stay as typed text, so the
+ * editor's own check marks them.
  */
-export function storedDraft(raw: unknown, status: ChartStatus): Draft | null {
+export function storedDraft(
+  raw: unknown,
+  status: ChartStatus,
+  errors: FieldErrors,
+): Draft | null {
   if (!isObj(raw) || !isObj(raw.content)) return null;
   const c = raw.content;
   const drawable =
@@ -291,7 +296,7 @@ export function storedDraft(raw: unknown, status: ChartStatus): Draft | null {
       cells[`${row.id}.${col}`] = Array.isArray(cell)
         ? cell.join("–")
         : String(cell);
-  return {
+  const d: Draft = {
     name: typeof raw.name === "string" ? raw.name : "",
     template: raw.template as Template,
     status,
@@ -301,4 +306,6 @@ export function storedDraft(raw: unknown, status: ChartStatus): Draft | null {
       measureImage: raw.measureImage,
     }),
   };
+  // Every finding must land on a field the editor shows.
+  return problems(d, errors).every((p) => p.id) ? d : null;
 }
