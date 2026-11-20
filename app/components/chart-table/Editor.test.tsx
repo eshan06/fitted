@@ -385,6 +385,37 @@ describe("chart editor screen", () => {
     ]);
   });
 
+  it("links More actions to the chart's version history, except on a new chart", async () => {
+    await open([stored()]);
+    const link = [...document.querySelectorAll("a")].find(
+      (a) => a.textContent === "Version history",
+    );
+    expect(link?.getAttribute("href")).toBe("/app/charts/42/history");
+    act(() => root?.unmount());
+    await open([{ mode: "new", handle: "c-abc" }], [], "/app/charts/new");
+    expect(text()).not.toContain("More actions");
+  });
+
+  it("says when a save landed but version history missed it", async () => {
+    await open(
+      [stored()],
+      [{ status: 200, body: { ok: true, historyMissed: true } }],
+    );
+    const missed = () =>
+      document
+        .querySelector('s-banner[tone="warning"]')
+        ?.getAttribute("heading");
+    expect(missed()).toBeUndefined();
+    await type(byLabel("XS, Bust"), "31.5–32");
+    await click("Save");
+    expect(missed()).toBe("Saved, but version history missed it");
+    expect(text()).toContain("This save won't show in version history.");
+    act(() => root?.unmount());
+    // A new chart whose first version wasn't recorded opens saying so.
+    await open([stored()], [], "/app/charts/42?history=missed");
+    expect(missed()).toBe("Saved, but version history missed it");
+  });
+
   it("says when the chart didn't load, and tries again", async () => {
     const { loader } = await open([
       { mode: "error", error: { code: "shopify", message: "x" } },
