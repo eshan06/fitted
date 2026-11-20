@@ -225,8 +225,9 @@ export const setUnit = (d: Draft, unit: Content["unit"]): Draft => ({
 });
 /** The fit video link; emptied, it matches a chart stored without one. */
 export function setVideo(d: Draft, link: string): Draft {
-  const { videoUrl: _, ...content } = d.content;
-  return { ...d, content: link ? { ...content, videoUrl: link } : content };
+  const content: Content = { ...d.content, videoUrl: link };
+  if (!link) delete content.videoUrl;
+  return { ...d, content };
 }
 
 export const MAX_TABLES = 4;
