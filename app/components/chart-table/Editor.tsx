@@ -125,7 +125,8 @@ export function Editor(props: {
         "Save it as a Draft, or see plans to publish more.",
       ],
       <>
-        <s-button slot="secondary-actions" href={err?.plansUrl} target="_top">
+        {/* A new tab: the admin's save bar holds this one while there are unsaved edits. */}
+        <s-button slot="secondary-actions" href={err?.plansUrl} target="_blank">
           See plans
         </s-button>
         {action("Save as Draft", () => save({ ...draft, status: "DRAFT" }))}

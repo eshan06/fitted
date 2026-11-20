@@ -300,7 +300,8 @@ describe("chart editor screen", () => {
       ]);
       const plans = button("See plans");
       expect(plans.getAttribute("href")).toBe(plansUrl);
-      expect(plans.getAttribute("target")).toBe("_top");
+      // A new tab, since the save bar holds this one while edits are unsaved.
+      expect(plans.getAttribute("target")).toBe("_blank");
       expect(button("Try saving again")).toBeUndefined();
       await click("Save as Draft");
       expect(sent[1]).toMatchObject({ status: "DRAFT" });
