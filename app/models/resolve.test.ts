@@ -77,6 +77,7 @@ import {
   type Rules,
   checkJobs,
   collectionChanged,
+  latestResolve,
   productChanged,
   resolveIfStale,
   saveRules,
@@ -1454,6 +1455,32 @@ describe("a collection webhook", () => {
       detail: "TypeError: fetch failed",
     });
     expect(h.jobs).toEqual([]);
+  });
+});
+
+describe("the screen's progress", () => {
+  it("reads the shop's newest resolve: whether it runs, why it failed and who asked", async () => {
+    expect(await latestResolve(SHOP)).toBeNull();
+    const at = (s: number) => new Date(Date.UTC(2026, 10, 1, 0, 0, s));
+    h.jobs.push(
+      { shop: SHOP, kind: "resolve", status: "done", createdAt: at(1) },
+      {
+        shop: SHOP,
+        kind: "resolve",
+        status: "failed",
+        error: "Shopify request failed",
+        progress: { merchant: true, pass: 1, attempt: 1 },
+        createdAt: at(2),
+      },
+      { shop: SHOP, kind: "import", status: "running", createdAt: at(3) },
+      { shop: "other.myshopify.com", kind: "resolve", createdAt: at(4) },
+    );
+    expect(await latestResolve(SHOP)).toEqual({
+      status: "failed",
+      error: "Shopify request failed",
+      at: +at(2),
+      merchant: true,
+    });
   });
 });
 

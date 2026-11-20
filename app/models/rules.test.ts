@@ -670,6 +670,8 @@ describe("reading and saving rules", () => {
     expect(err).toMatchObject({
       digest: "d0",
       fieldErrors: { [`charts.${C1}`]: "Missing this chart's rules" },
+      // The screen words each problem from the stored document.
+      value: { v: 1, order: [C1], charts: {} },
     });
     // On Free they keep no paid conditions.
     await expect(saveRules(store.admin, rules(), "d0", "free")).rejects.toThrow(
