@@ -62,11 +62,9 @@ const COPY: Record<string, string[]> = {
     "Your fit finder settings didn't load",
     "Fitted couldn't reach your store just now. Nothing has changed for shoppers.",
   ],
-  // Not drawn yet (#128's drawing pass): settings or a chart saved before a later write failed.
-  partial: [
-    "Only some of your fit finder changes were saved",
-    "Shopify didn't respond in time, so some are live and some aren't. Your edits are still here: try saving again to finish.",
-  ],
+  // Not drawn yet (#128's drawing pass): a write failed after others landed.
+  // Its line names what saved and what didn't (§15), so the server sends it.
+  partial: ["Only some of your fit finder changes were saved"],
   conflict: [
     "Fit finder settings changed since you opened them",
     "Your edits weren't saved, so nothing was overwritten.",
@@ -139,7 +137,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const body = await request.json().catch(() => null);
-  let wrote = false; // a failure after this point is a partial save
+  const done: string[] = []; // what saved, for a partial save's report
+  const left: string[] = [];
   try {
     // Only the digest and the edits come from the browser (§3).
     const loaded = await getSettings(admin);
@@ -151,7 +150,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       text: { ...s.text, [l]: { ...s.text[l], noFit: e.noFit } },
     };
     // Every chart is checked before anything is written.
-    const writes: (() => Promise<unknown>)[] = [];
+    const writes: [string, () => Promise<unknown>][] = [];
     const sent = Array.isArray(body?.charts) ? body.charts.slice(0, 200) : [];
     const seen = new Set();
     for (const { id, updatedAt, ease, stretch } of sent.map(Object)) {
@@ -169,22 +168,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // The chart's own conflict check (§5), here and again at its write.
       if (now !== updatedAt)
         throw new ChartConflictError("This chart changed since you opened it");
-      writes.push(() => updateChart(admin, id, next, updatedAt));
+      writes.push([chart.name, () => updateChart(admin, id, next, updatedAt)]);
     }
     const digest = typeof body?.digest === "string" ? body.digest : null;
+    left.push(...writes.map(([name]) => name));
     if (JSON.stringify(input) !== JSON.stringify(s)) {
       await saveSettings(admin, { ...loaded, digest }, input);
-      wrote = true;
+      done.push("Your settings");
     }
-    for (const write of writes) {
+    for (const [, write] of writes) {
       await write();
-      wrote = true;
+      done.push(left.shift()!);
     }
     return { ok: true as const };
   } catch (err) {
-    if (wrote && err instanceof Error) {
+    if (done.length && err instanceof Error) {
       log(session.shop, err);
-      return data(refusal("partial"), { status: 502 });
+      const message = `${done.join(", ")} saved, but ${left.join(", ")} didn't, so ${left.length > 1 ? "those aren't" : "that isn't"} live yet. Your edits are still here: try saving again to finish.`;
+      return data({ error: { code: "partial", message } }, { status: 502 });
     }
     if (
       err instanceof SettingsValidationError ||
@@ -452,7 +453,13 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
         </Banner>
       ) : (
         code && (
-          <Banner copy={code === "partial" ? COPY.partial : COPY.shopify}>
+          <Banner
+            copy={
+              code === "partial"
+                ? [...COPY.partial, notice!.error!.message]
+                : COPY.shopify
+            }
+          >
             {button("Try saving again", save)}
           </Banner>
         )

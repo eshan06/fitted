@@ -96,6 +96,7 @@ function fakeStore(initial: Settings | null = null) {
     down: false,
     chartsDown: false, // only the chart list fails
     chartWritesDown: false,
+    chartWritesMax: Infinity, // chart writes past this many fail
     chartWrites: 0,
     charts: [chart] as (typeof chart | Node)[],
   };
@@ -123,7 +124,8 @@ function fakeStore(initial: Settings | null = null) {
           },
         });
       if (query.includes("mutation ChartUpdate")) {
-        if (store.chartWritesDown) throw new Error("socket hang up");
+        if (store.chartWritesDown || store.chartWrites >= store.chartWritesMax)
+          throw new Error("socket hang up");
         const { id, metaobject } = opts!.variables as {
           id: string;
           metaobject: { values: { content: string } };
@@ -654,6 +656,30 @@ describe("a chart's ease and stretch", () => {
     none();
   });
 
+  it("names each chart that saved and each that didn't", async () => {
+    store.chartWritesMax = 1;
+    const r = await post({
+      digest: "d0",
+      edits: { fitFinder: saved().fitFinder, noFit: saved().text.en.noFit },
+      charts: [
+        { id: TOPS, updatedAt: AT, ease: {}, stretch: "none" },
+        { id: BOTTOMS, updatedAt: AT, ease: {}, stretch: "none" },
+      ],
+    });
+    expect(r).toMatchObject({
+      status: 502,
+      body: {
+        error: {
+          code: "partial",
+          message: expect.stringMatching(
+            /^Women's tops saved, but Women's bottoms didn't, so that isn't live yet\./,
+          ),
+        },
+      },
+    });
+    expect(store.writes).toBe(0);
+  });
+
   it("writes a chart sent twice once", async () => {
     const one = { id: TOPS, updatedAt: AT, ease: { bust: 1 }, stretch: "high" };
     expect((await send([one, { ...one, ease: { bust: 3 } }])).status).toBe(200);
@@ -704,7 +730,8 @@ describe("a chart's ease and stretch", () => {
       body: {
         error: {
           code: "partial",
-          message: expect.stringContaining("some are live and some aren't"),
+          message:
+            "Your settings saved, but Women's tops didn't, so that isn't live yet. Your edits are still here: try saving again to finish.",
         },
       },
     });
@@ -806,7 +833,9 @@ describe("a chart's ease and stretch", () => {
       "Only some of your fit finder changes were saved",
       UPGRADE,
     ]);
-    expect(text()).toContain("some are live and some aren't");
+    expect(text()).toContain(
+      "Your settings saved, but Women's tops didn't, so that isn't live yet.",
+    );
     expect(store.value!.text.en.noFit).toBe("Message us.");
 
     store.chartWritesDown = false;
