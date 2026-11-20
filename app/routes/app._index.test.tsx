@@ -15,7 +15,6 @@ const m = vi.hoisted(() => ({
   getPlan: vi.fn(),
   pricingPlansUrl: vi.fn(),
   resolveIfStale: vi.fn(),
-  extensions: vi.fn(),
 }));
 vi.mock("../shopify.server", () => ({
   authenticate: { admin: m.authenticate },
@@ -37,8 +36,6 @@ vi.mock("../models/billing.server", async (orig) => ({
   ...(await orig<typeof import("../models/billing.server")>()),
   getPlan: m.getPlan,
 }));
-const bridge = { app: { extensions: m.extensions } };
-vi.mock("@shopify/app-bridge-react", () => ({ useAppBridge: () => bridge }));
 const { default: Home, loader } = await import("./app._index");
 type Data = Awaited<Awaited<ReturnType<typeof loader>>["home"]>;
 type Ok = Extract<Data, { plan: unknown }>;
@@ -73,7 +70,6 @@ const load = async () =>
 let logs: string[];
 beforeEach(() => {
   vi.resetAllMocks();
-  vi.stubEnv("SHOPIFY_API_KEY", "key123");
   logs = [];
   vi.spyOn(console, "log").mockImplementation((line) => logs.push(line));
   m.authenticate.mockResolvedValue({ admin, session: { shop: SHOP } });
@@ -90,11 +86,9 @@ beforeEach(() => {
       ids.map((id) => [id, N(Number(id.split("/").pop()) * 10)]),
     ),
   );
-  m.extensions.mockResolvedValue([]);
 });
 afterEach(() => {
   vi.restoreAllMocks();
-  vi.unstubAllEnvs();
 });
 
 describe("loading Home", () => {
@@ -102,7 +96,7 @@ describe("loading Home", () => {
     m.chartPages.mockReturnValue(
       pages(
         [
-          stored(1, "ACTIVE", { handle: "i-7-0" }),
+          stored(1, "ACTIVE"),
           stored(2, "DRAFT", {
             name: "",
             chart: undefined,
@@ -118,12 +112,8 @@ describe("loading Home", () => {
     expect(await home).toEqual({
       plan: "standard",
       plansUrl: PLANS,
-      themeUrl:
-        "https://admin.shopify.com/store/fitted-dev/themes/current/editor?template=product&addAppBlockId=key123/size-guide&target=mainSection",
       charts: 3,
       active: 2,
-      imported: 1,
-      fitLive: false,
       rows: [
         {
           id: "gid://shopify/Metaobject/3",
@@ -151,25 +141,14 @@ describe("loading Home", () => {
     expect(m.resolveIfStale).toHaveBeenCalledExactlyOnceWith(SHOP);
   });
 
-  it("shows at most five charts, most products first, and finds a live fit finder on Pro only", async () => {
-    const charts = () =>
-      pages(
-        [1, 2, 3, 4, 5, 6].map((n) =>
-          stored(n, n === 1 ? "ACTIVE" : "DRAFT", {
-            chart: { content: { fit: {} } } as never,
-          }),
-        ),
-      );
-    m.chartPages.mockReturnValue(charts());
-    const std = (await (await load()).home) as Ok;
-    expect(std.rows.map((r) => r.name)).toEqual(
+  it("shows at most five charts, most products first", async () => {
+    m.chartPages.mockReturnValue(
+      pages([1, 2, 3, 4, 5, 6].map((n) => stored(n, "DRAFT"))),
+    );
+    const home = (await (await load()).home) as Ok;
+    expect(home.rows.map((r) => r.name)).toEqual(
       [6, 5, 4, 3, 2].map((n) => `Chart ${n}`),
     );
-    expect(std.fitLive).toBe(false);
-
-    m.chartPages.mockReturnValue(charts());
-    m.getPlan.mockResolvedValue({ plan: "pro", checkFailed: false });
-    expect(((await (await load()).home) as Ok).fitLive).toBe(true);
   });
 
   it("answers a failed Shopify call with the error state and logs the detail", async () => {
@@ -207,11 +186,8 @@ describe("the screen", () => {
   const OK: Ok = {
     plan: "standard",
     plansUrl: PLANS,
-    themeUrl: "https://admin.shopify.com/theme",
     charts: 4,
     active: 3,
-    imported: 12,
-    fitLive: false,
     rows: [
       {
         id: "gid://shopify/Metaobject/1",
@@ -260,14 +236,7 @@ describe("the screen", () => {
       (b) => b.textContent === label,
     ) as HTMLElement | undefined;
 
-  it("shows the returning merchant's plan, setup guide, charts and missing products", async () => {
-    m.extensions.mockResolvedValue([
-      {
-        handle: "size-guide",
-        type: "theme_app_extension",
-        activations: [{ handle: "size-guide", status: "active" }],
-      },
-    ]);
+  it("shows the returning merchant's plan, charts and products without a chart", async () => {
     const el = await show(Promise.resolve(OK));
     const t = text(el);
     expect(banner(el)).toBe(
@@ -276,120 +245,88 @@ describe("the screen", () => {
     expect(
       el.querySelector(`s-link[href="${PLANS}"]`)?.getAttribute("target"),
     ).toBe("_top");
-    expect(t).toContain("3 of 4 done");
-    expect(t).toContain("The size guide app embed is on in your live theme.");
-    expect(t).toContain(
-      "12 charts imported. You can uninstall Kiwi once you've checked them.",
-    );
-    expect(t).toContain("312 of 340 products have a size guide.");
-    expect(t).toContain(
-      "Help shoppers pick a size in three quick questions. Part of Pro, $15 a month.",
-    );
-    expect(button(el, "Upgrade to Pro")?.getAttribute("href")).toBe(
-      "/app/fit-finder",
-    );
-    expect(button(el, "Open theme editor")).toBeUndefined();
     expect(t).toContain("Women's tops148Published");
+    expect(t).toContain("Shoes (US, UK, EU)27Check units");
     expect(el.querySelector('s-link[href="/app/charts/4"]')?.textContent).toBe(
       "Check units",
+    );
+    expect(el.querySelector('s-link[href="/app/charts"]')?.textContent).toBe(
+      "Manage",
     );
     expect(
       el.querySelector('s-section[heading="28 products have no size guide"]'),
     ).not.toBeNull();
+    expect(t).toContain("Shoppers on these pages can't check sizing.");
     expect(t).toContain("Merino crew socksCanvas tote bag");
+    expect(button(el, "Add a display rule")?.getAttribute("href")).toBe(
+      "/app/rules",
+    );
     expect(button(el, "View on store")?.getAttribute("href")).toBe(
       `https://${SHOP}`,
     );
+    expect(button(el, "View on store")?.getAttribute("target")).toBe("_blank");
     expect(button(el, "Create chart")?.getAttribute("href")).toBe(
       "/app/charts/new",
     );
   });
 
-  it("offers the theme editor while the theme check hasn't found Fitted", async () => {
-    m.extensions.mockRejectedValue(new Error("no bridge"));
-    const el = await show(Promise.resolve(OK));
-    expect(text(el)).toContain(
-      "One switch in your theme editor. We'll take you there.",
+  it("shows a draft without a note as Draft, and one product in the singular", async () => {
+    const el = await show(
+      Promise.resolve({
+        ...OK,
+        rows: [{ ...OK.rows[1], note: null }],
+        products: { all: N(340), covered: N(339), missing: ["Socks"] },
+      }),
     );
-    expect(button(el, "Open theme editor")?.getAttribute("href")).toBe(
-      OK.themeUrl,
-    );
-    expect(text(el)).toContain("2 of 4 done");
+    expect(text(el)).toContain("Shoes (US, UK, EU)27Draft");
+    expect(
+      el.querySelector('s-section[heading="1 product has no size guide"]'),
+    ).not.toBeNull();
   });
 
-  it("shows the first install's three ways to add a chart", async () => {
+  it("shows the Free plan's banner on a first install, with no charts table", async () => {
     const el = await show(
       Promise.resolve({
         ...OK,
         plan: "free",
         charts: 0,
         active: 0,
-        imported: 0,
         rows: [],
         products: { all: N(340), covered: N(0), missing: [] },
       }),
     );
-    const t = text(el);
     expect(banner(el)).toBe(
       "Free plan: 3 charts, CSV export, no watermark. No order fees on any plan.",
     );
-    expect(t).toContain("0 of 4 done");
-    expect(t.indexOf("Add your first chart")).toBeLessThan(
-      t.indexOf("Turn on Fitted in your theme"),
-    );
-    expect(
-      [
-        ["Import charts", "/app/import"],
-        ["Choose a template", "/app/charts/new"],
-        ["Upload CSV", "/app/import"],
-      ].map(([label]) => button(el, label)?.getAttribute("href")),
-    ).toEqual(["/app/import", "/app/charts/new", "/app/import"]);
-    expect(t).toContain("Match by collection, tag, product type or vendor.");
-    expect(button(el, "Add a display rule")).toBeUndefined();
-    expect(t).not.toContain("Your charts");
+    expect(text(el)).not.toContain("Your charts");
   });
 
   it("shows Free at its limit", async () => {
     const el = await show(Promise.resolve({ ...OK, plan: "free" }));
-    expect(
-      el.querySelector(
-        's-banner[heading="Free plan: 3 of 3 published charts"]',
-      ),
-    ).not.toBeNull();
+    expect(banner(el)).toBe("Free plan: 3 of 3 published charts");
     expect(text(el)).toContain(
       "Drafts don't count. To publish a 4th, set one to Draft or move to Standard, $9 a month.",
     );
   });
 
-  it("folds the setup guide when Pro is all set up, and shows the steps again", async () => {
-    m.extensions.mockResolvedValue([
-      {
-        handle: "size-guide",
-        type: "theme_app_extension",
-        activations: [{ handle: "size-guide", status: "active" }],
-      },
-    ]);
+  it("shows Pro, and every product covered", async () => {
     const el = await show(
       Promise.resolve({
         ...OK,
         plan: "pro",
-        fitLive: true,
         products: { all: N(340), covered: N(340), missing: [] },
       }),
     );
-    const t = text(el);
     expect(banner(el)).toBe("Pro plan, $15 a month. No order fees.");
-    expect(t).toContain(
-      "Setup guide: all doneEvery product has a size guide, and the fit finder is live.",
-    );
-    expect(t).toContain(
+    expect(
+      el.querySelector('s-section[heading="Every product has a size guide"]'),
+    ).not.toBeNull();
+    expect(text(el)).toContain(
       "All 340 products show a chart. New products get one when they match a display rule.",
     );
     expect(button(el, "Review display rules")?.getAttribute("href")).toBe(
       "/app/rules",
     );
-    await act(async () => button(el, "Show steps")?.click());
-    expect(text(el)).toContain("4 of 4 done");
   });
 
   it("shows the loading state, then the error with Try again that reloads", async () => {
