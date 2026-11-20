@@ -507,6 +507,13 @@ describe("the screen", () => {
     expect(t).toContain("1 of 4 done");
   });
 
+  it("counts one imported chart in the singular", async () => {
+    const el = await show(Promise.resolve({ ...OK, imported: 1 }));
+    expect(text(el)).toContain(
+      "1 chart imported. You can uninstall Kiwi once you've checked them.",
+    );
+  });
+
   it("shows the first install's three ways to add a chart, first", async () => {
     const el = await show(
       Promise.resolve({
@@ -548,6 +555,9 @@ describe("the screen", () => {
     );
     expect(button(el, "Add a display rule")).toBeUndefined();
     expect(button(el, "Upgrade to Pro")).toBeUndefined();
+    expect(button(el, "Open theme editor")?.getAttribute("href")).toBe(
+      OK.themeUrl,
+    );
   });
 
   it("folds the setup guide when Pro is all set up, and shows the steps again", async () => {

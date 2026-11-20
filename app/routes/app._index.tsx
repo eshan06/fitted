@@ -17,6 +17,7 @@ import {
   type StoredChart,
 } from "../models/chart.server";
 import {
+  canShowFitFinder,
   FREE_ACTIVE_CHARTS,
   getPlan,
   type Plan,
@@ -77,8 +78,10 @@ async function loadHome(admin: Admin, shop: string): Promise<HomeData> {
         plan === "free" && active >= FREE_ACTIVE_CHARTS
           ? FREE_ACTIVE_CHARTS
           : null,
-      imported: charts.filter((c) => c.handle.startsWith("i-")).length, // imports mint `i-` handles (§5)
-      fitLive: plan === "pro" && live.some((c) => c.chart?.content.fit),
+      // Imports mint `i-` handles (§5). ponytail: every import source will, so
+      // #34 tells Kiwi's apart before CSV import ships.
+      imported: charts.filter((c) => c.handle.startsWith("i-")).length,
+      fitLive: canShowFitFinder(plan) && live.some((c) => c.chart?.content.fit),
       rows: charts
         .map((c) => ({
           id: c.id,
