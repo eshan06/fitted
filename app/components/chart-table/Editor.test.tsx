@@ -1954,6 +1954,29 @@ describe("More tables", () => {
     expect(byLabel("XS, Bust").value).toBe("31–32");
   });
 
+  it("stays on table 2 after a banner link to another tab", async () => {
+    await open(
+      [twoTables()],
+      [
+        {
+          status: 422,
+          body: { fieldErrors: { "content.words.tips": "Too long" } },
+        },
+      ],
+    );
+    await click("Edit table");
+    await type(byLabel("XS, Length"), "30");
+    await click("Save");
+    const link = document.querySelector<HTMLElement>(
+      's-banner[tone="critical"] a[href="#tips"]',
+    )!;
+    await act(async () => link.click());
+    await settle();
+    expect(document.activeElement?.id).toBe("tips");
+    await click("Size table");
+    expect(tables()).toContain("2. Garment measurements *");
+  });
+
   it("asks before leaving with unsaved edits in table 2", async () => {
     bridge.saveBar.leaveConfirmation.mockReturnValue(new Promise(() => {}));
     await open([twoTables()]);
