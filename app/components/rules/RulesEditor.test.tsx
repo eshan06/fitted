@@ -335,9 +335,10 @@ describe("display rules screen", () => {
         },
       ],
     );
-    expect(byLabel("Field").selectedOptions[0].textContent).toBe(
-      "Tag (Standard)",
-    );
+    expect(
+      (byLabel("Field") as unknown as HTMLSelectElement).selectedOptions[0]
+        .textContent,
+    ).toBe("Tag (Standard)");
     expect(text()).toContain(
       "On Free, new conditions can use Collection or Specific products. The others need Standard.",
     );
