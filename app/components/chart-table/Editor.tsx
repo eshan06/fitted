@@ -1,13 +1,15 @@
 // The Editor board (Fitted canvas): name, template, status, the size table,
 // units and the note, saved through App Bridge's save bar. Later steps add the
 // table tools, tabs, live preview and version history around this.
-import { type ReactNode, useRef, useState } from "react";
-import { Link, useFetcher, useRevalidator } from "react-router";
-import { SaveBar } from "@shopify/app-bridge-react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
+import { Link, useBlocker, useFetcher, useRevalidator } from "react-router";
+import { SaveBar, useAppBridge } from "@shopify/app-bridge-react";
 import type { FieldErrors, Template } from "../../models/chart.server";
 import { ChartTable } from "./ChartTable";
 import * as model from "./model";
 import "./editor.css";
+
+const SAVE_BAR = "chart-save-bar";
 
 /** What the action answers (ARCHITECTURE §15). */
 type Answer = {
@@ -46,6 +48,7 @@ export function Editor(props: {
   const { handle, invalid } = props;
   const fetcher = useFetcher<Answer>();
   const revalidator = useRevalidator();
+  const shopify = useAppBridge();
   const [draft, setDraft] = useState(props.initial);
   // The editor's own check, or the action's answer until it's dismissed. A
   // stored chart that fails the checks opens with them, in the editor's words
@@ -86,6 +89,35 @@ export function Editor(props: {
   const listed = model.problems(draft, errors);
   const t = draft.content.tables[0];
   const set = (patch: Partial<model.Draft>) => setDraft({ ...draft, ...patch });
+  const dirty = saving || JSON.stringify(draft) !== JSON.stringify(initial);
+  // The save bar holds the admin's links but not the app's own (App Bridge's
+  // Save Bar API), so a link out of the editor asks the admin first: on the
+  // dev store it shakes the save bar and stays until Save or Discard. A save's
+  // redirect isn't a link, so it isn't held.
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      dirty && currentLocation.pathname !== nextLocation.pathname,
+  );
+  useEffect(() => {
+    if (blocker.state !== "blocked") return;
+    let live = true;
+    // Staying never settles it; the next click asks again.
+    shopify.saveBar
+      .leaveConfirmation()
+      .then(() => shopify.saveBar.hide(SAVE_BAR))
+      .then(() => live && blocker.proceed())
+      .catch(() => {
+        if (!live) return;
+        blocker.reset();
+        shopify.toast.show(
+          "Couldn't leave this page. Save or discard your edits, then try again.",
+          { isError: true },
+        );
+      });
+    return () => {
+      live = false;
+    };
+  }, [blocker, shopify]);
 
   const save = (d = draft) => {
     setDraft(d);
@@ -186,10 +218,7 @@ export function Editor(props: {
 
   return (
     <s-page>
-      <SaveBar
-        id="chart-save-bar"
-        open={saving || JSON.stringify(draft) !== JSON.stringify(initial)}
-      >
+      <SaveBar id={SAVE_BAR} open={dirty}>
         <button
           variant="primary"
           onClick={() => save()}

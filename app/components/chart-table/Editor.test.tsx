@@ -2,16 +2,21 @@
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { createRoutesStub, redirect } from "react-router";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type ChartInput, validateChart } from "../../models/chart.server";
 
 // The route's server half needs Shopify and the database; the screen doesn't.
 vi.mock("../../shopify.server", () => ({ authenticate: { admin: vi.fn() } }));
 vi.mock("../../db.server", () => ({ default: {} }));
+const bridge = vi.hoisted(() => ({
+  saveBar: { leaveConfirmation: vi.fn(), hide: vi.fn() },
+  toast: { show: vi.fn() },
+}));
 // The save bar is App Bridge's; here it renders its buttons in place.
 vi.mock("@shopify/app-bridge-react", () => ({
   SaveBar: ({ open, children }: { open: boolean; children: ReactNode }) =>
     open ? <div data-testid="save-bar">{children}</div> : null,
+  useAppBridge: () => bridge,
 }));
 const { default: ChartEditor } = await import("../../routes/app.charts.$id");
 
@@ -52,7 +57,12 @@ const stored = (updatedAt = "2026-11-19T10:00:00Z") => ({
 });
 
 let root: ReturnType<typeof createRoot> | undefined;
+beforeEach(() => {
+  bridge.saveBar.leaveConfirmation.mockResolvedValue(undefined);
+  bridge.saveBar.hide.mockResolvedValue(undefined);
+});
 afterEach(() => {
+  vi.clearAllMocks();
   act(() => root?.unmount());
   document.body.innerHTML = "";
 });
@@ -80,6 +90,10 @@ async function open(
         return Response.json(a.body, { status: a.status });
       },
     },
+    // Where the editor's links lead.
+    ...["/app/charts", "/app/fit-finder", "/app/charts/:id/history"].map(
+      (p) => ({ path: p, Component: () => <p>Left for {p}</p> }),
+    ),
   ]);
   const div = document.body.appendChild(document.createElement("div"));
   root = createRoot(div);
@@ -872,5 +886,94 @@ describe("chart editor screen", () => {
     await settle();
     expect(document.querySelector("s-banner")).toBeNull();
     expect(document.activeElement).toBe(byLabel("Column 1 name"));
+  });
+
+  // Each link out of the editor, and what shows it.
+  const leaving: [string, string, () => Promise<void>][] = [
+    ["Size charts", "/app/charts", async () => {}],
+    ["Version history", "/app/charts/:id/history", async () => {}],
+    [
+      "Fit finder",
+      "/app/fit-finder",
+      async () => {
+        await act(async () => byLabel("Column 2 name").focus());
+        await click("Remove measurement");
+      },
+    ],
+  ];
+  const withFit = () => {
+    const s = stored();
+    const c = s.stored.chart.content;
+    c.fit = {
+      table: "t1",
+      stretch: "none",
+      ease: {},
+      questions: [{ id: "qb", kind: "measure", col: "bust", optional: false }],
+    };
+    c.words["fit.qb"] = "Bust";
+    return s;
+  };
+  const follow = async (label: string) => {
+    const a = [...document.querySelectorAll<HTMLElement>("a")].find(
+      (el) => el.textContent === label,
+    )!;
+    await act(async () => a.click());
+    await settle();
+  };
+
+  it.each(leaving)(
+    "asks before %s leaves unsaved edits, and leaves once confirmed",
+    async (label, to, reveal) => {
+      let confirm = () => {};
+      bridge.saveBar.leaveConfirmation.mockImplementation(
+        () => new Promise<void>((r) => (confirm = r)),
+      );
+      await open([withFit()]);
+      await type(byLabel("XS, Bust"), "30–32");
+      await reveal();
+      await follow(label);
+      expect(bridge.saveBar.leaveConfirmation).toHaveBeenCalledTimes(1);
+      expect(byLabel("XS, Bust").value).toBe("30–32");
+      expect(text()).not.toContain("Left for");
+      await act(async () => confirm());
+      await settle();
+      expect(bridge.saveBar.hide).toHaveBeenCalledWith("chart-save-bar");
+      expect(text()).toContain(`Left for ${to}`);
+    },
+  );
+
+  it("keeps the edits when the merchant stays, and asks again on the next try", async () => {
+    // Staying leaves the admin's promise unsettled.
+    bridge.saveBar.leaveConfirmation.mockReturnValue(new Promise(() => {}));
+    await open([stored()]);
+    await type(byLabel("XS, Bust"), "30–32");
+    await follow("Size charts");
+    await follow("Size charts");
+    expect(bridge.saveBar.leaveConfirmation).toHaveBeenCalledTimes(2);
+    expect(byLabel("XS, Bust").value).toBe("30–32");
+    expect(text()).not.toContain("Left for");
+  });
+
+  it("says so when the admin can't check before leaving, and keeps the edits", async () => {
+    bridge.saveBar.leaveConfirmation.mockRejectedValue(new Error("no admin"));
+    await open([stored()]);
+    await type(byLabel("XS, Bust"), "30–32");
+    await follow("Size charts");
+    expect(bridge.toast.show).toHaveBeenCalledWith(
+      "Couldn't leave this page. Save or discard your edits, then try again.",
+      { isError: true },
+    );
+    expect(byLabel("XS, Bust").value).toBe("30–32");
+    expect(text()).not.toContain("Left for");
+    // Trying again asks again.
+    await follow("Size charts");
+    expect(bridge.saveBar.leaveConfirmation).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves without asking when nothing is unsaved", async () => {
+    await open([stored()]);
+    await follow("Size charts");
+    expect(bridge.saveBar.leaveConfirmation).not.toHaveBeenCalled();
+    expect(text()).toContain("Left for /app/charts");
   });
 });
