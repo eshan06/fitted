@@ -214,7 +214,6 @@ export function RulesEditor(props: {
         id="rules-save-bar"
         open={
           saving ||
-          !!loaded.damaged ||
           JSON.stringify(model.toSave(draft)) !==
             JSON.stringify(model.toSave(initial))
         }

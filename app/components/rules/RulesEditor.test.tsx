@@ -400,14 +400,22 @@ describe("display rules screen", () => {
     );
   });
 
-  it("can replace saved rules that fail the checks with no rules at all", async () => {
+  // Round 2: a save bar held open by damaged rules couldn't be discarded.
+  it("opens the save bar for damaged rules only on an edit, and Discard closes it", async () => {
     const { sent } = await open([
       edit(none(), "d0", { [`charts.${A}.match.0.value`]: "Bad" } as never),
     ]);
+    expect(saveBar()).toBeNull();
+    await click(buttons("Add condition")[1]);
+    await click(buttons("Discard")[0]);
+    expect(saveBar()).toBeNull();
+    bridge.resourcePicker.mockResolvedValue([{ id: P }]);
+    await click(buttons("Add condition")[0]);
+    await type(byLabel("Field"), "product");
+    await click(byLabel("Edit the picked products"));
     await click(buttons("Save")[0]);
-    expect(sent).toEqual([
-      { rules: { v: 1, order: [], charts: {} }, digest: "d0" },
-    ]);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].digest).toBe("d0");
   });
 
   it("points a store with no charts at making one", async () => {
