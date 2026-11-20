@@ -115,7 +115,10 @@ async function upload(request: Request, admin: Admin, shop: string) {
     file instanceof File && new Uint8Array(await file.arrayBuffer());
   const mime = bytes && imageType(file.name, bytes);
   if (!bytes || !mime || bytes.length > IMAGE_MAX)
-    return fail(422, "image", "Use a PNG or JPG up to 20 MB.");
+    return data(
+      { fieldErrors: { measureImage: "Use a PNG or JPG up to 20 MB." } },
+      { status: 422 },
+    );
   try {
     return {
       image: await uploadImage(admin, { name: file.name, mime, bytes }),

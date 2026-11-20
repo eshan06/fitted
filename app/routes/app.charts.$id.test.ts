@@ -49,7 +49,7 @@ vi.mock("../models/chart.server", async (orig) => ({
   unpublishChart: m.unpublishChart,
   countActiveCharts: m.countActiveCharts,
 }));
-const { action, loader } = await import("./app.charts.$id");
+const { action, loader, shouldRevalidate } = await import("./app.charts.$id");
 
 const SHOP = "fitted-dev.myshopify.com";
 const ID = "gid://shopify/Metaobject/42";
@@ -599,10 +599,20 @@ const postImage = (file: File, id = "42") => {
 };
 const notImage = {
   status: 422,
-  body: { error: { code: "image", message: "Use a PNG or JPG up to 20 MB." } },
+  body: { fieldErrors: { measureImage: "Use a PNG or JPG up to 20 MB." } },
 };
 
 describe("uploading a How to measure image", () => {
+  it("doesn't read the chart again after an upload, so a new chart keeps its handle", () => {
+    const after = (formEncType: string, defaultShouldRevalidate = true) =>
+      shouldRevalidate({ formEncType, defaultShouldRevalidate } as Parameters<
+        typeof shouldRevalidate
+      >[0]);
+    expect(after("multipart/form-data")).toBe(false);
+    expect(after("application/json")).toBe(true);
+    expect(after("application/json", false)).toBe(false);
+  });
+
   it("sends a PNG or JPG to Shopify Files and answers its id and address", async () => {
     const { calls, sent } = fakeFiles();
     expect(await postImage(image("My tops (1).png"))).toEqual({
