@@ -11,6 +11,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   await db.session.deleteMany({ where: { shop } });
   await db.shop.deleteMany({ where: { shop } });
   await db.job.deleteMany({ where: { shop } });
+  await db.event.deleteMany({ where: { shop } });
   console.log(
     JSON.stringify({
       level: "info",

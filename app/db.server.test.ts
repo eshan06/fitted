@@ -55,6 +55,7 @@ describe.runIf(hasDatabase)("the app database on Postgres", () => {
     await prisma.session.deleteMany({ where: { shop: { in: shops } } });
     await prisma.shop.deleteMany({ where: { shop: { in: shops } } });
     await prisma.job.deleteMany({ where: { shop: { in: shops } } });
+    await prisma.event.deleteMany({ where: { shop: { in: shops } } });
     await prisma.$disconnect();
   });
 
@@ -271,6 +272,50 @@ describe.runIf(hasDatabase)("the app database on Postgres", () => {
     expect(await prisma.job.count({ where: { shop: uninstalled } })).toBe(1);
     expect(await prisma.job.count({ where: { shop: recovered } })).toBe(2);
     logs.mockRestore();
+  });
+
+  const event = (shop: string, daysOld = 0) => ({
+    shop,
+    id: randomUUID(),
+    type: "open",
+    chartId: "gid://shopify/Metaobject/1301",
+    productId: "gid://shopify/Product/8812",
+    createdAt: new Date(Date.now() - daysOld * 86_400_000),
+  });
+
+  it("keeps one size guide event per shop and id, so a replay adds no row, and shop/redact deletes only that shop's", async () => {
+    const shop = newShop();
+    const otherShop = newShop();
+    const first = { ...event(shop), size: null };
+    // The write app/routes/proxy.events.tsx makes for each event.
+    const record = (data: typeof first) =>
+      prisma.event.createMany({ data, skipDuplicates: true });
+
+    expect(await record(first)).toEqual({ count: 1 });
+    // A replay, even one with another type, leaves the first as it was.
+    expect(await record({ ...first, type: "add_to_cart" })).toEqual({
+      count: 0,
+    });
+    // Another shop's event with that id is its own.
+    expect(await record({ ...first, shop: otherShop })).toEqual({ count: 1 });
+    expect(await prisma.event.findMany({ where: { shop } })).toEqual([first]);
+
+    // The query shop/redact runs.
+    await prisma.event.deleteMany({ where: { shop } });
+
+    expect(await prisma.event.count({ where: { shop } })).toBe(0);
+    expect(await prisma.event.count({ where: { shop: otherShop } })).toBe(1);
+  });
+
+  it("deletes size guide events over 90 days old with the job checks", async () => {
+    const shop = newShop();
+    const kept = [event(shop, 89), event(shop)];
+    await prisma.event.createMany({ data: [...kept, event(shop, 91)] });
+
+    await checkJobs();
+
+    const left = await prisma.event.findMany({ where: { shop } });
+    expect(left.map((e) => e.id).sort()).toEqual(kept.map((e) => e.id).sort());
   });
 
   it("deletes finished jobs over 7 days old but the newest finished one of each shop and kind", async () => {

@@ -959,7 +959,8 @@ const ATTEMPTS = 3;
  * The job checks (§13): a job with no progress for 10 minutes fails, finished
  * jobs over 7 days old go except the newest of each shop and kind, and an
  * installed shop's failed resolve goes again as the same kind of resolve.
- * Settles when the resolves it requeued do; the next check never waits on it.
+ * Size guide events over 90 days old go too (§12). Settles when the resolves
+ * it requeued do; the next check never waits on it.
  */
 export async function checkJobs() {
   // A job the old instance still runs during a deploy keeps touching its row.
@@ -979,6 +980,9 @@ export async function checkJobs() {
       AND EXISTS (SELECT 1 FROM "Job" n
         WHERE n.shop = j.shop AND n.kind = j.kind AND n.status <> 'running'
           AND n."createdAt" > j."createdAt")`;
+  await db.event.deleteMany({
+    where: { createdAt: { lt: new Date(Date.now() - 90 * DAY_MS) } },
+  });
   // Each shop's newest resolve, when it failed. Only shops with an offline
   // session, so a resolve never brings back rows shop/redact deleted.
   const failed = await db.$queryRaw<{ shop: string; progress: unknown }[]>`

@@ -16,6 +16,7 @@ const h = vi.hoisted(() => {
     // The job checks' own queries run on Postgres (db.server.test.ts).
     $queryRaw: vi.fn(async (): Promise<Row[]> => []),
     $executeRaw: vi.fn(async () => 0),
+    event: { deleteMany: vi.fn(async () => ({ count: 0 })) },
     job: {
       updateMany: vi.fn(async () => ({ count: 0 })),
       // A shop's first job of a kind in createdAt order, as resolveIfStale reads it.

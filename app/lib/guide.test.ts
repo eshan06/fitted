@@ -423,6 +423,20 @@ describe("render", () => {
     loader.remove();
   });
 
+  it("sends no event without a block naming its chart and product, as in the admin preview (§12)", () => {
+    const beacon = vi.spyOn(navigator, "sendBeacon").mockReturnValue(true);
+    const block = document.createElement("div");
+    block.className = "fitted-guide";
+    block.dataset.chart = "gid://shopify/Metaobject/1301";
+    const root = block.appendChild(document.createElement("div"));
+
+    show(data()).sync();
+    show(data(), root).sync();
+
+    expect(beacon).not.toHaveBeenCalled();
+    beacon.mockRestore();
+  });
+
   it("draws the table with each measurement's units in its header", () => {
     const root = draw(data());
     expect(texts(root, "thead th")).toEqual([
