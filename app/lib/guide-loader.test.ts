@@ -57,6 +57,8 @@ function block(
         return escape(contact!.title);
       if (expr === "title_id") return "fitted-title-1";
       if (expr === "place") return place;
+      if (expr === "chart.system.id | escape") return "1301";
+      if (expr === "p.id | escape") return "8812";
       throw new Error(`No test value for {{ ${expr} }}`);
     });
 }
@@ -96,6 +98,8 @@ const painted = (block: HTMLElement) =>
 
 let load: ReturnType<typeof vi.fn<Load>>;
 const guide = { render: vi.fn(render) };
+// The guide's events (§12); happy-dom's own would fetch.
+const beacon = vi.spyOn(navigator, "sendBeacon").mockReturnValue(true);
 const ok = () => Promise.resolve(guide);
 const fail = () => Promise.reject(new TypeError("Failed to fetch module"));
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -121,6 +125,7 @@ beforeAll(() => start((url) => load(url)));
 beforeEach(() => {
   load = vi.fn<Load>(ok);
   guide.render.mockClear();
+  beacon.mockClear();
 });
 
 // Each assertion here runs before the earlier start()'s observer can act.
@@ -311,6 +316,40 @@ describe("loader", () => {
     link.click();
     expect(selected()).toBe("Selected: L");
     expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it("tells Fitted about each open, naming only the chart and product (§12)", async () => {
+    const { link, dialog } = await mount();
+    link.click();
+    expect(beacon).not.toHaveBeenCalled(); // still loading: no guide yet
+    await tick();
+    dialog.close();
+    link.click();
+
+    const sent = beacon.mock.calls.map(([url, body]) => {
+      expect(url).toBe("/apps/fitted/events");
+      return JSON.parse(body as string);
+    });
+    const open = {
+      id: expect.stringMatching(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      ),
+      type: "open",
+      chart: "gid://shopify/Metaobject/1301",
+      product: "gid://shopify/Product/8812",
+    };
+    expect(sent).toEqual([open, open]);
+    expect(sent[0].id).not.toBe(sent[1].id);
+  });
+
+  it("still opens in a browser without sendBeacon, sending nothing", async () => {
+    beacon.mockImplementationOnce(() => {
+      throw new TypeError("navigator.sendBeacon is not a function");
+    });
+    const { link, body } = await mount();
+    link.click();
+    await tick();
+    expect(body.querySelector("table")).not.toBeNull();
   });
 
   it("tries again on the next open after a failure", async () => {

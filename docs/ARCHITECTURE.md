@@ -39,7 +39,7 @@ States these contracts add that the canvas doesn't draw yet get drawn before the
 
 Staff names: the charts list and version history show who saved ("Priya N."). The step that names editors (#131) turns on `useOnlineTokens: true` and reads `session.onlineAccessInfo.associated_user`; version rows keep only first name plus last initial. From then on the `Session` table also holds one online session per staff member who opens Fitted, with the name and email Shopify sends (§14), and admin calls run with that staff member's permissions, so every screen handles a 403 for staff without access (§15). Offline tokens keep serving background work.
 
-Scopes, added by the step that first needs each: `write_products`, `write_metaobjects`, `write_metaobject_definitions` (already set); `read_locales` (#28, the primary locale for `settings.text`); `write_files` (#22, How to measure images); `write_app_proxy` (#127, the Copy link page, then #44's events); `write_translations` (#43). Nothing else without updating this list.
+Scopes, added by the step that first needs each: `write_products`, `write_metaobjects`, `write_metaobject_definitions` (already set); `read_locales` (#28, the primary locale for `settings.text`); `write_files` (#22, How to measure images); `write_app_proxy` (#44's events, then #127's Copy link page); `write_translations` (#43). Nothing else without updating this list.
 
 ## 4. Where data lives
 

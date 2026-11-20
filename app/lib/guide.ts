@@ -213,9 +213,29 @@ const systemOf = (country: string) =>
 const FORM = 'form[action*="/cart/add"]';
 
 /**
+ * Tells Fitted what the shopper did in the guide (ARCHITECTURE §12): the type
+ * and the chart and product ids the block's snippet printed, never anything
+ * about the shopper. Sent once, never retried, and not at all without those
+ * ids, as in the admin preview.
+ */
+function track(root: HTMLElement, type: string) {
+  const ids = root.closest<HTMLElement>(".fitted-guide")?.dataset;
+  if (!ids?.chart || !ids.product) return;
+  const { chart, product } = ids;
+  try {
+    const id = crypto.randomUUID();
+    const event = JSON.stringify({ id, type, chart, product });
+    navigator.sendBeacon("/apps/fitted/events", event);
+  } catch {
+    // A browser without sendBeacon or randomUUID sends nothing.
+  }
+}
+
+/**
  * Draws the Size chart tab into root, whose data-t-* attributes hold the
- * extension's words. Returns sync, which picks the size the theme's product
- * form has selected; the loader calls it on every open.
+ * extension's words. Returns sync, which records the open and picks the size
+ * the theme's product form has selected; the loader calls it on every later
+ * open.
  */
 export function render(root: HTMLElement, g: Guide) {
   // Before the loader's styles, whose merchant CSS must win ties with these.
@@ -481,7 +501,10 @@ export function render(root: HTMLElement, g: Guide) {
   });
   root.replaceChildren(...[bar, part, foot].filter((k) => !!k));
   draw();
-  const sync = () => choose(current() || pick);
+  const sync = () => {
+    track(root, "open");
+    choose(current() || pick);
+  };
   sync();
   return sync;
 }

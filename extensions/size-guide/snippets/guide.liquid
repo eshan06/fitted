@@ -11,9 +11,19 @@
   the page only through guide-data's | json, and loader.js applies them as
   text and CSS values. The tab's styles come with it, after loader.js's, so
   they win over the link's and lose to custom CSS that starts .fitted-guide.
+  The chart and product ids are what guide.js's events name (§12). The theme
+  editor gets none, so a merchant trying the guide adds no opens.
 {%- endcomment -%}
 {%- assign title_id = 'fitted-title-' | append: id -%}
-<div class="fitted-guide" data-url="{{ 'guide.js' | asset_url }}" data-place="{{ place }}">
+<div
+  class="fitted-guide"
+  data-url="{{ 'guide.js' | asset_url }}"
+  data-place="{{ place }}"
+  {%- unless request.design_mode %}
+  data-chart="gid://shopify/Metaobject/{{ chart.system.id | escape }}"
+  data-product="gid://shopify/Product/{{ p.id | escape }}"
+  {%- endunless %}
+>
   {%- if place == 'tab' -%}
     <style>
       .fitted-tab{position:fixed;top:40%;right:0;z-index:2;flex-direction:column;gap:10px;min-width:44px;padding:16px 12px;border-radius:2px 0 0 2px;background:#161616;color:#fff;font-size:15px;letter-spacing:.04em;text-decoration:none;box-shadow:0 6px 18px rgba(22,22,22,.18);transform:translateY(-50%)}

@@ -67,3 +67,20 @@ model ChartVersion {
 
   @@index([shop, chartId, id])
 }
+
+// Size guide events from shoppers' browsers (ARCHITECTURE §12, §14): no
+// shopper data, deleted after 90 days.
+model Event {
+  shop      String
+  id        String // the browser's UUID, so a replay adds no row
+  type      String // open, fit_result, add_to_cart
+  chartId   String
+  productId String
+  size      String? // a size row id: the recommended or added size
+  createdAt DateTime @default(now())
+
+  @@id([shop, id])
+  // A shop's events by time, for its counts; Postgres 18 also skip-scans it
+  // for the 90-day delete across shops.
+  @@index([shop, createdAt])
+}

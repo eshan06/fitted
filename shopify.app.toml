@@ -7,7 +7,7 @@ name = "fitted"
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "write_products,write_metaobjects,write_metaobject_definitions,read_locales"
+scopes = "write_products,write_metaobjects,write_metaobject_definitions,read_locales,write_app_proxy"
 
 [webhooks]
 api_version = "2027-01"
@@ -113,6 +113,13 @@ description = "The size chart Fitted shows on this product. Change it with Fitte
 type = "metaobject_reference<$app:chart>"
 access.admin = "merchant_read"
 capabilities.admin_filterable = true
+
+# The store's /apps/fitted/* reaches the app's /proxy/*, signed by Shopify:
+# the size guide's events (ARCHITECTURE §12).
+[app_proxy]
+url = "/proxy"
+prefix = "apps"
+subpath = "fitted"
 
 [auth]
 redirect_urls = [ "https://example.com/api/auth" ]
