@@ -389,7 +389,7 @@ export type StoredChart = {
   updatedAt: string;
   name: string;
 } & (
-  | { chart: ChartInput; fieldErrors?: undefined }
+  | { chart: ChartInput; fieldErrors?: undefined; raw?: undefined }
   | {
       chart?: undefined;
       fieldErrors: FieldErrors;

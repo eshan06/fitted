@@ -16,11 +16,6 @@ export const FREE_ACTIVE_CHARTS = 3;
 /** `activeCharts`: how many charts are Active now, not counting the one being published. */
 export const canPublishChart = (plan: Plan, activeCharts: number) =>
   plan !== "free" || activeCharts < FREE_ACTIVE_CHARTS;
-// The app's handle, as in its admin URL (/apps/fitted-5); shopify.app.toml doesn't hold it.
-const APP_HANDLE = "fitted-5";
-/** App Pricing's plan selection page, outside the app's iframe, so it opens with `target="_top"`. */
-export const plansUrl = (shop: string) =>
-  `https://admin.shopify.com/store/${shop.replace(/\.myshopify\.com$/, "")}/charges/${APP_HANDLE}/pricing_plans`;
 const FREE_RULE_FIELDS = ["all", "product", "collection"];
 /** `field`: a display rule condition's field (§6). */
 export const canUseRuleField = (plan: Plan, field: string) =>
