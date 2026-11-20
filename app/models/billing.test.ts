@@ -579,6 +579,40 @@ describe("getPlan", () => {
         failed("free", null),
       );
     });
+
+    // A read answers with the row as it was when the read began.
+    it("keeps a plan a check confirmed during a slower read, not the read's older one", async () => {
+      let answer: (read: unknown) => void = () => {};
+      findUnique.mockReturnValueOnce(new Promise((r) => (answer = r)));
+      const load = billing.getPlan(shop);
+      findUnique.mockResolvedValueOnce(row("free", 6));
+      fetchMock.mockResolvedValue(subscription("pro"));
+      await expect(billing.getPlan(shop, { recheck: true })).resolves.toEqual(
+        confirmed("pro"),
+      );
+      answer(row("free", 6));
+      await load;
+
+      down();
+      await expect(billing.getPlan(shop)).resolves.toEqual(failed("pro"));
+    });
+
+    it("forgets the plan at an uninstall even when a read overlaps the reset", async () => {
+      findUnique.mockResolvedValueOnce(row("pro", 1));
+      await billing.getPlan(shop);
+      let reset = () => {};
+      updateMany.mockReturnValueOnce(new Promise<void>((r) => (reset = r)));
+      const uninstall = billing.resetCachedPlan(shop);
+      findUnique.mockResolvedValueOnce(row("pro", 1)); // read before the reset lands
+      await billing.getPlan(shop);
+      reset();
+      await uninstall;
+
+      down();
+      await expect(billing.getPlan(shop)).resolves.toEqual(
+        failed("free", null),
+      );
+    });
   });
 
   describe("welcome link re-check", () => {

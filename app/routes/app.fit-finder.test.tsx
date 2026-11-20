@@ -689,7 +689,14 @@ describe("when the database can't give the plan", () => {
     expect(banners()).toContain(UPGRADE.replace("Standard", "Free"));
     await type(noFit(), "Mine");
 
+    const reads = m.getPlan.mock.calls.length;
     await click(planBanner()!.querySelector("s-button") as HTMLElement);
+    // The re-check, then the shell's and the screen's loads again.
+    expect(m.getPlan.mock.calls.slice(reads)).toEqual([
+      [SHOP, { recheck: true }],
+      [SHOP],
+      [SHOP],
+    ]);
     expect(planBanner()).not.toBeNull();
     expect(text()).not.toContain("didn't load");
     expect(noFit().value).toBe("Mine");
@@ -1271,15 +1278,21 @@ describe("a chart's ease and stretch", () => {
   // couldn't give, and the error page took the screen's edits.
   it("counts once more on Pro when the database fails after the load", async () => {
     const billing = await databaseDown();
+    // Its own shop: the billing module's memory outlives a test.
+    const shop = "pro-dev.myshopify.com";
+    m.authenticate.mockImplementation(async () => ({
+      admin: store.admin,
+      session: { shop },
+    }));
     m.findUnique.mockResolvedValueOnce({
-      shop: SHOP,
+      shop,
       plan: "pro",
       planYearly: false,
       planCheckedAt: new Date(),
       planOnStore: "pro",
       resolvedAt: null,
     });
-    await billing.getPlan(SHOP); // the load's read
+    await billing.getPlan(shop); // the load's read
     store.products = { [TOPS]: 148 };
 
     expect(await recount()).toEqual({

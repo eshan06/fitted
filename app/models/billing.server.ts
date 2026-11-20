@@ -120,7 +120,6 @@ export async function lastConfirmedPlan(
  * as Free, not the plan from before the uninstall, if that check fails.
  */
 export async function resetCachedPlan(shop: string) {
-  known.delete(shop);
   await db.shop.updateMany({
     where: { shop },
     data: {
@@ -130,13 +129,16 @@ export async function resetCachedPlan(shop: string) {
       planOnStore: null,
     },
   });
+  known.delete(shop); // after the reset, so no read from before it lands later
 }
 
-// The cached plan, also kept in `known`.
+// The cached plan, also kept in `known` unless that changed during the read:
+// a check or an uninstall that wrote meanwhile is newer than this read.
 async function readRow(shop: string) {
+  const before = known.get(shop);
   const row = await db.shop.findUnique({ where: { shop } });
-  if (row) known.set(shop, { plan: toPlan(row.plan), yearly: row.planYearly });
-  else known.delete(shop);
+  if (row && known.get(shop) === before)
+    known.set(shop, { plan: toPlan(row.plan), yearly: row.planYearly });
   return row;
 }
 

@@ -759,8 +759,15 @@ describe("when the database can't give the plan", () => {
     const retry = el.querySelector(
       's-banner[heading="Couldn\'t check your plan"] s-button',
     ) as HTMLElement;
+    const reads = m.getPlan.mock.calls.length;
     await act(async () => retry.click());
     await act(() => new Promise((r) => setTimeout(r, 10)));
+    // The re-check, then the shell's and the list's loads again.
+    expect(m.getPlan.mock.calls.slice(reads)).toEqual([
+      [SHOP, { recheck: true }],
+      [SHOP],
+      [SHOP],
+    ]);
     expect(headings()).toEqual(shown);
     expect(el.querySelectorAll("s-table-row")).toHaveLength(3);
   });

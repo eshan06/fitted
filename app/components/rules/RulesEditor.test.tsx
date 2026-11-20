@@ -957,6 +957,7 @@ describe("when the database can't give the plan", () => {
     );
 
     await click(plan()!.querySelector("s-button") as HTMLElement);
+    expect(server.getRules).toHaveBeenCalledTimes(2); // the screen loaded again
     expect(plan()).not.toBeNull();
     expect(buttons("1. Shoes")).toHaveLength(1);
     expect(saveBar()).not.toBeNull();
