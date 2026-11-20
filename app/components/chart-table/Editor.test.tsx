@@ -403,7 +403,10 @@ describe("chart editor screen", () => {
     await type(byLabel("XS, Bust"), "31.5–32");
     await click("Save");
     expect(missed()).toBe("Saved, but version history missed it");
-    expect(text()).toContain("This save won't show in version history.");
+    // Word for word as drawn on the canvas's Editor board.
+    expect(text()).toContain(
+      "The chart on your store is up to date. This save won't show in version history.",
+    );
     await type(byLabel("XS, Bust"), "30–32");
     await click("Save");
     expect(missed()).toBeUndefined();
