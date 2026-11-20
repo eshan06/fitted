@@ -139,7 +139,10 @@ describe("version history screen", () => {
   });
 
   it("says when the history fails to load, and tries again", async () => {
-    const { loader } = await open([{ error: true }, loaded()]);
+    const { loader } = await open([
+      { error: { code: "shopify", message: "x" } },
+      loaded(),
+    ]);
     expect(document.querySelector("[role=alert]")?.textContent).toContain(
       "We couldn't load this chart's versions",
     );
@@ -157,11 +160,15 @@ describe("version history screen", () => {
     const slow = new Promise<ReturnType<typeof loaded>>(
       (r) => (finish = () => r(loaded())),
     );
-    await open([{ error: true }, slow]);
+    await open([{ error: { code: "shopify", message: "x" } }, slow]);
     await act(async () => button("Try again").click());
-    expect(document.querySelector("[aria-busy=true]")?.textContent).toBe(
+    expect(document.querySelector("[role=status]")?.textContent).toBe(
       "Loading versions",
     );
+    // The list skeleton is the first column, as the list is once loaded.
+    expect(
+      document.querySelector("[aria-busy=true] > :first-child")?.className,
+    ).toBe("card sks");
     expect(text()).not.toContain("Saved versions");
     await act(async () => finish());
     await settle();

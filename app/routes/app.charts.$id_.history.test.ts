@@ -130,17 +130,22 @@ describe("loading a chart's versions", () => {
   });
 
   it("shows its error state when Shopify or the database fails, and logs why", async () => {
-    m.listVersions.mockRejectedValue(new Error("connection refused"));
+    m.listVersions.mockRejectedValue(new Error("value 'secret' refused"));
     expect(await result(load())).toEqual({
       status: 502,
-      body: { error: true },
+      body: { error: { code: "database", message: expect.any(String) } },
     });
     m.listVersions.mockResolvedValue([]);
     m.shopTimeZone.mockRejectedValue(new AdminApiError("failed", "HTTP 500"));
-    expect((await result(load())).status).toBe(502);
+    expect(await result(load())).toEqual({
+      status: 502,
+      body: { error: { code: "shopify", message: expect.any(String) } },
+    });
+    // Shopify's raw text is logged; a database message, which can echo
+    // values, is not.
     expect(logs.map((l) => JSON.parse(l))).toEqual([
-      expect.objectContaining({ level: "error", shop: SHOP }),
-      expect.objectContaining({ level: "error", shop: SHOP }),
+      expect.objectContaining({ level: "error", shop: SHOP, detail: "Error" }),
+      expect.objectContaining({ shop: SHOP, detail: "HTTP 500" }),
     ]);
   });
 

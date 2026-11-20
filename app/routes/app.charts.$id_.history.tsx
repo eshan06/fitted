@@ -5,6 +5,7 @@ import { useState } from "react";
 import type { LoaderFunctionArgs } from "react-router";
 import { Link, data, useLoaderData, useRevalidator } from "react-router";
 import { authenticate } from "../shopify.server";
+import { AdminApiError } from "../models/admin.server";
 import {
   type ChartInput,
   ChartNotFoundError,
@@ -36,7 +37,14 @@ const logError = (shop: string, err: unknown) =>
       msg: "Version history failed",
       shop,
       route: ROUTE,
-      detail: err instanceof Error ? `${err.name}: ${err.message}` : "unknown",
+      // Shopify's raw text, or only the error's name: a database message can
+      // echo query values.
+      detail:
+        err instanceof AdminApiError
+          ? err.detail
+          : err instanceof Error
+            ? err.name
+            : "unknown",
     }),
   );
 
@@ -65,7 +73,17 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     if (err instanceof ChartNotFoundError) throw notFound();
     if (err instanceof Response) throw err;
     logError(session.shop, err);
-    return data({ error: true as const }, { status: 502 });
+    // The screen shows the board's own error copy (§15).
+    return data(
+      {
+        error: {
+          code: err instanceof AdminApiError ? "shopify" : "database",
+          message:
+            "Fitted couldn't load this chart's versions just now. The chart itself is fine.",
+        },
+      },
+      { status: 502 },
+    );
   }
 };
 
@@ -114,8 +132,11 @@ export default function VersionHistory() {
       <s-page>
         <div className="editor history">
           {header("error" in loaded ? undefined : loaded.name)}
+          <span className="visually-hidden" role="status">
+            Loading versions
+          </span>
+          {/* The cards alone, so the columns' :first-child rules hold. */}
           <div className="split" aria-busy="true">
-            <span className="visually-hidden">Loading versions</span>
             <div className="card sks" aria-hidden="true">
               <span className="sk" style={w("40%")} />
               {[60, 55, 65, 50].map((n) => (
