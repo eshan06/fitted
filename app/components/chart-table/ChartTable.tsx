@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router";
 import type { FieldErrors } from "../../models/chart.server";
 import * as model from "./model";
 
@@ -18,6 +19,8 @@ export function ChartTable(props: {
   const { draft, errors, onChange } = props;
   const [sel, setSel] = useState<model.Selected>();
   const [confirm, setConfirm] = useState<ReturnType<typeof model.removal>>();
+  // The column a Remove kept for the fit finder, until another is selected.
+  const [kept, setKept] = useState<string>();
   const t = draft.content.tables[0];
   const words = draft.content.words;
   // A removed or discarded size or column is no longer selected.
@@ -47,7 +50,13 @@ export function ChartTable(props: {
       aria-describedby={f.error ? `${id}-err` : undefined}
       value={f.value}
       onChange={(e) => onChange(f.set(e.target.value))}
-      onFocus={select && (() => setSel(select))}
+      onFocus={
+        select &&
+        (() => {
+          setSel(select);
+          setKept(undefined);
+        })
+      }
     />
   );
   const removeNow = () => {
@@ -70,6 +79,7 @@ export function ChartTable(props: {
       );
   };
   const ask = () => {
+    if (model.fitOnly(draft, picked!.col)) return setKept(picked!.col);
     const r = model.removal(draft, picked!);
     if (r.text) setConfirm(r);
     else removeNow();
@@ -93,6 +103,18 @@ export function ChartTable(props: {
           </div>
         )}
       </div>
+      {/* The Editor board's "Fit finder's only measurement", in place of the dialog. */}
+      {kept !== undefined && picked?.col === kept && (
+        <div role="alert">
+          <s-banner
+            tone="warning"
+            heading={`${model.colName(draft, kept)} can't be removed`}
+          >
+            It&apos;s the fit finder&apos;s only measurement. Add another one in{" "}
+            <Link to="/app/fit-finder">Fit finder</Link> first.
+          </s-banner>
+        </div>
+      )}
       <div className="scroll">
         <table className="sheet">
           <thead>
