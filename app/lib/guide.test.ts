@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseGuide, render } from "./guide";
+import { tableCss } from "./guide-css";
 
 const en = JSON.parse(
   readFileSync("extensions/size-guide/locales/en.default.json", "utf8"),
@@ -369,6 +370,15 @@ describe("parseGuide", () => {
 });
 
 describe("render", () => {
+  it("adds the tables' styles once, with the first draw", () => {
+    document.getElementById("fitted-table-css")?.remove();
+    draw(data());
+    draw(data());
+    const styles = document.querySelectorAll("#fitted-table-css");
+    expect(styles).toHaveLength(1);
+    expect(styles[0].textContent).toBe(tableCss);
+  });
+
   it("draws the table with each measurement's units in its header", () => {
     const root = draw(data());
     expect(texts(root, "thead th")).toEqual([

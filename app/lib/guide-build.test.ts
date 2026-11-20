@@ -1,5 +1,4 @@
 import { readFileSync } from "node:fs";
-import { gzipSync } from "node:zlib";
 import { build } from "esbuild";
 import { describe, expect, it } from "vitest";
 import { parseGuide } from "./guide";
@@ -43,8 +42,10 @@ describe("size guide assets", () => {
     ).toBe(outputFiles[0].text);
   });
 
-  it("keep loader.js under Shopify's suggested 10 KB compressed", () => {
-    expect(gzipSync(ext("assets/loader.js")).length).toBeLessThan(10_000);
+  it("keep loader.js under Shopify's suggested 10 KB, as the CLI's theme check measures it", () => {
+    // Shopify words the limit as compressed, but the check deploy runs
+    // (AssetSizeAppBlockJavaScript) measures the file itself.
+    expect(Buffer.byteLength(ext("assets/loader.js"))).toBeLessThan(10_000);
   });
 });
 

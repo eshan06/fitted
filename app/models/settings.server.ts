@@ -1,7 +1,7 @@
 // Settings in the `$app.settings` shop metafield (ARCHITECTURE §7). The
 // Appearance and Fit finder screens write it whole, with the digest they
 // loaded, so a save over a newer one is refused (§6) instead of dropping it.
-import { COLOR, FONT_URL, cssProblem } from "../lib/appearance";
+import { COLOR, CSS_WORDS, FONT_URL, cssProblem } from "../lib/appearance";
 
 // A check returns the problem, or undefined. `T` is the type it accepts, so
 // Settings below is derived from the checks and can't drift from them.
@@ -27,7 +27,10 @@ const selector: Check<string> = (v) =>
   typeof v === "string" && v.length <= 200 && !/[\r\n<]/.test(v)
     ? undefined
     : "Use one line of at most 200 characters";
-const css: Check<string> = cssProblem;
+const css: Check<string> = (v) => {
+  const problem = cssProblem(v);
+  return problem && CSS_WORDS[problem];
+};
 const line: Check<string> = (v) =>
   typeof v === "string" && v.trim() && v.length <= 200 && !/[\r\n]/.test(v)
     ? undefined

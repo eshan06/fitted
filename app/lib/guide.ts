@@ -6,6 +6,7 @@
 // attribute values, never as HTML.
 import { COLOR, FONT_URL, cssProblem } from "./appearance";
 import { convert, type Column, type Table, type Unit } from "./fit-finder";
+import { tableCss } from "./guide-css";
 
 type Sys = "in" | "cm"; // inches and pounds, or centimeters and kilograms
 type Grid = Table & {
@@ -201,6 +202,8 @@ const FORM = 'form[action*="/cart/add"]';
  * form has selected; the loader calls it on every open.
  */
 export function render(root: HTMLElement, g: Guide) {
+  if (!document.getElementById("fitted-table-css"))
+    document.head.append(h("style", { id: "fitted-table-css" }, tableCss));
   const t = (k: string) =>
     root.dataset[`t${k[0].toUpperCase()}${k.slice(1)}`] ?? "";
   // An extension word with {size} in it, split around the size.
