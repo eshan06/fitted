@@ -76,6 +76,8 @@ const fitted = (n: number, name: string, ease: object = { bust: 2 }) => ({
         "t1.bust": "Bust",
         "t1.xs.size": "XS",
         "t1.xl.size": "XL",
+        "t1.m.size": "M",
+        "t1.l.size": "L",
         "fit.q1": "What's your bust measurement?",
         "fit.q2": "What size do you usually wear?",
         "fit.q3": "How do you like tops to fit?",
@@ -100,6 +102,8 @@ function fakeStore(initial: Settings | null = null) {
     chartReadsFresh: Infinity, // chart reads past this many see a newer save
     chartWrites: 0,
     charts: [chart] as (typeof chart | Node)[],
+    products: {} as Record<string, number>, // by chart id
+    countReads: 0,
   };
   const graphql = vi.fn(
     async (query: string, opts?: { variables?: Record<string, unknown> }) => {
@@ -145,6 +149,23 @@ function fakeStore(initial: Settings | null = null) {
         store.charts[i] = node;
         return json({
           data: { metaobjectUpdate: { metaobject: node, userErrors: [] } },
+        });
+      }
+      if (query.includes("query ChartProductCounts")) {
+        store.countReads++;
+        const q = Object.entries(opts!.variables as Record<string, string>);
+        const count = (v: string) => store.products[v.split('"')[1]] ?? 0;
+        // Shopify counts up to 10,000.
+        return json({
+          data: Object.fromEntries(
+            q.map(([k, v]) => [
+              k.replace("q", "c"),
+              {
+                count: Math.min(count(v), 10000),
+                precision: count(v) >= 10000 ? "AT_LEAST" : "EXACT",
+              },
+            ]),
+          ),
         });
       }
       if (query.includes("query FittedAppHandle"))
@@ -858,5 +879,122 @@ describe("a chart's ease and stretch", () => {
     expect(text()).toContain("Fit finder type");
     expect(text()).not.toContain("Recommend sizes from");
     expect(ease()).toBeNull();
+    expect(text()).not.toContain("How Fitted picks a size");
+    expect(text()).not.toContain("What shoppers see");
+  });
+
+  const rules = () =>
+    [...document.querySelectorAll('[aria-labelledby="h-logic"] li')].map(
+      (li) => li.textContent,
+    );
+  const preview = () =>
+    document.querySelector('[aria-label="Shopper preview"]')!.textContent;
+  // Women's tops runs XS 33-34 in bust to XL 41-42; the sample shopper is
+  // M's 37.5 in, and the chart adds 2 in of ease.
+  it("explains the picked chart's rules and previews findSize's pick for it", async () => {
+    await open();
+    expect(rules()).toEqual([
+      "Match the shopper's bust measurement to the Women's tops chart.",
+      "Relaxed fit moves one size up. Snug moves one size down, never below XS.",
+      "No measurement? Start from the size they usually wear.",
+    ]);
+    expect(text()).toContain(
+      "Shoppers always see why a size was picked, so they can trust it.",
+    );
+    expect(preview()).toBe(
+      [
+        "What shoppers seePreview",
+        "Question 3 of 3Find my size",
+        "How do you like tops to fit?SnugRegularRelaxedBackSee my size",
+        "Your sizeL",
+        "Your 37.5 in bust with 2 in of ease falls in L on this chart, and you like a regular fit.",
+        "Select L",
+      ].join(""),
+    );
+    expect(document.querySelector(".shopper .opt.on")!.textContent).toBe(
+      "Regular",
+    );
+    // Nothing in the picture is a control.
+    expect(
+      document.querySelectorAll(
+        ".shopper :is(button, input, select, a, s-button)",
+      ),
+    ).toHaveLength(0);
+
+    await type(picked(), BOTTOMS);
+    expect(rules()[0]).toBe(
+      "Match the shopper's bust measurement to the Women's bottoms chart.",
+    );
+    expect(preview()).toContain(
+      "Your 37.5 in bust falls in M on this chart, and you like a regular fit.Select M",
+    );
+  });
+
+  it("previews the unsaved ease and stretch, and the no-fit words when nothing fits", async () => {
+    await open();
+    await type(ease(), "+5 in at bust"); // 42.5 in: past XL's 42
+    expect(preview()).toContain(
+      "Your 37.5 in bust with 5 in of ease falls in XL on this chart, counting the fabric's stretch",
+    );
+    await type(labelled("Stretch"), "none");
+    expect(preview()).toContain(
+      `${saved().text.en.noFit}Your 37.5 in bust with 5 in of ease is past XL, the largest size on this chart.`,
+    );
+    expect(preview()).not.toContain("Your size");
+    await type(noFit(), "Message us for a fitting.");
+    expect(preview()).toContain("Message us for a fitting.");
+    // Ease that doesn't read yet previews the saved ease.
+    await type(ease(), "+5 in at");
+    await type(labelled("Stretch"), "some");
+    expect(preview()).toContain("with 2 in of ease falls in L on this chart");
+    none();
+  });
+
+  it("says on Pro how many products show the picked chart, in place of the upgrade", async () => {
+    m.getPlan.mockResolvedValue({ plan: "pro", checkFailed: false });
+    store.products = { [TOPS]: 148, [BOTTOMS]: 1 };
+    await open();
+    const live = () => document.querySelector(".live")!.textContent;
+    expect(banners()).toEqual([]);
+    expect(live()).toBe(
+      "LiveFind my size shows on the 148 products with Women's tops. Changes go live when you save.",
+    );
+    expect(document.querySelector(".live")!.getAttribute("role")).toBe(
+      "status",
+    );
+    await type(picked(), BOTTOMS);
+    expect(live()).toBe(
+      "LiveFind my size shows on the 1 product with Women's bottoms. Changes go live when you save.",
+    );
+    expect(store.countReads).toBe(1);
+    act(() => root!.unmount());
+
+    store.products = { [TOPS]: 12000 };
+    await open();
+    expect(live()).toContain("on the 10,000+ products with Women's tops.");
+  });
+
+  it("counts products only on Pro, keeping the upgrade elsewhere", async () => {
+    await open();
+    expect(store.countReads).toBe(0);
+    expect(document.querySelector(".live")).toBeNull();
+    expect(banners()).toEqual([UPGRADE]);
+  });
+
+  it("says the settings didn't load when Pro's product count fails", async () => {
+    m.getPlan.mockResolvedValue({ plan: "pro", checkFailed: false });
+    const graphql = store.admin.graphql.getMockImplementation()!;
+    store.admin.graphql.mockImplementation(async (query, opts) =>
+      query.includes("ChartProductCounts")
+        ? json({ errors: [{ message: "Throttled" }] })
+        : graphql(query, opts),
+    );
+    vi.useFakeTimers();
+    const got = load();
+    await vi.advanceTimersByTimeAsync(2_000); // its retries
+    vi.useRealTimers();
+    expect((await got).fitFinder).toEqual({
+      error: { code: "load", message: expect.any(String) },
+    });
   });
 });

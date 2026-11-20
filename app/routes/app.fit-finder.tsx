@@ -24,16 +24,22 @@ import {
   ChartValidationError,
   type StoredChart,
   chartPages,
+  countChartProducts,
   getChart,
   updateChart,
   validateChart,
 } from "../models/chart.server";
-import { STRETCH, type Fit } from "../lib/fit-finder";
+import { STRETCH, type Fit, findSize } from "../lib/fit-finder";
 import {
   type FitChart,
   describe,
   formatEase,
+  howItPicks,
+  lastStep,
   parseEase,
+  reasonText,
+  sampleAnswers,
+  size,
 } from "../components/fit-finder/chart-fit";
 import { getPlan } from "../models/billing.server";
 import {
@@ -102,7 +108,16 @@ async function load(admin: Admin, shop: string) {
       })(),
     ]);
     const charts = all.flatMap(fitChart);
-    return { ...settings, plan, plansUrl, hasCharts: all.length > 0, charts };
+    // Only Pro's live line names how many products show the picked chart.
+    const counts =
+      plan === "pro" && charts.length
+        ? await countChartProducts(
+            admin,
+            charts.map((c) => c.id),
+          )
+        : null;
+    const hasCharts = all.length > 0;
+    return { ...settings, plan, plansUrl, hasCharts, charts, counts };
   } catch (err) {
     if (!(
       err instanceof SettingsReadWriteError || err instanceof AdminApiError
@@ -233,9 +248,12 @@ export default function FitFinder() {
   );
 }
 
+// The form, with the shopper preview beside it when there is one.
 const Page = (props: {
   banners?: ReactNode;
   action?: ReactNode;
+  plan?: ReactNode;
+  side?: ReactNode;
   body: ReactNode;
 }) => (
   <s-page>
@@ -255,7 +273,11 @@ const Page = (props: {
         </div>
         {props.action}
       </div>
-      {props.body}
+      {props.plan}
+      <div className="split">
+        <div className="form">{props.body}</div>
+        {props.side}
+      </div>
     </div>
   </s-page>
 );
@@ -409,6 +431,7 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
     setDraft((d) => ({ ...d, fitFinder: { ...d.fitFinder, ...patch } }));
   const f = draft.fitFinder;
   const own = chart && draft.fits[chart.id];
+  const count = chart && loaded.counts?.[chart.id];
   const putFit = (patch: Partial<Draft["fits"][string]>) =>
     setDraft((d) => ({
       ...d,
@@ -515,25 +538,51 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
             Preview on your store
           </s-button>
         }
+        plan={
+          loaded.plan !== "pro" ? (
+            <Banner
+              tone="info"
+              copy={[
+                `Fit finder is part of Pro, $15 a month. You're on ${PLAN_NAMES[loaded.plan]}: set it up now and it goes live when you upgrade.`,
+              ]}
+            >
+              <s-button
+                slot="secondary-actions"
+                href={loaded.plansUrl}
+                target="_top"
+              >
+                Upgrade to Pro
+              </s-button>
+            </Banner>
+          ) : (
+            chart &&
+            count && (
+              <div role="status" className="live">
+                <span className="badge ok">Live</span>
+                <span>
+                  Find my size shows on the{" "}
+                  {count.count.toLocaleString("en-US")}
+                  {count.atLeast ? "+" : ""}{" "}
+                  {count.count === 1 && !count.atLeast ? "product" : "products"}{" "}
+                  with {chart.name}. Changes go live when you save.
+                </span>
+              </div>
+            )
+          )
+        }
+        side={
+          chart &&
+          own && (
+            <ShopperPreview
+              chart={chart}
+              own={own}
+              saved={initial.fits[chart.id].ease}
+              noFit={draft.noFit}
+            />
+          )
+        }
         body={
           <>
-            {loaded.plan !== "pro" && (
-              <Banner
-                tone="info"
-                copy={[
-                  `Fit finder is part of Pro, $15 a month. You're on ${PLAN_NAMES[loaded.plan]}: set it up now and it goes live when you upgrade.`,
-                ]}
-              >
-                <s-button
-                  slot="secondary-actions"
-                  href={loaded.plansUrl}
-                  target="_top"
-                >
-                  Upgrade to Pro
-                </s-button>
-              </Banner>
-            )}
-
             <section className="card" aria-labelledby="h-type">
               <h2 id="h-type">Fit finder type</h2>
               <div className="types">
@@ -650,6 +699,21 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
               </section>
             )}
 
+            {chart && (
+              <section className="card" aria-labelledby="h-logic">
+                <h2 id="h-logic">How Fitted picks a size</h2>
+                <ol className="list">
+                  {howItPicks(chart).map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ol>
+                <p className="help">
+                  Shoppers always see why a size was picked, so they can trust
+                  it.
+                </p>
+              </section>
+            )}
+
             <section className="card" aria-labelledby="h-result">
               <h2 id="h-result">Result screen</h2>
               {box(
@@ -690,5 +754,69 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
         }
       />
     </>
+  );
+}
+
+// "What shoppers see": findSize on the picked chart for sample answers, with
+// the screen's unsaved stretch, and its unsaved ease while that reads. A
+// picture of the storefront's last step, so nothing in it is a control.
+function ShopperPreview(props: {
+  chart: FitChart;
+  own: Draft["fits"][string];
+  saved: string;
+  noFit: string;
+}) {
+  const { chart: c, own } = props;
+  const ease =
+    own.ease === props.saved
+      ? c.fit.ease
+      : (parseEase(c, own.ease) ?? c.fit.ease);
+  const answers = sampleAnswers(c);
+  const fit = { ...c.fit, ease, stretch: own.stretch };
+  const result = findSize({ unit: c.unit, tables: [c.table], fit }, answers);
+  const step = lastStep(c, answers);
+  const why = reasonText({ ...c, fit }, result);
+  const n = c.fit.questions.length;
+  return (
+    <aside className="card shopper" aria-label="Shopper preview">
+      <div className="row">
+        <h2>What shoppers see</h2>
+        <span className="badge">Preview</span>
+      </div>
+      <div className="step">
+        <div className="count">
+          <span>
+            Question {n} of {n}
+          </span>
+          <span>Find my size</span>
+        </div>
+        <span className="bar" />
+        <strong className="words">{step.words}</strong>
+        {step.options.map((o, i) => (
+          <span key={i} className={o.on ? "opt on" : "opt"}>
+            {o.label}
+          </span>
+        ))}
+        <div className="row">
+          <span className="back">Back</span>
+          <span className="cart">See my size</span>
+        </div>
+      </div>
+      <div className="yours">
+        {result.row === null ? (
+          <>
+            <span>{props.noFit}</span>
+            {why && <span>{why}</span>}
+          </>
+        ) : (
+          <>
+            <strong>Your size</strong>
+            <span className="size">{size(c, result.row)}</span>
+            {why && <span>{why}</span>}
+            <span className="cart">Select {size(c, result.row)}</span>
+          </>
+        )}
+      </div>
+    </aside>
   );
 }

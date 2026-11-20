@@ -1,7 +1,9 @@
-// The FitFinder board's chart half (ARCHITECTURE §10): a chart's questions
-// and ease in the canvas's words.
+// The FitFinder board's chart half (ARCHITECTURE §10): a chart's questions,
+// ease, rules and sample result in the canvas's words.
 import {
+  type Answers,
   type Fit,
+  type FitResult,
   type Question,
   type Table,
   type Unit,
@@ -21,7 +23,7 @@ export type FitChart = {
 
 const label = (c: FitChart, col: string) =>
   c.words[`${c.table.id}.${col}`] || col;
-const size = (c: FitChart, row: string) =>
+export const size = (c: FitChart, row: string) =>
   c.words[`${c.table.id}.${row}.${c.table.columns[0].id}`] || row;
 const measures = (c: FitChart) =>
   c.table.columns.flatMap((col) =>
@@ -77,5 +79,121 @@ export function describe(c: FitChart, q: Question) {
         : q.kind === "fit"
           ? "Choice: Snug, Regular, Relaxed"
           : `Choice: ${q.options.map((o) => c.words[`fit.${q.id}.${o.id}`] || o.id).join(", ")}`;
-  return { words: c.words[`fit.${q.id}`] || q.id, kind };
+  return { words: words(c, q), kind };
+}
+
+const words = (c: FitChart, q: Question) => c.words[`fit.${q.id}`] || q.id;
+const and = (parts: string[]) =>
+  parts.length > 1
+    ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`
+    : parts.join("");
+
+// "How Fitted picks a size": findSize's rules (§10) for this chart's questions.
+export function howItPicks(c: FitChart) {
+  const qs = c.fit.questions;
+  const cols = [
+    ...new Set(
+      qs.flatMap((q) =>
+        q.kind === "measure" ? [label(c, q.col).toLowerCase()] : [],
+      ),
+    ),
+  ];
+  const usual = qs.some((q) => q.kind === "usual_size");
+  const lines = qs.flatMap((q) =>
+    q.kind === "choice"
+      ? [`Shoppers who answer "${words(c, q)}" only get that answer's sizes.`]
+      : [],
+  );
+  if (cols.length === 1)
+    lines.push(
+      `Match the shopper's ${cols[0]} measurement to the ${c.name} chart.`,
+    );
+  else if (cols.length)
+    lines.push(
+      `Match the shopper's ${and(cols)} measurements to the ${c.name} chart. The largest size wins.`,
+    );
+  else if (usual) lines.push("Start from the size they usually wear.");
+  if (qs.some((q) => q.kind === "fit"))
+    lines.push(
+      `Relaxed fit moves one size up. Snug moves one size down, never below ${size(c, c.table.rows[0].id)}.`,
+    );
+  if (cols.length && usual)
+    lines.push("No measurement? Start from the size they usually wear.");
+  return lines;
+}
+
+// The preview's shopper: the middle size's measurements, that size as the
+// usual one, a regular fit, and the first answer that keeps that size.
+export function sampleAnswers(c: FitChart): Answers {
+  const { rows, columns } = c.table;
+  const mid = rows[Math.floor((rows.length - 1) / 2)];
+  const answers: Answers = {};
+  for (const q of c.fit.questions) {
+    if (q.kind === "measure") {
+      const col = columns.find((x) => x.id === q.col);
+      const cell = mid.cells[q.col];
+      if (col?.kind !== "measure" || !cell) continue;
+      const value = Math.round((cell[0] + (cell[1] ?? cell[0])) * 5) / 10;
+      answers[q.id] = { value, unit: col.unit ?? c.unit };
+    } else if (q.kind === "usual_size") answers[q.id] = mid.id;
+    else if (q.kind === "fit") answers[q.id] = "regular";
+    else
+      answers[q.id] = (
+        q.options.find((o) => o.rows.includes(mid.id)) ?? q.options[0]
+      )?.id;
+  }
+  return answers;
+}
+
+// The last question and its answers as the preview draws them, the sample's marked.
+export function lastStep(c: FitChart, answers: Answers) {
+  const q = c.fit.questions.at(-1)!;
+  const a = answers[q.id];
+  const options =
+    q.kind === "measure"
+      ? typeof a === "object"
+        ? [{ label: `${a.value} ${a.unit}`, on: true }]
+        : []
+      : q.kind === "fit"
+        ? ["Snug", "Regular", "Relaxed"].map((o) => ({
+            label: o,
+            on: o.toLowerCase() === a,
+          }))
+        : q.kind === "usual_size"
+          ? c.table.rows.map((r) => ({ label: size(c, r.id), on: r.id === a }))
+          : q.options.map((o) => ({
+              label: c.words[`fit.${q.id}.${o.id}`] || o.id,
+              on: o.id === a,
+            }));
+  return { words: words(c, q), options };
+}
+
+// Why findSize picked what it did, as the shopper reads it, naming the ease
+// in `c.fit` it added to the measurement. The sample always likes a regular
+// fit, so the fit-moved reasons never show here.
+export function reasonText(c: FitChart, { reason }: FitResult) {
+  const v = reason.values;
+  const s = (k: string) => size(c, String(v[k]));
+  const col = String(v.col);
+  const ease = c.fit.ease[col];
+  const unit = measures(c).find((m) => m.id === col)?.unit;
+  const m = `Your ${v.value} ${v.unit} ${label(c, col).toLowerCase()}${ease ? ` with ${round2(ease)} ${unit} of ease` : ""}`;
+  const fit = v.fit ? `, and you like a ${v.fit} fit` : "";
+  // Past the size's own top value, only the stretch held it (§10).
+  const cell = c.table.rows.find((r) => r.id === v.size)?.cells[col];
+  const at = unit && convert(Number(v.value), v.unit as Unit, unit);
+  const stretched =
+    cell && at != null && at + (ease || 0) > (cell[1] ?? cell[0])
+      ? ", counting the fabric's stretch"
+      : "";
+  const text: Record<string, () => string> = {
+    in: () => `${m} falls in ${s("size")} on this chart${stretched}${fit}.`,
+    between: () =>
+      `${m} falls between ${s("below")} and ${s("above")} on this chart${fit}, so ${s("size")}.`,
+    large: () => `${m} is past ${s("size")}, the largest size on this chart.`,
+    small: () => `${m} is below ${s("size")}, the smallest size on this chart.`,
+    usual: () => `You usually wear ${s("size")}${fit}.`,
+    choice: () => `Your answers leave only ${s("size")} on this chart.`,
+  };
+  return text[reason.key.replace("fit.reason.", "")]?.() ?? "";
 }
