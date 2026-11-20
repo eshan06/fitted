@@ -2,8 +2,14 @@
 // chart's How to measure image. A staged upload, fileCreate, then the file's
 // cdn.shopify.com address once Shopify has it. Fitted passes the file on and
 // never serves it.
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { FONT_URL } from "../lib/appearance";
-import { type Admin, AdminApiError, adminGraphql } from "./admin.server";
+import {
+  type Admin,
+  AdminApiError,
+  type UserError,
+  adminGraphql,
+} from "./admin.server";
 
 const WAIT_MS = 20_000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -134,6 +140,51 @@ export async function readFile(request: Request, max: number) {
 /** Uploads a checked font file and returns its Shopify Files URL. */
 export const uploadFont = async (admin: Admin, file: Upload) =>
   (await upload(admin, "font", file)).url;
-/** Uploads a checked PNG or JPG; answers the MediaImage id and its URL. */
-export const uploadImage = (admin: Admin, file: Upload) =>
-  upload(admin, "image", file);
+// Proof that Fitted uploaded a file for this shop, so a discard never
+// deletes a file the merchant or another app made.
+function sign(shop: string, id: string) {
+  const secret = process.env.SHOPIFY_API_SECRET;
+  if (!secret) throw new Error("SHOPIFY_API_SECRET is not set");
+  return createHmac("sha256", secret)
+    .update(`fitted-discard ${shop} ${id}`)
+    .digest("base64url");
+}
+
+/** Uploads a checked PNG or JPG; answers its MediaImage id, URL and `sig`. */
+export async function uploadImage(admin: Admin, shop: string, file: Upload) {
+  const image = await upload(admin, "image", file);
+  return { ...image, sig: sign(shop, image.id) };
+}
+
+/**
+ * Deletes an image this shop's editor uploaded but never saved; false, with
+ * no call to Shopify, when `sig` isn't the one its upload answered.
+ */
+export async function discardImage(
+  admin: Admin,
+  shop: string,
+  id: string,
+  sig: string,
+) {
+  const want = Buffer.from(sign(shop, id));
+  const got = Buffer.from(sig);
+  if (got.length !== want.length || !timingSafeEqual(got, want)) return false;
+  await adminGraphql(
+    admin,
+    `#graphql
+    mutation FittedImageDelete($ids: [ID!]!) {
+      fileDelete(fileIds: $ids) {
+        deletedFileIds
+        userErrors { field message code }
+      }
+    }`,
+    { ids: [id] },
+    { retry: true },
+  ).catch((err) => {
+    // Already gone: a retry after the first delete landed, or the merchant's.
+    const gone = (e: UserError) => e.code === "FILE_DOES_NOT_EXIST";
+    const { userErrors = [] } = err instanceof AdminApiError ? err : {};
+    if (!userErrors.length || !userErrors.every(gone)) throw err;
+  });
+  return true;
+}

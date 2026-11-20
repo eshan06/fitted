@@ -1,7 +1,7 @@
 // The Editor board (Fitted canvas): name, template, status, and the tabs: the
-// size table with its tools, units and note, How to measure's steps, and Fit
-// tips, saved through App Bridge's save bar. Later steps add the drawing, the
-// Media tab, a second table and the live preview.
+// size table with its tools, units and note, How to measure, and Fit tips,
+// saved through App Bridge's save bar. Later steps add the Media tab, a
+// second table and the live preview.
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
   Link,
@@ -14,7 +14,7 @@ import { SaveBar, useAppBridge } from "@shopify/app-bridge-react";
 import type { FieldErrors, Template } from "../../models/chart.server";
 import { ChartTable } from "./ChartTable";
 import { PasteDialog } from "./PasteDialog";
-import { MeasureTab } from "./MeasureTab";
+import { MeasureTab, useMeasureImage } from "./MeasureTab";
 import * as model from "./model";
 import "./editor.css";
 
@@ -64,6 +64,8 @@ export function Editor(props: {
    * route: a save that lands reloads the chart, which remounts the editor.
    */
   historyMissed?: boolean;
+  /** The stored How to measure image's address. */
+  imageUrl?: string;
 }) {
   const { handle, invalid } = props;
   const fetcher = useFetcher<Answer>();
@@ -73,6 +75,14 @@ export function Editor(props: {
   const [draft, setDraft] = useState(props.initial);
   const [pasting, setPasting] = useState(false);
   const [tab, setTab] = useState<Tab>("table");
+  const drawing = useMeasureImage(draft.measureImage, props.imageUrl, (id) =>
+    setDraft((d) => {
+      const next = { ...d, measureImage: id };
+      // Removed, it matches a chart stored without one.
+      if (!id) delete next.measureImage;
+      return next;
+    }),
+  );
   // The editor's own check, or the action's answer until it's dismissed. A
   // stored chart that fails the checks opens with them, in the editor's words
   // where it has them. A number in a column that isn't a measurement isn't
@@ -169,6 +179,7 @@ export function Editor(props: {
     if ("fieldErrors" in r) return setLocal(r);
     setLocal(null);
     sent.current = model.toDraft(r.input, d.status);
+    drawing.keep(r.input.measureImage);
     const body = handle
       ? { handle, chart: r.input }
       : { chart: r.input, status: d.status, updatedAt: base.updatedAt };
@@ -285,10 +296,12 @@ export function Editor(props: {
   return (
     <s-page>
       <SaveBar id={SAVE_BAR} open={dirty}>
+        {/* A save remounts the editor, which would drop the upload. */}
         <button
           variant="primary"
           onClick={() => save()}
           loading={saving ? "" : undefined}
+          disabled={drawing.sending}
         >
           Save
         </button>
@@ -296,6 +309,7 @@ export function Editor(props: {
           disabled={saving}
           onClick={() => {
             setDraft(initial);
+            drawing.reset();
             dismiss();
             // The opening findings hold only until a save stores new content.
             setLocal(base.updatedAt === props.updatedAt ? opened : null);
@@ -443,7 +457,11 @@ export function Editor(props: {
             ))}
           </div>
           {tab === "measure" && (
-            <MeasureTab draft={draft} onChange={setDraft} />
+            <MeasureTab
+              draft={draft}
+              drawing={drawing.box}
+              onChange={setDraft}
+            />
           )}
           {tab === "tips" && (
             <div>
@@ -577,8 +595,25 @@ export function Editor(props: {
                   }
                 />
               </label>
+              {/* The same drawing as How to measure's, shown there. */}
+              <div className="boxes">
+                <button
+                  type="button"
+                  className="drop"
+                  onClick={() => {
+                    setTab("measure");
+                    drawing.open();
+                  }}
+                >
+                  <strong>How-to-measure image</strong>
+                  <span className="help">
+                    PNG or JPG, shown in the How to measure tab
+                  </span>
+                </button>
+              </div>
             </>
           )}
+          {drawing.input}
         </section>
       </div>
     </s-page>
