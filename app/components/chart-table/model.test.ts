@@ -930,6 +930,21 @@ describe("Country sizes", () => {
     expect(added.words[`t1.${added.tables[0].columns[1].id}`]).toBe("US size");
   });
 
+  it("widens a merge the added columns land inside, so it keeps its cells", () => {
+    const c = chart();
+    c.content.tables[0].merges = [
+      { row: "xs", col: "us", rows: 1, cols: 2 },
+      { row: "s", col: "us", rows: 1, cols: 1 },
+    ];
+    const all = setRegions(toDraft(validateChart(c), "DRAFT"), "all");
+    // The first still ends on Bust; the second ends before the new columns.
+    expect(all.content.tables[0].merges).toEqual([
+      { row: "xs", col: "us", rows: 1, cols: 5 },
+      { row: "s", col: "us", rows: 1, cols: 1 },
+    ]);
+    expect(() => validateChart(input(all))).not.toThrow();
+  });
+
   it("keeps US only greyed out while UK, EU or AU hold sizes, and US, UK, EU, AU past 20 columns", () => {
     const all = setRegions(usOnly(), "all");
     expect(canUsOnly(setWord(all, "t1.s.c2", "38"))).toBe(false);
@@ -937,6 +952,8 @@ describe("Country sizes", () => {
     while (full.content.tables[0].columns.length < 18)
       full = addMeasurement(full);
     expect(canAll(full)).toBe(false);
+    // At exactly 20 it still fits.
+    expect(canAll(remove(full, { col: "bust" }))).toBe(true);
     expect(canAll(addSize(usOnly()))).toBe(true);
   });
 });

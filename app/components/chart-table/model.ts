@@ -854,8 +854,19 @@ export function setRegions(d: Draft, to: "all" | "us"): Draft {
       country,
     }));
     const c = table(from).columns;
+    // A merge is a start column and a span, so one the columns land inside
+    // widens over them and still ends on its last column.
+    const m = table(from).merges;
     let next = withTable(from, {
       columns: [...c.slice(0, at), ...cols, ...c.slice(at)],
+      ...(m && {
+        merges: m.map((x) => {
+          const c0 = c.findIndex((y) => y.id === x.col);
+          return c0 < at && at < c0 + x.cols
+            ? { ...x, cols: x.cols + cols.length }
+            : x;
+        }),
+      }),
     });
     for (const col of cols)
       next = setWord(next, `${t.id}.${col.id}`, `${col.country} size`);
