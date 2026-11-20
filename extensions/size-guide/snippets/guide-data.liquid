@@ -5,16 +5,21 @@
   that names the shopper's stored answers, only on Pro (§10), along with the
   fit finder settings and product p's variant ids and options, which Add to
   cart reads. The settings words are the shopper's language's, else the
-  primary language's (§7).
+  primary language's (§7). The How to measure drawing is the address
+  image_url gives it, on Shopify's CDN under the store's own domain.
 {%- endcomment -%}
 {%- assign c = chart.content.value -%}
 {%- assign s = shop.metafields['$app'].settings.value -%}
 {%- assign plan = shop.metafields['$app'].plan.value -%}
 {%- assign primary = shop.published_locales | where: 'primary' | first -%}
+{%- if chart.measure_image.value -%}
+  {%- assign drawing = chart.measure_image.value | image_url: width: 1000 -%}
+{%- endif -%}
 <script type="application/json" data-fitted>
   {
-    "chart": { "v": {{ c.v | json }}, "unit": {{ c.unit | json }}, "roundTo": {{ c.roundTo | json }}, "tables": {{ c.tables | json }}, "words": {{ c.words | json }}{% if plan == 'pro' %}, "fit": {{ c.fit | json }}{% endif %} },
+    "chart": { "v": {{ c.v | json }}, "unit": {{ c.unit | json }}, "roundTo": {{ c.roundTo | json }}, "tables": {{ c.tables | json }}, "measure": {{ c.measure | json }}, "words": {{ c.words | json }}{% if plan == 'pro' %}, "fit": {{ c.fit | json }}{% endif %} },
     "strings": {{ chart.strings.value | json }},
+    "measureImage": {{ drawing | json }},
     "units": {{ s.units | json }},
     "link": {{ s.link | json }},
     "popup": {{ s.popup | json }},

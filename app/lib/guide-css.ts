@@ -64,10 +64,17 @@ export const tableCss = /* @__PURE__ */ [
   ".fitted-foot strong{font-size:16px;font-weight:600}",
   ".fitted-foot strong span{color:var(--fitted-accent)}",
   ".fitted-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}",
-  // The tabs, then Find my size (§10): its questions and the result.
+  // The tabs, How to measure, then Find my size (§10): its questions and the
+  // result.
   ".fitted-tabs{display:flex;flex-wrap:wrap;border-bottom:1px solid var(--fitted-line)}",
   ".fitted-dialog .fitted-tabs button{min-height:44px;margin-inline-end:20px;padding:0 2px;border:0;border-bottom:2px solid transparent;border-radius:0;background:none;color:var(--fitted-muted);font-size:15px;font-weight:500}",
   ".fitted-dialog .fitted-tabs [aria-pressed=true]{border-bottom-color:var(--fitted-text);color:var(--fitted-text);font-weight:600}",
+  // How to measure: the drawing beside the numbered steps, which go under it
+  // when there's no room beside it, as with large text.
+  ".fitted-measure{display:flex;flex-wrap:wrap;gap:16px 20px;align-items:flex-start}",
+  ".fitted-measure img{flex:0 0 35%;min-width:0;max-width:240px;height:auto}",
+  ".fitted-dialog .fitted-steps{display:flex;flex:1 1 12em;flex-direction:column;gap:12px;max-width:60ch;margin:0;padding:0;padding-inline-start:20px;font-size:15px;line-height:1.6;list-style:decimal}",
+  ".fitted-dialog .fitted-steps li{margin:0}",
   ".fitted-fit{--fitted-edge:color-mix(in srgb,var(--fitted-text) 62%,var(--fitted-bg));display:flex;flex-wrap:wrap;gap:14px 12px;margin:0}",
   ".fitted-fit>*{flex:1 1 100%;margin:0}",
   ".fitted-fit>label{display:flex;flex:1 1 160px;flex-direction:column;gap:6px;font-size:14px;font-weight:600}",

@@ -64,8 +64,12 @@
         data-t-choose="{{ 'size_guide.choose' | t }}"
         data-t-selected="{{ 'size_guide.selected' | t }}"
         data-t-select="{{ 'size_guide.select' | t }}"
-        {%- if shop.metafields['$app'].plan.value == 'pro' %}
         data-t-sections="{{ 'size_guide.sections' | t }}"
+        data-t-measure="{{ 'size_guide.measure' | t }}"
+        data-t-line_first="{{ 'size_guide.line_first' | t }}"
+        data-t-line="{{ 'size_guide.line' | t }}"
+        data-t-drawing="{{ 'size_guide.drawing' | t }}"
+        {%- if shop.metafields['$app'].plan.value == 'pro' %}
         data-t-fit="{{ 'size_guide.fit' | t }}"
         data-t-optional="{{ 'size_guide.optional' | t }}"
         data-t-no_tape="{{ 'size_guide.no_tape' | t }}"
