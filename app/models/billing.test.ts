@@ -56,12 +56,12 @@ const storeWrites = () =>
   adminGraphql.mock.calls
     .filter(([query]) => String(query).includes("metafieldsSet"))
     .map(([, options]) => options.variables.metafields);
-const confirmed = (plan: string, yearly = false) => ({
+const confirmed = (plan: string, yearly: boolean | null = false) => ({
   plan,
   yearly,
   checkFailed: false,
 });
-// `yearly` null: no confirmed read to take it from.
+// `yearly` null: no read named a known billing period.
 const failed = (plan: string, yearly: boolean | null = false) => ({
   plan,
   yearly,
@@ -229,14 +229,23 @@ describe("getPlan", () => {
     ["no billing period", undefined],
     ["an unknown billing period", "EVERY_7_DAYS"],
   ])(
-    "fails the check on a subscription with %s, so no price is guessed",
+    "still confirms the plan from a subscription with %s, with no interval to price",
     async (_, period) => {
       findUnique.mockResolvedValue(row("standard", 6));
       fetchMock.mockResolvedValue(billed(period, "pro"));
 
-      await expect(billing.getPlan(shop)).resolves.toEqual(failed("standard"));
-      expect(storeWrites()).toEqual([]);
-      expect(upsert).not.toHaveBeenCalled();
+      await expect(billing.getPlan(shop)).resolves.toEqual(
+        confirmed("pro", null),
+      );
+      expect(storeWrites()).toMatchObject([[{ value: "pro" }]]);
+      expect(upsert.mock.calls[0][0].update).toMatchObject({
+        plan: "pro",
+        planYearly: null,
+      });
+      const logged = vi.mocked(console.log).mock.calls.map(([line]) => line);
+      expect(logged.map((line) => JSON.parse(line))).toEqual([
+        { level: "warn", msg: expect.any(String), shop, route: "billing" },
+      ]);
     },
   );
 

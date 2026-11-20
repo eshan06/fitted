@@ -385,6 +385,7 @@ describe("the screen", () => {
       Promise.resolve({
         ...OK,
         plan: "free",
+        yearly: null, // as on every shop whose plan check hasn't succeeded
         charts: 0,
         active: 0,
         rows: [],
@@ -428,7 +429,11 @@ describe("the screen", () => {
       expect(
         plan.querySelector(`s-link[href="${PLANS}"]`)?.getAttribute("target"),
       ).toBe("_top");
-      expect(text(el)).not.toContain(`of 3 published charts`);
+      expect(
+        [...el.querySelectorAll("s-banner")].map((b) =>
+          b.getAttribute("heading"),
+        ),
+      ).toEqual([heading]);
     }
   });
 

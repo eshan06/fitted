@@ -131,6 +131,15 @@ async function check(shop: string): Promise<PlanState> {
     const { admin } = await unauthenticated.admin(shop);
     const shopId = await readShopId(admin);
     const { plan, yearly } = await fetchPlan(shopId);
+    if (yearly === null)
+      console.log(
+        JSON.stringify({
+          level: "warn",
+          msg: "Partner API gave no known billing period",
+          shop,
+          route: "billing",
+        }),
+      );
     if (plan !== row?.planOnStore) await writeStorePlan(admin, shopId, plan);
     const data = {
       plan,
@@ -193,7 +202,7 @@ const ACTIVE_SUBSCRIPTION = `query ActiveSubscription($appId: ID!, $shopId: ID!)
 
 async function fetchPlan(
   shopId: string,
-): Promise<{ plan: Plan; yearly: boolean }> {
+): Promise<{ plan: Plan; yearly: boolean | null }> {
   const org = process.env.SHOPIFY_PARTNER_ORG_ID;
   const token = process.env.SHOPIFY_PARTNER_API_ACCESS_TOKEN;
   const appId = process.env.SHOPIFY_APP_GID;
@@ -242,16 +251,14 @@ async function fetchPlan(
   if (subscription === null) return { plan: "free", yearly: false }; // no subscription
   if (!Array.isArray(subscription?.items))
     throw new Error("Partner API returned no subscription items");
-  // Never null in the schema; without it Home would have to guess the price.
-  const period = subscription.billingPeriod;
-  if (period !== "ANNUAL" && period !== "EVERY_30_DAYS")
-    throw new Error(
-      `Partner API returned billing period ${JSON.stringify(period ?? null)}`,
-    );
   const handles = subscription.items.map(
     (item: { handle?: unknown }) => item?.handle,
   );
-  const yearly = period === "ANNUAL";
+  // Never null in the schema. Only Home's price needs it, so an unknown one
+  // still confirms the plan, and Home states no price rather than guess.
+  const period = subscription.billingPeriod;
+  const yearly =
+    period === "ANNUAL" ? true : period === "EVERY_30_DAYS" ? false : null;
   // A missing or unknown handle is Free.
   if (handles.includes("pro")) return { plan: "pro", yearly };
   if (handles.includes("standard")) return { plan: "standard", yearly };

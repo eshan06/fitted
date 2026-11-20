@@ -529,8 +529,8 @@ function PlanBanner({ plan, yearly, plansUrl, active, limit }: Ok) {
         </s-stack>
       </s-banner>
     );
-  // A paid plan cached before Fitted recorded how it's billed: no price to
-  // state until a check succeeds.
+  // A paid plan with no known billing period, such as one cached before Fitted
+  // recorded it: no price to state rather than a guess.
   if (plan !== "free" && yearly === null) return null;
   const heading = {
     free: "Free plan: 3 charts, CSV export, no watermark. No order fees on any plan.",

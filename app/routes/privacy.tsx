@@ -52,7 +52,8 @@ export default function Privacy() {
         When you install Fitted, Shopify gives us your store&rsquo;s{" "}
         <code>myshopify.com</code> address, an access token that lets Fitted
         work in your store, and the permissions you granted. We also record
-        which Fitted plan your store is on, which we read from Shopify.
+        which Fitted plan your store is on and whether it is billed monthly or
+        yearly, both read from Shopify.
       </p>
       <h3>Your staff</h3>
       <p>
