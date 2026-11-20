@@ -267,3 +267,43 @@
 .fit-finder .q-editor .opt {
   padding-top: 26px;
 }
+/* A choice question's answers: one grey row each, its words, a box per size
+   and Remove answer, wrapping as the text grows. */
+.fit-finder .q-editor .answers {
+  gap: 8px;
+}
+.fit-finder .q-editor .answer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  padding: 10px;
+  border-radius: 10px;
+  background: #f7f7f8;
+}
+.fit-finder .q-editor .answer .words {
+  flex: 1 1 150px;
+  min-width: 0;
+}
+.fit-finder .q-editor .answer .field {
+  margin-top: 0;
+}
+.fit-finder .q-editor .sizes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+.fit-finder .q-editor .sizes label {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  min-height: 2rem;
+}
+.fit-finder .q-editor .sizes input {
+  margin: 0;
+  accent-color: #2448a8;
+}
+.fit-finder .q-editor .answer .err {
+  flex-basis: 100%;
+  margin-top: 0;
+}

@@ -1228,13 +1228,109 @@ describe("the question editor", () => {
     await click(edit(2));
     expect(kinds()).toEqual(["Measurement", "Usual size", "Fit preference"]);
     await click(inDialog("Cancel"));
-    // Choice's answers are their own step, so Custom adds none yet.
     await useType("custom");
     await click("Add question");
-    expect(kinds()).toEqual(["Measurement", "Usual size", "Fit preference"]);
+    expect(kinds()).toEqual([
+      "Measurement",
+      "Usual size",
+      "Fit preference",
+      "Choice",
+    ]);
   });
 
-  it("keeps a stored choice question's answers when only its words change", async () => {
+  const answer = (n: number) =>
+    dialog()!.querySelectorAll<HTMLElement>(".answer")[n - 1];
+  const box = (n: number, size: string) =>
+    [...answer(n).querySelectorAll("label")]
+      .find((l) => l.textContent === size)!
+      .querySelector("input")!;
+  const ticked = (n: number) =>
+    [...answer(n).querySelectorAll<HTMLInputElement>(".sizes input")].map(
+      (i) => i.checked,
+    );
+
+  it("adds a choice question on Custom, checking each answer before it closes", async () => {
+    await open();
+    await useType("custom");
+    await click("Add question");
+    await type(labelled("Question"), "Which best describes your shoulders?");
+    await check(labelled("Choice"));
+    expect(dialog()!.querySelector(".answers legend")!.textContent).toBe(
+      "Answers and the sizes they keep",
+    );
+    expect(dialog()!.textContent).toContain(
+      "Shoppers who pick an answer only get its sizes.",
+    );
+    expect(dialog()!.querySelectorAll(".answer")).toHaveLength(1);
+    expect(labelled("Answer 1").value).toBe("");
+    expect(
+      [...answer(1).querySelectorAll(".sizes label")].map((l) => l.textContent),
+    ).toEqual(["XS", "s", "M", "L", "XL"]);
+    expect(
+      answer(1).querySelector('[role="group"]')!.getAttribute("aria-label"),
+    ).toBe("Sizes for Answer 1");
+    expect(inDialog("Remove answer Answer 1").hasAttribute("disabled")).toBe(
+      true,
+    );
+
+    await click(inDialog("Add question"));
+    expect(dialog()!.textContent).toContain("Enter the answer shoppers see.");
+    expect(dialog()!.textContent).toContain(
+      "Pick at least one size for this answer.",
+    );
+    expect(labelled("Answer 1").getAttribute("aria-invalid")).toBe("true");
+    const group = answer(1).querySelector('[role="group"]')!;
+    expect(
+      document.getElementById(group.getAttribute("aria-describedby")!)!
+        .textContent,
+    ).toBe("Pick at least one size for this answer.");
+    expect(listed()).toHaveLength(3);
+
+    await type(labelled("Answer 1"), " Narrow ");
+    await check(box(1, "s"));
+    await check(box(1, "XS"));
+    await click(inDialog("Add answer"));
+    await type(labelled("Answer 2"), "Broad");
+    expect(dialog()!.textContent).toContain(
+      "Pick at least one size for this answer.",
+    );
+    await check(box(2, "XL"));
+    expect(dialog()!.textContent).not.toContain("Pick at least one size");
+    await click(inDialog("Add question"));
+    expect(dialog()).toBeNull();
+    expect(listed()[3]).toBe("Which best describes your shoulders?");
+    expect(text()).toContain("Choice: Narrow, Broad");
+
+    await click("Save");
+    const added = stored(0).fit.questions[3] as unknown as {
+      id: string;
+      options: { id: string; rows: string[] }[];
+    };
+    expect(added).toMatchObject({
+      kind: "choice",
+      options: [{ rows: ["xs", "s"] }, { rows: ["xl"] }],
+    });
+    const [a, b] = added.options.map((o) => o.id);
+    expect(a).toMatch(/^[a-z0-9]{1,8}$/);
+    expect(a).not.toBe(b);
+    expect(stored(0).words).toMatchObject({
+      [`fit.${added.id}`]: "Which best describes your shoulders?",
+      [`fit.${added.id}.${a}`]: "Narrow",
+      [`fit.${added.id}.${b}`]: "Broad",
+    });
+  });
+
+  it("stops adding answers at 20", async () => {
+    await open();
+    await useType("custom");
+    await click("Add question");
+    await check(labelled("Choice"));
+    for (let i = 1; i < 20; i++) await click(inDialog("Add answer"));
+    expect(dialog()!.querySelectorAll(".answer")).toHaveLength(20);
+    expect(inDialog("Add answer").hasAttribute("disabled")).toBe(true);
+  });
+
+  it("edits a stored choice question's answers and sizes, dropping a removed answer's words", async () => {
     const n = fitted(2, "Women's tops");
     const jv = n.content.jsonValue as unknown as {
       fit: { questions: unknown[] };
@@ -1253,15 +1349,53 @@ describe("the question editor", () => {
     await open();
     await click(edit(2));
     expect(labelled("Choice").checked).toBe(true);
+    expect(labelled("Answer 1").value).toBe("Narrow");
+    expect(ticked(1)).toEqual([true, false, true, false, false]);
+    expect(labelled("Answer 2").value).toBe("Broad");
+    expect(ticked(2)).toEqual([false, false, false, false, true]);
     await type(labelled("Question"), "Your shoulders?");
+    await type(labelled("Answer 1"), "Slim");
+    await check(box(1, "s")); // lands between xs and m, in table order
+    await click(inDialog("Remove answer Broad"));
+    expect(dialog()!.querySelectorAll(".answer")).toHaveLength(1);
     await click(inDialog("Done"));
     await click("Save");
-    expect(stored(0).fit.questions[1]).toEqual(jv.fit.questions[1]);
-    expect(stored(0).words).toMatchObject({
-      "fit.q2": "Your shoulders?",
-      "fit.q2.a": "Narrow",
-      "fit.q2.b": "Broad",
+    expect(stored(0).fit.questions[1]).toEqual({
+      id: "q2",
+      kind: "choice",
+      options: [{ id: "a", rows: ["xs", "s", "m"] }],
     });
+    const words = stored(0).words as Record<string, string>;
+    expect(words).toMatchObject({
+      "fit.q2": "Your shoulders?",
+      "fit.q2.a": "Slim",
+    });
+    expect(words["fit.q2.b"]).toBeUndefined();
+  });
+
+  it("drops a choice question's answers when it becomes another kind", async () => {
+    const n = fitted(2, "Women's tops");
+    const jv = n.content.jsonValue as unknown as {
+      fit: { questions: unknown[] };
+      words: Record<string, string>;
+    };
+    jv.fit.questions[1] = {
+      id: "q2",
+      kind: "choice",
+      options: [{ id: "a", rows: ["m"] }],
+    };
+    jv.words["fit.q2.a"] = "Average";
+    store.charts = [n];
+    await open();
+    await click(edit(2));
+    await check(labelled("Fit preference"));
+    expect(dialog()!.querySelector(".answers")).toBeNull();
+    await click(inDialog("Done"));
+    await click("Save");
+    expect(stored(0).fit.questions[1]).toEqual({ id: "q2", kind: "fit" });
+    expect(
+      (stored(0).words as Record<string, string>)["fit.q2.a"],
+    ).toBeUndefined();
   });
 
   it("removes a question with its words, never the only one", async () => {
