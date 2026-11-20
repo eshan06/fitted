@@ -4,6 +4,14 @@ import {
   addMeasurement,
   addSize,
   blankDraft,
+  canMerge,
+  merge,
+  merges,
+  merging,
+  setMeasure,
+  setRoundTo,
+  toggleWrap,
+  unmerge,
   dropped,
   fitOnly,
   formatCell,
@@ -537,5 +545,98 @@ describe("removing a size or a measurement", () => {
       "content.words.t1.xs.us": "d",
       name: "f",
     });
+  });
+});
+
+describe("table tools", () => {
+  // Women's tops with a third size, M, and a Fit text column.
+  const fitted = () => {
+    let d = addSize(toDraft(chart(), "DRAFT"));
+    const t = d.content.tables[0];
+    d = {
+      ...d,
+      content: {
+        ...d.content,
+        tables: [
+          { ...t, columns: [...t.columns, { id: "fit", kind: "text" }] },
+          ...d.content.tables.slice(1),
+        ],
+      },
+    };
+    for (const [k, v] of Object.entries({
+      "t1.fit": "Fit",
+      "t1.r2.size": "M",
+      "t1.xs.fit": "Relaxed",
+      "t1.r2.fit": "Regular",
+    }))
+      d = setWord(d, k, v);
+    return setCell(d, "r2", "bust", "35–36");
+  };
+
+  it("names the value a merge keeps and the ones it removes", () => {
+    const d = fitted();
+    expect(merging(d, { col: "fit", a: 0, b: 2 })).toEqual({
+      heading: "Merge 3 cells in Fit?",
+      label: "Merge cells",
+      text: "The merged cell keeps XS's value, Relaxed. Saving removes the other 1: Regular (M).",
+    });
+    expect(merging(d, { col: "bust", a: 0, b: 2 }).text).toBe(
+      "The merged cell keeps XS's value, 31–32. Saving removes the other 2: 33.5 (S) and 35–36 (M).",
+    );
+    // Only one value: it merges straight away.
+    expect(merging(d, { col: "fit", a: 1, b: 2 }).text).toBeNull();
+  });
+
+  it("merges down a column, keeping the first value on top, and the save passes the checks", () => {
+    const d = merge(fitted(), { col: "fit", a: 1, b: 2 });
+    const saved = validateChart(input(d)).content;
+    expect(saved.tables[0].merges).toEqual([
+      { row: "s", col: "fit", rows: 2, cols: 1 },
+    ]);
+    expect(saved.words["t1.s.fit"]).toBe("Regular");
+    expect(saved.words).not.toHaveProperty(["t1.r2.fit"]);
+    // A measurement's covered numbers go too.
+    const m = merge(fitted(), { col: "bust", a: 1, b: 2 });
+    expect(input(m).content.tables[0].rows.map((r) => r.cells)).toEqual([
+      { bust: [31, 32] },
+      { bust: [33.5] },
+      {},
+    ]);
+    expect(unmerge(m, "s", "bust").content.tables[0].merges).toEqual([]);
+  });
+
+  it("leaves words outside the first table alone when merging", () => {
+    const d = setWord(fitted(), "t2.xs.fit", "Kept");
+    const m = merge(d, { col: "fit", a: 0, b: 1 });
+    expect(m.content.words["t2.xs.fit"]).toBe("Kept");
+    expect(m.content.words["t1.xs.fit"]).toBe("Relaxed");
+    expect(m.content.words).not.toHaveProperty(["t1.s.fit"]);
+  });
+
+  it("merges two or more cells that aren't merged yet", () => {
+    const d = merge(fitted(), { col: "fit", a: 0, b: 1 });
+    expect(canMerge(fitted(), { col: "fit", a: 1, b: 1 })).toBe(false);
+    expect(canMerge(d, { col: "fit", a: 1, b: 2 })).toBe(false);
+    expect(canMerge(d, { col: "bust", a: 0, b: 2 })).toBe(true);
+    expect(merges(d)).toEqual([
+      { row: "xs", col: "fit", rows: 2, cols: 1, r0: 0, c0: 3 },
+    ]);
+  });
+
+  it("sets wrap, rounding and a measurement's unit and conversion", () => {
+    let d = toggleWrap(fitted(), "fit");
+    d = setMeasure(setRoundTo(d, 1), "bust", { unit: "cm", convert: false });
+    const c = validateChart(input(d)).content;
+    expect(c.roundTo).toBe(1);
+    expect(c.tables[0].wrap).toEqual(["fit"]);
+    expect(c.tables[0].columns[2]).toEqual({
+      id: "bust",
+      kind: "measure",
+      unit: "cm",
+      convert: false,
+    });
+    // Not a measurement: nothing changes.
+    expect(setMeasure(d, "fit", { convert: false })).toEqual(d);
+    expect(toggleWrap(d, "fit").content.tables[0].wrap).toEqual([]);
   });
 });

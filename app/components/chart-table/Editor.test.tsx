@@ -1089,3 +1089,155 @@ describe("chart editor screen", () => {
     expect(text()).toContain("Left for /app/charts");
   });
 });
+
+describe("table tools", () => {
+  // Women's tops with three sizes and a Fit text column.
+  const withFit = () => {
+    const s = stored();
+    const c = s.stored.chart.content;
+    c.tables[0].columns.push({ id: "fit", kind: "text" });
+    c.tables[0].rows.push({ id: "s", cells: {} }, { id: "m", cells: {} });
+    Object.assign(c.words, {
+      "t1.fit": "Fit",
+      "t1.s.size": "S",
+      "t1.m.size": "M",
+      "t1.xs.fit": "Relaxed",
+      "t1.s.fit": "Regular",
+    });
+    return s;
+  };
+  const shiftTo = async (from: string, key: "ArrowDown" | "ArrowUp") => {
+    await act(async () => byLabel(from).focus());
+    await act(async () =>
+      byLabel(from).dispatchEvent(
+        new KeyboardEvent("keydown", { key, shiftKey: true, bubbles: true }),
+      ),
+    );
+  };
+  const status = () => document.querySelector('[role="status"]')!.textContent;
+  const toolbar = (label: string) =>
+    [
+      ...document.querySelectorAll<HTMLButtonElement>(
+        '[role="toolbar"] button',
+      ),
+    ].find((b) => b.textContent === label)!;
+
+  it("merges cells after the dialog names the values it removes, then wraps and unmerges", async () => {
+    const { sent } = await open([withFit()]);
+    await act(async () => byLabel("XS, Fit").focus());
+    // One cell can't be merged.
+    expect(toolbar("Merge cells").disabled).toBe(true);
+    await shiftTo("XS, Fit", "ArrowDown");
+    await shiftTo("S, Fit", "ArrowDown");
+    expect(document.activeElement).toBe(byLabel("M, Fit"));
+    expect(status()).toContain("3 cells selected in Fit, XS to M");
+    expect(toolbar("Merge cells").disabled).toBe(false);
+    await act(async () => toolbar("Merge cells").click());
+    const dialog = document.querySelector("dialog")!;
+    expect(dialog.textContent).toContain("Merge 3 cells in Fit?");
+    expect(dialog.textContent).toContain(
+      "The merged cell keeps XS's value, Relaxed. Saving removes the other 1: Regular (S).",
+    );
+    expect(dialog.textContent).toContain(
+      "Until you save, Discard brings them back.",
+    );
+    await act(async () =>
+      document.querySelector<HTMLElement>("dialog s-button[tone]")!.click(),
+    );
+    await settle();
+    expect(document.querySelector("dialog")).toBeNull();
+    expect(document.querySelector('[aria-label="S, Fit"]')).toBeNull();
+    expect(byLabel("XS, Fit").closest("td")!.rowSpan).toBe(3);
+    expect(status()).toContain("Fit column, XS to M merged");
+    const wrap = document.querySelector<HTMLInputElement>(
+      '[role="status"] input[type="checkbox"]',
+    )!;
+    await act(async () => wrap.click());
+    expect(toolbar("Wrap text").getAttribute("aria-pressed")).toBe("true");
+    await click("Save");
+    const t = (sent[0].chart as ChartInput).content;
+    expect(t.tables[0].merges).toEqual([
+      { row: "xs", col: "fit", rows: 3, cols: 1 },
+    ]);
+    expect(t.tables[0].wrap).toEqual(["fit"]);
+    expect(t.words).not.toHaveProperty(["t1.s.fit"]);
+    await click("Unmerge cells");
+    expect(byLabel("S, Fit").value).toBe("");
+    expect(byLabel("XS, Fit").closest("td")!.rowSpan).toBe(1);
+  });
+
+  it("merges empty cells straight away, and Shift-click selects up a column", async () => {
+    await open([withFit()]);
+    await act(async () => byLabel("M, Fit").focus());
+    await act(async () => {
+      byLabel("S, Fit").dispatchEvent(
+        new MouseEvent("mousedown", { shiftKey: true, bubbles: true }),
+      );
+      byLabel("S, Fit").focus();
+    });
+    expect(status()).toContain("2 cells selected in Fit, S to M");
+    await click("Merge cells");
+    expect(document.querySelector("dialog")).toBeNull();
+    expect(byLabel("S, Fit").value).toBe("Regular");
+    expect(document.querySelector('[aria-label="M, Fit"]')).toBeNull();
+    // A merged cell can't be merged again.
+    await shiftTo("XS, Fit", "ArrowDown");
+    expect(status()).toContain("2 cells selected in Fit, XS to S");
+    expect(toolbar("Merge cells").disabled).toBe(true);
+    await click("Discard");
+    expect(byLabel("M, Fit")).not.toBeNull();
+  });
+
+  it("rounds, sets a measurement's unit and keeps it unconverted", async () => {
+    const { sent } = await open([stored()]);
+    const round = document.querySelector<HTMLSelectElement>(
+      '[role="toolbar"] select',
+    )!;
+    expect(round.closest("label")!.textContent).toContain("Round to");
+    await type(round, "1");
+    await act(async () => byLabel("Column 2 name").focus());
+    expect(status()).toContain("Bust column selected");
+    // Wrap text follows the selected column.
+    await act(async () => toolbar("Wrap text").click());
+    expect(toolbar("Wrap text").getAttribute("aria-pressed")).toBe("true");
+    const unit = document.querySelector<HTMLSelectElement>(
+      '[role="status"] select',
+    )!;
+    expect(unit.value).toBe("in");
+    await type(unit, "cm");
+    await act(async () =>
+      document
+        .querySelector<HTMLInputElement>(
+          '[role="status"] input[type="checkbox"]',
+        )!
+        .click(),
+    );
+    await click("Save");
+    const c = (sent[0].chart as ChartInput).content;
+    expect(c.roundTo).toBe(1);
+    expect(c.unit).toBe("in");
+    expect(c.tables[0].wrap).toEqual(["bust"]);
+    expect(c.tables[0].columns[1]).toEqual({
+      id: "bust",
+      kind: "measure",
+      unit: "cm",
+      convert: false,
+    });
+  });
+
+  it("draws a stored merge across columns, and keeps every size reachable under a size merge", async () => {
+    const s = withFit();
+    const t = s.stored.chart.content.tables[0];
+    t.merges = [
+      { row: "xs", col: "bust", rows: 1, cols: 2 },
+      { row: "s", col: "size", rows: 2, cols: 1 },
+    ];
+    await open([s]);
+    expect(byLabel("XS, Bust").closest("td")!.colSpan).toBe(2);
+    expect(document.querySelector('[aria-label="XS, Fit"]')).toBeNull();
+    // Sizes under a size merge stay drawn, so each can be named or removed.
+    expect(byLabel("Size 3").value).toBe("M");
+    await act(async () => byLabel("Size 3").focus());
+    expect(status()).toContain("Size M selected");
+  });
+});
