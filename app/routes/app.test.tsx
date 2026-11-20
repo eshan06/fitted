@@ -3,7 +3,6 @@ import type { LoaderFunctionArgs } from "react-router";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App, { loader } from "./app";
-import Home from "./app._index";
 import Import from "./app.import";
 import FitFinder from "./app.fit-finder";
 import Appearance from "./app.appearance";
@@ -73,7 +72,6 @@ describe("admin shell", () => {
 // The step that builds a screen deletes its row here and brings its own tests.
 describe("placeholder screens", () => {
   it.each([
-    ["Home", Home],
     ["Import charts", Import],
     ["Fit finder", FitFinder],
     ["Appearance & languages", Appearance],
