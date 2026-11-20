@@ -20,7 +20,7 @@ import {
   themeEditorUrl,
 } from "../models/admin.server";
 import { uploadFont } from "../models/font.server";
-import { FONT_MAX, FONT_WORDS, fontType } from "../lib/appearance";
+import { FONT_MAX, FONT_WORDS, fontType } from "../lib/font-file";
 import {
   type FieldErrors,
   type Loaded,

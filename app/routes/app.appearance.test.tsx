@@ -5,7 +5,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { createRoutesStub } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultSettings, type Settings } from "../models/settings.server";
-import { fileSize, fontType } from "../lib/appearance";
+import { fileSize, fontType } from "../lib/font-file";
 
 const m = vi.hoisted(() => ({ authenticate: vi.fn() }));
 vi.mock("../shopify.server", () => ({
