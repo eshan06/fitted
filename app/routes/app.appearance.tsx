@@ -1,8 +1,7 @@
 // Appearance & languages (ARCHITECTURE §7, §15): the Appearance board's link,
 // popup, placement, units and custom CSS, saved to `$app.settings` through
 // App Bridge's save bar, with colors, the popup font and the product page
-// preview. The action also takes the popup font's upload to Shopify Files;
-// the screen's upload states are #176's. Languages is #43's.
+// preview, and the popup font's upload to Shopify Files. Languages is #43's.
 import { Suspense, useState, type ReactNode } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import {
@@ -21,9 +20,11 @@ import {
 } from "../models/admin.server";
 import { uploadFont } from "../models/font.server";
 import { FONT_MAX, FONT_WORDS, fontType } from "../lib/font-file";
+import { useFontUpload } from "../components/appearance/FontUpload";
 import {
   type FieldErrors,
   type Loaded,
+  type Settings,
   SettingsConflictError,
   SettingsReadWriteError,
   SettingsValidationError,
@@ -228,8 +229,12 @@ const Loading = () => (
   </div>
 );
 
-const button = (label: string, onClick: () => void) => (
-  <s-button slot="secondary-actions" onClick={onClick}>
+const button = (label: string, onClick: () => void, disabled = false) => (
+  <s-button
+    slot="secondary-actions"
+    onClick={onClick}
+    disabled={disabled || undefined}
+  >
     {label}
   </s-button>
 );
@@ -466,7 +471,10 @@ function Editor(props: { loaded: Loaded; themeUrl: string }) {
       </div>
     );
   };
-  const font = draft["popup.font"];
+  const fontUpload = useFontUpload(
+    draft["popup.font"] as Settings["popup"]["font"],
+    (v) => put("popup.font", v),
+  );
   const custom = draft["colors.mode"] === "custom";
   // The canvas's product, showing the label and custom colors.
   const preview = (
@@ -536,7 +544,7 @@ function Editor(props: { loaded: Loaded; themeUrl: string }) {
       ) : (
         code && (
           <Banner copy={COPY.shopify}>
-            {button("Try saving again", save)}
+            {button("Try saving again", save, fontUpload.sending)}
           </Banner>
         )
       )}
@@ -587,6 +595,8 @@ function Editor(props: { loaded: Loaded; themeUrl: string }) {
           variant="primary"
           onClick={save}
           loading={saving ? "" : undefined}
+          // A save remounts the editor, which would drop the upload.
+          disabled={fontUpload.sending}
         >
           Save
         </button>
@@ -594,6 +604,7 @@ function Editor(props: { loaded: Loaded; themeUrl: string }) {
           disabled={saving}
           onClick={() => {
             setDraft(initial);
+            fontUpload.reset();
             dismiss();
           }}
         >
@@ -636,31 +647,9 @@ function Editor(props: { loaded: Loaded; themeUrl: string }) {
                   ["fade", "Fade in"],
                 ])}
                 {text("header", "Header text", "", true)}
-                {/* The upload's states are #176's: until then, only a stored upload shows. */}
-                <label>
-                  Font
-                  <select
-                    className="field"
-                    value={font === "theme" ? "theme" : "upload"}
-                    onChange={(e) =>
-                      put(
-                        "popup.font",
-                        e.target.value === "theme"
-                          ? "theme"
-                          : initial["popup.font"],
-                      )
-                    }
-                  >
-                    <option value="theme">Match my theme</option>
-                    <option
-                      value="upload"
-                      disabled={initial["popup.font"] === "theme"}
-                    >
-                      Upload a font
-                    </option>
-                  </select>
-                </label>
+                {fontUpload.select}
               </div>
+              {fontUpload.box}
               {box("popup.logo", "Show my logo in the popup")}
               {box(
                 "popup.sticky",

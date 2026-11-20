@@ -22,3 +22,8 @@ export function fontType(name: string, head: Uint8Array) {
     ? mime
     : undefined;
 }
+/** A file's size as the screen says it: "48 KB", "6.4 MB" (rounded up). */
+export const fileSize = (bytes: number) =>
+  bytes < 1024 * 1024
+    ? `${Math.max(1, Math.round(bytes / 1024))} KB`
+    : `${Math.ceil(bytes / 104857.6) / 10} MB`;
