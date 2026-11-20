@@ -133,7 +133,7 @@ describe("loading a chart's versions", () => {
     m.listVersions.mockRejectedValue(new Error("value 'secret' refused"));
     expect(await result(load())).toEqual({
       status: 502,
-      body: { error: { code: "database", message: expect.any(String) } },
+      body: { error: { code: "server", message: expect.any(String) } },
     });
     m.listVersions.mockResolvedValue([]);
     m.shopTimeZone.mockRejectedValue(new AdminApiError("failed", "HTTP 500"));
@@ -145,7 +145,11 @@ describe("loading a chart's versions", () => {
     // values, is not.
     expect(logs.map((l) => JSON.parse(l))).toEqual([
       expect.objectContaining({ level: "error", shop: SHOP, detail: "Error" }),
-      expect.objectContaining({ shop: SHOP, detail: "HTTP 500" }),
+      expect.objectContaining({
+        level: "error",
+        shop: SHOP,
+        detail: "HTTP 500",
+      }),
     ]);
   });
 

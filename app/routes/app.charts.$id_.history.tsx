@@ -77,7 +77,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     return data(
       {
         error: {
-          code: err instanceof AdminApiError ? "shopify" : "database",
+          code: err instanceof AdminApiError ? "shopify" : "server",
           message:
             "Fitted couldn't load this chart's versions just now. The chart itself is fine.",
         },
