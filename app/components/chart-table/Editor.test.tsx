@@ -470,7 +470,7 @@ describe("chart editor screen", () => {
   });
 
   it("shows only the banner when a finding is outside what the editor can change", async () => {
-    await open([broken({ "content.unit": "Pick in or cm" })]);
+    await open([broken({ "content.roundTo": "Pick 0.25, 0.5 or 1" })]);
     expect(document.querySelector("s-banner")?.getAttribute("heading")).toBe(
       "Fix 2 values to save this chart",
     );
