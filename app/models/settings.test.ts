@@ -298,6 +298,9 @@ describe("validateSettings", () => {
     expect(errors(defaultSettings("en"))).toEqual({});
     expect(errors(custom())).toEqual({});
     expect(errors({ ...custom(), colors: { mode: "theme" } })).toEqual({});
+    const files =
+      '.fitted-dialog{background:url(https://cdn.shopify.com/s/files/1/bg.png?v=2)} .fitted-x{background:URL( "https://cdn.shopify.com/x.svg" )}';
+    expect(errors({ ...custom(), css: files })).toEqual({});
   });
 
   it.each([
@@ -320,7 +323,34 @@ describe("validateSettings", () => {
     ["fitFinder.askAge", 1],
     ["css", "body { background: red } </style><script>"],
     ["css", "a{}".repeat(3500)],
+    ["css", "é".repeat(5200)], // under 10K characters, over 10 KB
     ["css", 42],
+    // It loads nothing but Shopify Files, and no escape hides that.
+    ["css", '@import "https://evil.example/x.css";'],
+    ["css", "@IMPORT url(https://cdn.shopify.com/x.css);"],
+    ["css", ".fitted-link{background:url(https://evil.example/t.gif)}"],
+    ["css", ".fitted-link{background:url( '//evil.example/t.gif' )}"],
+    [
+      "css",
+      ".fitted-link{background:url(https://cdn.shopify.com.evil.example/t)}",
+    ],
+    [
+      "css",
+      ".fitted-link{background:url(https://cdn.shopify.com@evil.example/)}",
+    ],
+    ["css", '.fitted-link{background:image-set("https://evil.example/t" 1x)}'],
+    ["css", '.fitted-link{background:src("https://evil.example/t")}'],
+    [
+      "css",
+      '.fitted-link{background:filter("https://evil.example/t", blur(1px))}',
+    ],
+    // Shopify Files only through plain url(), so image-set() is refused too.
+    [
+      "css",
+      ".fitted-link{background:image-set(url(https://cdn.shopify.com/a.png) 1x)}",
+    ],
+    ["css", ".fitted-link{background:u\\72l(https://evil.example/t)}"],
+    ["css", '.fitted-link::after{content:"\\201C"}'],
     ["v", 2],
   ])("refuses %s = %j", (path, value) => {
     expect(errors(withField(path, value))).toHaveProperty([path]);

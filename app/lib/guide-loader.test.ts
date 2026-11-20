@@ -3,6 +3,7 @@
 import { readFileSync } from "node:fs";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "./guide";
+import { css } from "./guide-css";
 import { start, type Load } from "./guide-loader";
 
 // From the repo root: happy-dom's URL can't resolve file: URLs.
@@ -76,6 +77,16 @@ const valid = JSON.stringify({
   country: "US",
   locale: "en",
 });
+// The data snippet's output with Appearance settings in it (§7).
+const withSettings = (settings: Record<string, unknown>) =>
+  JSON.stringify({ ...JSON.parse(valid), ...settings });
+const painted = (block: HTMLElement) =>
+  Object.fromEntries(
+    ["text", "accent", "bg"].map((k) => [
+      k,
+      block.style.getPropertyValue(`--fitted-${k}`),
+    ]),
+  );
 
 let load: ReturnType<typeof vi.fn<Load>>;
 const guide = { render: vi.fn(render) };
@@ -345,6 +356,143 @@ describe("loader", () => {
     dialog.querySelector("td")!.click();
     expect(dialog.open).toBe(true);
     expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the merchant's label, header and icon setting, as text", async () => {
+    const { link, dialog } = await mount(
+      withSettings({
+        text: { label: "Fit <b>guide</b>", header: "Find your fit" },
+        link: { style: "text", icon: "none" },
+      }),
+    );
+    expect(link.textContent).toBe("Fit <b>guide</b>");
+    expect(link.querySelector("svg, b")).toBeNull();
+    expect(dialog.querySelector(".fitted-title")?.textContent).toBe(
+      "Find your fit",
+    );
+    expect(dialog.getAttribute("aria-labelledby")).toBe("fitted-title-1");
+  });
+
+  it("keeps the extension's word, the ruler and the reading direction without settings", async () => {
+    const { link, dialog } = await mount();
+    expect(link.lastChild?.textContent).toBe(en.title);
+    expect(link.querySelectorAll("svg")).toHaveLength(1);
+    expect(dialog.querySelector(".fitted-title")?.textContent).toBe(en.title);
+    expect(dialog.hasAttribute("dir")).toBe(false);
+  });
+
+  it("lays the popup out right to left when the setting is on", async () => {
+    const { link, dialog } = await mount(
+      withSettings({ popup: { rtl: true } }),
+    );
+    expect(dialog.dir).toBe("rtl");
+    expect(link.closest("[dir]")).toBeNull();
+  });
+
+  it("paints the merchant's colors on the guide when it opens", async () => {
+    const colors = { text: "#202223", accent: "#b3301c", bg: "#fffaf0" };
+    const { root, link } = await mount(
+      withSettings({
+        colors: { ...colors, mode: "custom", background: colors.bg },
+      }),
+    );
+    link.click();
+    expect(painted(root)).toEqual(colors);
+  });
+
+  it.each([
+    [
+      "keeps the accent on a light background",
+      "background-color: rgb(250, 247, 240); color: rgb(18, 18, 18)",
+      { text: "rgb(18, 18, 18)", accent: "#2448a8", bg: "rgb(250, 247, 240)" },
+    ],
+    [
+      "uses the text color for the accent on a dark one",
+      "background-color: rgb(18, 18, 18); color: rgb(240, 240, 240)",
+      {
+        text: "rgb(240, 240, 240)",
+        accent: "rgb(240, 240, 240)",
+        bg: "rgb(18, 18, 18)",
+      },
+    ],
+    [
+      "reads white when nothing opaque is behind the block",
+      "background-color: rgba(0, 0, 0, 0.5); color: rgb(18, 18, 18)",
+      { text: "rgb(18, 18, 18)", accent: "#2448a8", bg: "rgb(255, 255, 255)" },
+    ],
+    [
+      "makes light text near-black over a gradient section on a white page",
+      "background-color: rgb(255, 255, 255)",
+      { text: "rgb(18, 18, 18)", accent: "#2448a8", bg: "rgb(255, 255, 255)" },
+      "background-image: linear-gradient(#123, #456); color: rgba(240, 240, 240, 0.75)",
+    ],
+    [
+      "makes dark text white over a gradient section on a dark page",
+      "background-color: rgb(30, 30, 30)",
+      {
+        text: "rgb(255, 255, 255)",
+        accent: "rgb(255, 255, 255)",
+        bg: "rgb(30, 30, 30)",
+      },
+      "background-image: linear-gradient(#eee, #fff); color: rgb(20, 20, 20)",
+    ],
+    [
+      // Browsers give oklch() or color() backgrounds as written; happy-dom
+      // gives every color as written, so a hex stands in for them here.
+      "keeps a background it can't measure, with the text color as the accent",
+      "background-color: #fffaf0; color: rgb(18, 18, 18)",
+      { text: "rgb(18, 18, 18)", accent: "rgb(18, 18, 18)", bg: "#fffaf0" },
+    ],
+  ])("matches the theme on open: %s", async (_, theme, colors, inner = "") => {
+    document.body.innerHTML = `<div style="${theme}"><div style="${inner}">${block(valid)}</div></div>`;
+    await tick();
+    const root = document.querySelector<HTMLElement>(".fitted-guide")!;
+    root.querySelector<HTMLElement>(".fitted-link")!.click();
+    expect(painted(root)).toEqual(colors);
+  });
+
+  it("adds the uploaded font and the custom CSS once, after Fitted's styles", async () => {
+    document.getElementById("fitted-css")?.remove();
+    const font = "https://cdn.shopify.com/s/files/1/0001/font.woff2?v=1";
+    // As written: inside @scope (.fitted-guide), a selector naming the guide
+    // itself or an ancestor would match nothing.
+    const custom = "body .fitted-guide .fitted-link { letter-spacing: .1em }";
+    const { root, link } = await mount(
+      withSettings({ popup: { font: { fileUrl: font } }, css: custom }),
+    );
+    document.body.insertAdjacentHTML("beforeend", block(valid));
+    await tick();
+    const styles = document.querySelectorAll("#fitted-css");
+    expect(styles).toHaveLength(1);
+    const text = styles[0].textContent!;
+    expect(text.startsWith(css)).toBe(true);
+    expect(text).toContain(
+      `@font-face{font-family:fitted-font;src:url("${font}");font-display:swap}`,
+    );
+    expect(text.endsWith(custom)).toBe(true);
+    expect(text).not.toContain("@scope");
+    expect(root.style.getPropertyValue("--fitted-font")).toBe("");
+    link.click();
+    expect(root.style.getPropertyValue("--fitted-font")).toMatch(
+      /^fitted-font\b/,
+    );
+  });
+
+  it("adds no font or CSS from settings that don't validate", async () => {
+    document.getElementById("fitted-css")?.remove();
+    const { link } = await mount(
+      withSettings({
+        popup: { font: { fileUrl: "https://evil.example/a.woff2" } },
+        css: ".fitted-link { background: url(https://evil.example/t.gif) }",
+      }),
+    );
+    expect(document.getElementById("fitted-css")?.textContent).toBe(css);
+    link.click();
+    expect(
+      link
+        .closest<HTMLElement>(".fitted-guide")!
+        .style.getPropertyValue("--fitted-font"),
+    ).toBe("");
   });
 
   it("sets up blocks the theme adds after the page loaded", async () => {

@@ -4,7 +4,9 @@
 // product form. No dependencies and no React, so the admin preview (#23) can
 // draw with it too. Chart words reach the page only as text nodes and
 // attribute values, never as HTML.
+import { COLOR, FONT_URL, cssProblem } from "./appearance";
 import { convert, type Column, type Table, type Unit } from "./fit-finder";
+import { tableCss } from "./guide-css";
 
 type Sys = "in" | "cm"; // inches and pounds, or centimeters and kilograms
 type Grid = Table & {
@@ -20,6 +22,14 @@ export type Guide = {
   toggle: boolean; // settings.units.toggle: the shopper may switch units
   country: string; // the shopper's, which picks the size system shown first
   locale: string;
+  // The Appearance settings (§7); "" or null where the extension's or the theme's apply.
+  label: string; // the link's text
+  header: string; // the popup's title
+  icon: "ruler" | "none";
+  rtl: boolean;
+  font: string; // an uploaded font's URL
+  colors: { text: string; accent: string; bg: string } | null;
+  css: string; // custom CSS
 };
 
 const isObj = (v: unknown): v is Record<string, unknown> =>
@@ -91,6 +101,10 @@ const texts = (v: unknown) =>
   Object.fromEntries(
     Object.entries(isObj(v) ? v : {}).filter(([, w]) => isStr(w)),
   ) as Record<string, string>;
+// §7's rule for settings words: one line of at most 200 characters.
+const line = (v: unknown) =>
+  isStr(v) && v.trim() && v.length <= 200 && !/[\r\n]/.test(v) ? v : "";
+const isColor = (v: unknown): v is string => isStr(v) && COLOR.test(v);
 // A locale tag Intl accepts, so number formatting can't throw.
 const canonical = (l: unknown) => {
   try {
@@ -119,7 +133,13 @@ export function parseGuide(json: string | null | undefined): Guide | null {
     !isObj(words)
   )
     return null;
-  const units = isObj(d.units) ? d.units : {};
+  const at = (k: string) =>
+    (isObj(d[k]) ? d[k] : {}) as Record<string, unknown>;
+  const [units, popup, colors, text] = ["units", "popup", "colors", "text"].map(
+    at,
+  );
+  const font = isObj(popup.font) ? popup.font.fileUrl : "";
+  const hex = [colors.text, colors.accent, colors.background];
   const country = isStr(d.country) ? d.country : "";
   return {
     unit,
@@ -135,6 +155,16 @@ export function parseGuide(json: string | null | undefined): Guide | null {
     toggle: units.toggle !== false,
     country,
     locale: canonical(d.locale),
+    label: line(text.label),
+    header: line(text.header),
+    icon: at("link").icon === "none" ? "none" : "ruler",
+    rtl: popup.rtl === true,
+    font: isStr(font) && FONT_URL.test(font) ? font : "",
+    colors:
+      colors.mode === "custom" && hex.every(isColor)
+        ? { text: hex[0], accent: hex[1], bg: hex[2] }
+        : null,
+    css: cssProblem(d.css) ? "" : (d.css as string),
   };
 }
 
@@ -172,6 +202,13 @@ const FORM = 'form[action*="/cart/add"]';
  * form has selected; the loader calls it on every open.
  */
 export function render(root: HTMLElement, g: Guide) {
+  // Before the loader's styles, whose merchant CSS must win ties with these.
+  if (!document.getElementById("fitted-table-css")) {
+    const style = h("style", { id: "fitted-table-css" }, tableCss);
+    const loader = document.getElementById("fitted-css");
+    if (loader) loader.before(style);
+    else document.head.append(style);
+  }
   const t = (k: string) =>
     root.dataset[`t${k[0].toUpperCase()}${k.slice(1)}`] ?? "";
   // An extension word with {size} in it, split around the size.
