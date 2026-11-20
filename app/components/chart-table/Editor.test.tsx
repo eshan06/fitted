@@ -1,7 +1,14 @@
 // @vitest-environment happy-dom
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import { createRoutesStub, redirect } from "react-router";
+import {
+  type Location,
+  type NavigateFunction,
+  createRoutesStub,
+  redirect,
+  useLocation,
+  useNavigate,
+} from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type ChartInput, validateChart } from "../../models/chart.server";
 
@@ -67,11 +74,24 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
+// The router's address, and its Back (the browser's, in the admin).
+let at: Location;
+let nav: NavigateFunction;
+function Editing() {
+  at = useLocation();
+  nav = useNavigate();
+  return <ChartEditor />;
+}
+const back = async () => {
+  await act(async () => nav(-1));
+  await settle();
+};
+
 // Renders the editor route with a loader and an action that answer in turn.
 async function open(
   loaded: unknown[],
   answers: ({ status: number; body: unknown } | { redirect: string })[] = [],
-  path = "/app/charts/42",
+  path: string | string[] = "/app/charts/42",
 ) {
   const sent: Record<string, unknown>[] = [];
   const loader = vi.fn(
@@ -80,7 +100,7 @@ async function open(
   const Stub = createRoutesStub([
     {
       path: "/app/charts/:id",
-      Component: ChartEditor,
+      Component: Editing,
       HydrateFallback: () => null,
       loader,
       action: async ({ request }) => {
@@ -97,7 +117,7 @@ async function open(
   ]);
   const div = document.body.appendChild(document.createElement("div"));
   root = createRoot(div);
-  await act(async () => root!.render(<Stub initialEntries={[path]} />));
+  await act(async () => root!.render(<Stub initialEntries={[path].flat()} />));
   await settle();
   return { sent, loader };
 }
@@ -384,6 +404,12 @@ describe("chart editor screen", () => {
     expect(document.querySelector("s-banner")).toBeNull();
   });
 
+  const createJeans = async () => {
+    await type(document.querySelector<HTMLInputElement>("#name")!, "Jeans");
+    await act(async () => button("Add size").click());
+    await type(byLabel("Size 1"), "28");
+    await click("Save");
+  };
   it("starts a new chart blank and creates it by its handle", async () => {
     const { sent } = await open(
       [{ mode: "new", handle: "c-abc" }],
@@ -393,13 +419,82 @@ describe("chart editor screen", () => {
     expect(text()).toContain("New chart");
     expect(text()).toContain("A blank chart, ready for sizes");
     expect(document.querySelector('[aria-label="Chart status"]')).toBeNull();
-    await type(document.querySelector<HTMLInputElement>("#name")!, "Jeans");
-    await act(async () => button("Add size").click());
-    await type(byLabel("Size 1"), "28");
-    await click("Save");
+    await createJeans();
     expect(sent).toEqual([
       { handle: "c-abc", chart: expect.objectContaining({ name: "Jeans" }) },
     ]);
+  });
+
+  const newChart = { mode: "new", handle: "c-abc" };
+  it("hides the save bar, then replaces the address with the new chart's own", async () => {
+    // The admin keeps its address bar while the save bar shows (App Bridge's Navigation API).
+    let hidden = () => {};
+    bridge.saveBar.hide.mockImplementation(
+      () => new Promise<void>((r) => (hidden = r)),
+    );
+    // The create's revalidation mints a fresh handle; then the chart loads.
+    const { loader } = await open(
+      [newChart, { ...newChart, handle: "c-def" }, stored()],
+      [{ status: 200, body: { created: "42" } }],
+      ["/app/charts", "/app/charts/new"],
+    );
+    await createJeans();
+    expect(bridge.saveBar.hide).toHaveBeenCalledWith("chart-save-bar");
+    expect(at.pathname).toBe("/app/charts/new");
+    await act(async () => hidden());
+    await settle();
+    expect(at.pathname).toBe("/app/charts/42");
+    expect(loader).toHaveBeenCalledTimes(3);
+    expect(byLabel("XS, Bust").value).toBe("31–32");
+    // Replaced, so Back skips the blank new chart.
+    await back();
+    expect(text()).toContain("Left for /app/charts");
+  });
+
+  it("opens a new chart saying history missed it", async () => {
+    await open(
+      [newChart, newChart, stored()],
+      [{ status: 200, body: { created: "42", historyMissed: true } }],
+      "/app/charts/new",
+    );
+    await createJeans();
+    expect(at.pathname).toBe("/app/charts/42");
+    expect(missed()).toBe("Saved, but version history missed it");
+  });
+
+  it("still opens a new chart when the save bar won't hide", async () => {
+    bridge.saveBar.hide.mockRejectedValue(new Error("no admin"));
+    await open(
+      [newChart, newChart, stored()],
+      [{ status: 200, body: { created: "42" } }],
+      "/app/charts/new",
+    );
+    await createJeans();
+    await settle();
+    expect(at.pathname).toBe("/app/charts/42");
+    expect(byLabel("XS, Bust").value).toBe("31–32");
+  });
+
+  it("stays where the merchant went when they leave before the save bar hides", async () => {
+    let hidden = () => {};
+    bridge.saveBar.hide.mockImplementation(
+      () => new Promise<void>((r) => (hidden = r)),
+    );
+    await open(
+      [newChart, newChart],
+      [{ status: 200, body: { created: "42" } }],
+      "/app/charts/new",
+    );
+    await createJeans();
+    await act(async () =>
+      [...document.querySelectorAll<HTMLElement>("a")]
+        .find((a) => a.textContent === "Size charts")!
+        .click(),
+    );
+    await settle();
+    await act(async () => hidden());
+    await settle();
+    expect(text()).toContain("Left for /app/charts");
   });
 
   it("links More actions to the chart's version history, except on a new chart", async () => {
@@ -968,6 +1063,23 @@ describe("chart editor screen", () => {
     // Trying again asks again.
     await follow("Size charts");
     expect(bridge.saveBar.leaveConfirmation).toHaveBeenCalledTimes(2);
+  });
+
+  it("asks before Back leaves unsaved edits, and goes back once confirmed", async () => {
+    let confirm = () => {};
+    bridge.saveBar.leaveConfirmation.mockImplementation(
+      () => new Promise<void>((r) => (confirm = r)),
+    );
+    await open([stored()], [], ["/app/charts", "/app/charts/42"]);
+    await type(byLabel("XS, Bust"), "30–32");
+    await back();
+    expect(bridge.saveBar.leaveConfirmation).toHaveBeenCalledTimes(1);
+    expect(at.pathname).toBe("/app/charts/42");
+    expect(byLabel("XS, Bust").value).toBe("30–32");
+    await act(async () => confirm());
+    await settle();
+    expect(bridge.saveBar.hide).toHaveBeenCalledWith("chart-save-bar");
+    expect(text()).toContain("Left for /app/charts");
   });
 
   it("leaves without asking when nothing is unsaved", async () => {

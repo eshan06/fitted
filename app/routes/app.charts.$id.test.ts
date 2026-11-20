@@ -213,12 +213,10 @@ describe("loading the editor", () => {
 describe("creating a chart", () => {
   it("creates by the minted handle and opens the new chart", async () => {
     m.createChart.mockResolvedValue(stored("DRAFT"));
-    const res = (await post("new", {
-      handle: "c-abc123def4",
-      chart: chart(),
-    })) as Response;
-    expect(res.status).toBe(302);
-    expect(res.headers.get("Location")).toBe("/app/charts/42");
+    // The editor opens it once the save bar is hidden (Editor).
+    expect(
+      await result(post("new", { handle: "c-abc123def4", chart: chart() })),
+    ).toEqual({ status: 200, body: { created: "42" } });
     expect(m.createChart).toHaveBeenCalledWith(admin, "c-abc123def4", chart());
     expect(m.recordVersion).toHaveBeenCalledWith(
       SHOP,
@@ -232,20 +230,17 @@ describe("creating a chart", () => {
   it("opens the new chart saying history missed it when the version write fails", async () => {
     m.createChart.mockResolvedValue(stored("DRAFT"));
     m.recordVersion.mockResolvedValue(false);
-    const res = (await post("new", {
-      handle: "c-abc123def4",
-      chart: chart(),
-    })) as Response;
-    expect(res.headers.get("Location")).toBe("/app/charts/42?history=missed");
+    expect(
+      await result(post("new", { handle: "c-abc123def4", chart: chart() })),
+    ).toEqual({ status: 200, body: { created: "42", historyMissed: true } });
   });
 
   it("sends a replayed create to the same chart", async () => {
     // createChart answers a repeat of its handle with the chart it made (chart.test.ts).
     m.createChart.mockResolvedValue(stored("DRAFT"));
     const body = { handle: "c-abc123def4", chart: chart() };
-    const first = (await post("new", body)) as Response;
-    const again = (await post("new", body)) as Response;
-    expect(again.headers.get("Location")).toBe(first.headers.get("Location"));
+    const first = await result(post("new", body));
+    expect(await result(post("new", body))).toEqual(first);
     expect(m.createChart.mock.calls[1]).toEqual(m.createChart.mock.calls[0]);
   });
 

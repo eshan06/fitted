@@ -2,7 +2,13 @@
 // units and the note, saved through App Bridge's save bar. Later steps add the
 // table tools, tabs, live preview and version history around this.
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { Link, useBlocker, useFetcher, useRevalidator } from "react-router";
+import {
+  Link,
+  useBlocker,
+  useFetcher,
+  useNavigate,
+  useRevalidator,
+} from "react-router";
 import { SaveBar, useAppBridge } from "@shopify/app-bridge-react";
 import type { FieldErrors, Template } from "../../models/chart.server";
 import { ChartTable } from "./ChartTable";
@@ -29,6 +35,8 @@ type Answer = {
   updatedAt?: string;
   /** The edits saved, the status didn't, and history missed the save. */
   historyMissed?: true;
+  /** A new chart's id, once it's created. */
+  created?: string;
 };
 
 export function Editor(props: {
@@ -48,6 +56,7 @@ export function Editor(props: {
   const { handle, invalid } = props;
   const fetcher = useFetcher<Answer>();
   const revalidator = useRevalidator();
+  const navigate = useNavigate();
   const shopify = useAppBridge();
   const [draft, setDraft] = useState(props.initial);
   // The editor's own check, or the action's answer until it's dismissed. A
@@ -89,7 +98,9 @@ export function Editor(props: {
   const listed = model.problems(draft, errors);
   const t = draft.content.tables[0];
   const set = (patch: Partial<model.Draft>) => setDraft({ ...draft, ...patch });
-  const dirty = saving || JSON.stringify(draft) !== JSON.stringify(initial);
+  const created = answer?.created;
+  const dirty =
+    !created && (saving || JSON.stringify(draft) !== JSON.stringify(initial));
   // The save bar holds the admin's links but not the app's own (App Bridge's
   // Save Bar API), so a link out of the editor asks the admin first: on the
   // dev store it shakes the save bar and stays until Save or Discard. A save's
@@ -118,6 +129,25 @@ export function Editor(props: {
       live = false;
     };
   }, [blocker, shopify]);
+
+  // While the save bar shows, the admin's address bar ignores the app's route
+  // (App Bridge's Navigation API), so a new chart's address waits for it to
+  // hide. Replaced, so Back skips the blank chart.
+  const missed = answer?.historyMissed;
+  useEffect(() => {
+    if (!created) return;
+    let live = true;
+    const open = () =>
+      live &&
+      navigate(`/app/charts/${created}${missed ? "?history=missed" : ""}`, {
+        replace: true,
+      });
+    // A failed hide still opens the chart; only the address may lag.
+    shopify.saveBar.hide(SAVE_BAR).then(open, open);
+    return () => {
+      live = false;
+    };
+  }, [created, missed, navigate, shopify]);
 
   const save = (d = draft) => {
     setDraft(d);
