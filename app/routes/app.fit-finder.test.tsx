@@ -104,6 +104,7 @@ function fakeStore(initial: Settings | null = null) {
     charts: [chart] as (typeof chart | Node)[],
     products: {} as Record<string, number>, // by chart id
     countReads: 0,
+    countsDown: false, // only the product count fails
   };
   const graphql = vi.fn(
     async (query: string, opts?: { variables?: Record<string, unknown> }) => {
@@ -153,6 +154,8 @@ function fakeStore(initial: Settings | null = null) {
       }
       if (query.includes("query ChartProductCounts")) {
         store.countReads++;
+        if (store.countsDown)
+          return json({ errors: [{ message: "Throttled" }] });
         const q = Object.entries(opts!.variables as Record<string, string>);
         const count = (v: string) => store.products[v.split('"')[1]] ?? 0;
         // Shopify counts up to 10,000.
@@ -241,6 +244,7 @@ beforeEach(() => {
 });
 let root: ReturnType<typeof createRoot> | undefined;
 afterEach(() => {
+  vi.useRealTimers();
   act(() => root?.unmount());
   root = undefined;
   document.body.innerHTML = "";
@@ -253,7 +257,10 @@ const request = (body?: unknown) =>
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 const load = async () => {
-  const r = await loader({ request: request() } as LoaderFunctionArgs);
+  const r = (await loader({ request: request() } as LoaderFunctionArgs)) as {
+    fitFinder: Promise<unknown>;
+    storeUrl: string;
+  };
   return { ...r, fitFinder: await r.fitFinder };
 };
 const post = async (body: unknown) => {
@@ -964,7 +971,7 @@ describe("a chart's ease and stretch", () => {
     await open();
     expect(rules()).toEqual([
       "Match the shopper's bust measurement to the Women's tops chart.",
-      "Relaxed fit moves one size up. Snug moves one size down, never below XS.",
+      "Between two sizes, pick the larger one, or the smaller for a snug fit. Otherwise, relaxed fit moves one size up and snug fit one size down, never past XS or XL.",
       "No measurement? Start from the size they usually wear.",
     ]);
     expect(text()).toContain(
@@ -1050,21 +1057,134 @@ describe("a chart's ease and stretch", () => {
     expect(banners()).toEqual([UPGRADE]);
   });
 
-  it("says the settings didn't load when Pro's product count fails", async () => {
+  // Regression (#142): a chart on no products read "the 0 products".
+  it("says on Pro when no product shows the picked chart, linking Display rules", async () => {
     m.getPlan.mockResolvedValue({ plan: "pro", checkFailed: false });
-    const graphql = store.admin.graphql.getMockImplementation()!;
-    store.admin.graphql.mockImplementation(async (query, opts) =>
-      query.includes("ChartProductCounts")
-        ? json({ errors: [{ message: "Throttled" }] })
-        : graphql(query, opts),
+    store.products = { [BOTTOMS]: 1 };
+    await open();
+    const live = document.querySelector(".live")!;
+    expect(live.textContent).toBe(
+      "Not showingNo products show Women's tops yet, so no shopper sees these questions.Open Display rules",
     );
-    vi.useFakeTimers();
-    const got = load();
-    await vi.advanceTimersByTimeAsync(2_000); // its retries
+    expect(live.getAttribute("role")).toBe("status");
+    expect(live.querySelector("s-button")!.getAttribute("href")).toBe(
+      "/app/rules",
+    );
+    await type(picked(), BOTTOMS);
+    expect(document.querySelector(".live")!.textContent).toContain(
+      "on the 1 product with Women's bottoms.",
+    );
+  });
+
+  // Regression (#142): a failed count replaced the screen with its load error.
+  const countFails = async () => {
+    // Only setTimeout, its retries' clock: React schedules on setImmediate.
+    vi.useFakeTimers({ toFake: ["setTimeout"], shouldAdvanceTime: true });
+    m.getPlan.mockResolvedValue({ plan: "pro", checkFailed: false });
+    store.products = { [TOPS]: 148 };
+    store.countsDown = true;
+  };
+  const retries = () => act(() => vi.advanceTimersByTimeAsync(2_000));
+  it("keeps the screen when Pro's product count fails, and Try again counts once more", async () => {
+    await countFails();
+    await open();
+    await retries();
+    expect(banners()).toEqual([]);
+    const line = () => document.querySelector(".live")!;
+    expect(line().textContent).toBe(
+      "LiveFind my size shows on the products with Women's tops. Fitted couldn't count them just now.Try again",
+    );
+    expect(line().getAttribute("role")).toBe("alert");
+    await type(noFit(), "Mine");
+
+    const reads = store.countReads;
+    await click("Try again");
+    await retries();
+    expect(line().textContent).toContain("Fitted couldn't count them");
+    expect(store.countReads).toBe(reads + 3); // its own retries
+    expect(store.writes).toBe(0);
+
+    store.countsDown = false;
+    await click("Try again");
+    expect(line().textContent).toBe(
+      "LiveFind my size shows on the 148 products with Women's tops. Changes go live when you save.",
+    );
+    expect(line().getAttribute("role")).toBe("status");
+    expect(noFit().value).toBe("Mine");
+    expect(saveBar()).not.toBeNull();
     vi.useRealTimers();
-    expect((await got).fitFinder).toEqual({
-      error: { code: "load", message: expect.any(String) },
+  });
+
+  it("drops the count's error when Try again finds nothing to count", async () => {
+    await countFails();
+    await open();
+    await retries();
+    m.getPlan.mockResolvedValue({ plan: "standard", checkFailed: false });
+    await click("Try again");
+    expect(document.querySelector(".live")).toBeNull();
+  });
+
+  it("loads the screen with the count's own error, logging why", async () => {
+    await countFails();
+    const got = load();
+    await vi.advanceTimersByTimeAsync(2_000);
+    vi.useRealTimers();
+    expect((await got).fitFinder).toMatchObject({
+      plan: "pro",
+      counts: "error",
     });
+    expect(JSON.parse(logs[0])).toMatchObject({
+      level: "error",
+      shop: SHOP,
+      route: "app.fit-finder",
+    });
+  });
+
+  const recount = () =>
+    loader({
+      request: new Request("https://fitted.test/app/fit-finder?count"),
+    } as LoaderFunctionArgs);
+  it("counts once more on its own, reading nothing else", async () => {
+    m.getPlan.mockResolvedValue({ plan: "pro", checkFailed: false });
+    store.products = { [TOPS]: 148 };
+    expect(await recount()).toEqual({
+      counts: {
+        [TOPS]: { count: 148, atLeast: false },
+        [BOTTOMS]: { count: 0, atLeast: false },
+      },
+    });
+    const queries = store.admin.graphql.mock.calls.map(([q]) => q);
+    expect(queries.some((q) => q.includes("FittedSettings"))).toBe(false);
+  });
+
+  it("counts once more only on Pro", async () => {
+    expect(await recount()).toEqual({ counts: null });
+    expect(store.countReads).toBe(0);
+  });
+
+  it("refuses a recount without a session before reading anything", async () => {
+    m.authenticate.mockRejectedValue(new Response(null, { status: 401 }));
+    await expect(recount()).rejects.toBeInstanceOf(Response);
+    expect(store.admin.graphql).not.toHaveBeenCalled();
+  });
+
+  // §15: a failed Shopify call answers 502 with { error }.
+  it("answers 502 to a failed recount, logging why", async () => {
+    await countFails();
+    for (const down of ["count", "list"]) {
+      store.chartsDown = down === "list";
+      const got = recount();
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(await got).toMatchObject({
+        init: { status: 502 },
+        data: {
+          counts: "error",
+          error: { code: "count", message: expect.any(String) },
+        },
+      });
+    }
+    vi.useRealTimers();
+    expect(logs).toHaveLength(2);
   });
 });
 

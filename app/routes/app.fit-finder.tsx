@@ -101,28 +101,45 @@ const fitChart = ({ id, updatedAt, name, chart }: StoredChart): FitChart[] => {
   ];
 };
 
+const listCharts = async (admin: Admin) => {
+  const all: StoredChart[] = [];
+  for await (const page of chartPages(admin)) all.push(...page);
+  return all;
+};
+
+// Only Pro's live line names how many products show the picked chart, and
+// only a chart with saved questions is live. A failed count is that line's
+// own error, so the rest of the screen stays and can be saved.
+async function liveCounts(
+  admin: Admin,
+  shop: string,
+  plan: string,
+  charts: FitChart[],
+) {
+  const live = charts.filter((c) => c.fit.questions.length);
+  if (plan !== "pro" || !live.length) return null;
+  try {
+    return await countChartProducts(
+      admin,
+      live.map((c) => c.id),
+    );
+  } catch (err) {
+    if (!(err instanceof AdminApiError)) throw err;
+    log(shop, err);
+    return "error" as const;
+  }
+}
+
 async function load(admin: Admin, shop: string) {
   try {
-    const all: StoredChart[] = [];
-    const [settings, { plan }, plansUrl] = await Promise.all([
+    const [settings, { plan }, plansUrl, all] = await Promise.all([
       getSettings(admin),
       getPlan(shop),
       pricingPlansUrl(admin, shop),
-      (async () => {
-        for await (const page of chartPages(admin)) all.push(...page);
-      })(),
+      listCharts(admin),
     ]);
     const charts = all.flatMap(fitChart);
-    // Only Pro's live line names how many products show the picked chart,
-    // and only a chart with saved questions is live.
-    const live = charts.filter((c) => c.fit.questions.length);
-    const counts =
-      plan === "pro" && live.length
-        ? await countChartProducts(
-            admin,
-            live.map((c) => c.id),
-          )
-        : null;
+    const counts = await liveCounts(admin, shop, plan, charts);
     const hasCharts = all.length > 0;
     return { ...settings, plan, plansUrl, hasCharts, charts, counts };
   } catch (err) {
@@ -136,9 +153,33 @@ async function load(admin: Admin, shop: string) {
 }
 type Ok = Exclude<Awaited<ReturnType<typeof load>>, { error: unknown }>;
 
+// The live line's Try again: the count alone, so the screen keeps its edits.
+// A failed count answers 502 (§15).
+async function recount(admin: Admin, shop: string) {
+  let counts: Ok["counts"] = "error";
+  try {
+    const [{ plan }, all] = await Promise.all([
+      getPlan(shop),
+      listCharts(admin),
+    ]);
+    counts = await liveCounts(admin, shop, plan, all.flatMap(fitChart));
+  } catch (err) {
+    if (!(err instanceof AdminApiError)) throw err;
+    log(shop, err);
+  }
+  if (counts !== "error") return { counts };
+  const error = { code: "count", message: "Fitted couldn't count them." };
+  return data({ counts, error }, { status: 502 });
+}
+type Recount = { counts: Ok["counts"] };
+type Screen = { fitFinder: ReturnType<typeof load>; storeUrl: string };
+
 // Streamed, so the screen shows its loading state while Shopify answers.
+// `?count` answers the live line's Try again.
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
+  if (new URL(request.url).searchParams.has("count"))
+    return recount(admin, session.shop);
   return {
     fitFinder: load(admin, session.shop),
     storeUrl: `https://${session.shop}`,
@@ -263,7 +304,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 // The FitFinder board's states: loading, couldn't load, no charts yet, set up.
 export default function FitFinder() {
-  const { fitFinder, storeUrl } = useLoaderData<typeof loader>();
+  const { fitFinder, storeUrl } = useLoaderData() as Screen;
   return (
     <Suspense fallback={<Page body={<Loading />} />}>
       <Await resolve={fitFinder} errorElement={<Page body={<LoadError />} />}>
@@ -528,7 +569,11 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
       words: { ...fitWords(picked.words, false), ...own.words },
     };
   const n = own?.questions.length ?? 0;
-  const count = chart && loaded.counts?.[chart.id];
+  // The live line's Try again counts once more, keeping the screen.
+  const counter = useFetcher<Recount>();
+  const counts = counter.data ? counter.data.counts : loaded.counts;
+  const count = chart && counts !== "error" ? counts?.[chart.id] : undefined;
+  const countFailed = counts === "error" && !!picked?.fit.questions.length;
   const putFit = (patch: Partial<Draft["fits"][string]>) =>
     setDraft((d) => ({
       ...d,
@@ -675,6 +720,31 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
                 Upgrade to Pro
               </s-button>
             </Banner>
+          ) : countFailed ? (
+            <div role="alert" className="live">
+              <span className="badge ok">Live</span>
+              <span>
+                Find my size shows on the products with {chart!.name}.{" "}
+                <span className="err">
+                  Fitted couldn&apos;t count them just now.
+                </span>
+              </span>
+              <s-button
+                onClick={() => counter.load("/app/fit-finder?count")}
+                loading={counter.state !== "idle" || undefined}
+              >
+                Try again
+              </s-button>
+            </div>
+          ) : count?.count === 0 ? (
+            <div role="status" className="live">
+              <span className="badge warn">Not showing</span>
+              <span>
+                No products show {chart!.name} yet, so no shopper sees these
+                questions.
+              </span>
+              <s-button href="/app/rules">Open Display rules</s-button>
+            </div>
           ) : (
             chart &&
             count && (
