@@ -115,6 +115,7 @@ afterEach(() => {
   document.body.innerHTML = "";
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+  vi.useRealTimers();
 });
 
 const request = (body?: unknown) =>
@@ -741,7 +742,6 @@ describe("uploading a font", () => {
     fakeFiles({ statuses: ["PROCESSING"] });
     expect((await run()).status).toBe(502);
     expect(JSON.parse(logs.at(-1)!).msg).toBe("The font took too long");
-    vi.useRealTimers();
   });
 
   it("knows each kind of font by its first bytes", () => {
