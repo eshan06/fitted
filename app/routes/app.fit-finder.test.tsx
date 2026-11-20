@@ -398,6 +398,7 @@ describe("loading and saving the fit finder", () => {
     expect(r.status).toBe(502);
     expect(r.body).toEqual({
       error: { code: "shopify", message: expect.any(String) },
+      saved: { settings: false, charts: [] },
     });
     expect(JSON.stringify(r.body)).not.toContain("socket");
     expect(JSON.parse(logs[0])).toMatchObject({
@@ -706,10 +707,14 @@ describe("a chart's ease and stretch", () => {
         { id: BOTTOMS, updatedAt: AT, ease: {}, stretch: "none" },
       ],
     };
-    expect(await post(body)).toMatchObject({
-      status: 502,
-      body: { error: { code: "shopify" } },
-    });
+    // What holds now, so the screen can say what saved; a retry that fails
+    // again still counts what the first try saved.
+    const held = { settings: true, charts: [TOPS] };
+    for (let i = 0; i < 2; i++)
+      expect(await post(body)).toMatchObject({
+        status: 502,
+        body: { error: { code: "shopify" }, saved: held },
+      });
     store.chartWritesMax = Infinity;
     expect(await post(body)).toEqual({ status: 200, body: { ok: true } });
     expect(store.chartWrites).toBe(2);
@@ -765,6 +770,7 @@ describe("a chart's ease and stretch", () => {
       status: 502,
       body: { error: { code: "shopify" } },
     });
+    expect(r.body).toMatchObject({ saved: { settings: true, charts: [] } });
     expect(JSON.stringify(r.body)).not.toContain("socket");
     expect(JSON.parse(logs[0])).toMatchObject({
       shop: SHOP,
@@ -850,9 +856,83 @@ describe("a chart's ease and stretch", () => {
     expect(document.activeElement).toBe(ease());
   });
 
+  const PARTIAL = "Some of your changes weren't saved";
+  const partial = () =>
+    [...document.querySelectorAll("s-banner")]
+      .find((b) => b.getAttribute("heading") === PARTIAL)
+      ?.querySelectorAll("s-paragraph");
+  const lines = () => [...(partial() ?? [])].map((p) => p.textContent);
+
   it("keeps the edits when a chart write fails after the settings, and Try saving again finishes", async () => {
     await open();
     await type(noFit(), "Message us.");
+    await type(ease(), "+1 in at bust");
+    store.chartWritesDown = true;
+    await click("Save");
+    expect(banners()).toEqual([PARTIAL, UPGRADE]);
+    expect(lines()).toEqual([
+      "Saved: your fit finder settings.",
+      "Not saved: the ease and stretch for Women's tops. Your edits are still here.",
+    ]);
+    expect(partial()![0].querySelector("strong")!.textContent).toBe("Saved:");
+    expect(ease().value).toBe("+1 in at bust");
+    expect(store.value!.text.en.noFit).toBe("Message us.");
+
+    // A retry that fails before it reads anything still counts what saved.
+    store.down = true;
+    await click("Try saving again");
+    expect(banners()).toEqual([PARTIAL, UPGRADE]);
+    expect(lines()[0]).toBe("Saved: your fit finder settings.");
+
+    store.down = store.chartWritesDown = false;
+    await click("Try saving again");
+    expect(tops()).toMatchObject({ ease: { bust: 1 } });
+    expect(store.writes).toBe(1);
+    expect(banners()).toEqual([UPGRADE]);
+  });
+
+  it("names only the charts when the settings didn't change", async () => {
+    await open();
+    await type(ease(), "+1 in at bust");
+    await type(picked(), BOTTOMS);
+    await type(labelled("Stretch"), "high");
+    store.chartWritesMax = 1;
+    await click("Save");
+    expect(lines()).toEqual([
+      "Saved: the ease and stretch for Women's tops.",
+      "Not saved: the ease and stretch for Women's bottoms. Your edits are still here.",
+    ]);
+  });
+
+  it("names what saved and what didn't, as the canvas draws it, until the retry finishes", async () => {
+    await open();
+    await type(noFit(), "Message us.");
+    await type(ease(), "+1 in at bust");
+    await type(picked(), BOTTOMS);
+    await type(labelled("Stretch"), "high");
+    store.chartWritesMax = 1; // Women's tops lands, Women's bottoms doesn't
+    const drawn = [
+      "Saved: your fit finder settings, and the ease and stretch for Women's tops.",
+      "Not saved: the ease and stretch for Women's bottoms. Your edits are still here.",
+    ];
+    await click("Save");
+    expect(banners()).toEqual([PARTIAL, UPGRADE]);
+    expect(lines()).toEqual(drawn);
+
+    await click("Try saving again"); // fails again: the same lines
+    expect(lines()).toEqual(drawn);
+    expect(saveBar()).not.toBeNull();
+
+    store.chartWritesMax = Infinity;
+    await click("Try saving again");
+    expect(banners()).toEqual([UPGRADE]);
+    expect(fitOf(store.charts[2] as Node)).toMatchObject({ stretch: "high" });
+    expect(store.writes).toBe(1);
+    expect(store.chartWrites).toBe(2);
+  });
+
+  it("says only the plain words when nothing saved", async () => {
+    await open();
     await type(ease(), "+1 in at bust");
     store.chartWritesDown = true;
     await click("Save");
@@ -860,14 +940,6 @@ describe("a chart's ease and stretch", () => {
       "Your fit finder changes weren't saved",
       UPGRADE,
     ]);
-    expect(ease().value).toBe("+1 in at bust");
-    expect(store.value!.text.en.noFit).toBe("Message us.");
-
-    store.chartWritesDown = false;
-    await click("Try saving again");
-    expect(tops()).toMatchObject({ ease: { bust: 1 } });
-    expect(store.writes).toBe(1);
-    expect(banners()).toEqual([UPGRADE]);
   });
 
   it("leaves the chart parts out when no chart has questions", async () => {

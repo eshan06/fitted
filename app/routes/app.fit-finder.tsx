@@ -149,10 +149,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 // "When no size fits", and the questions, their words, ease and stretch of
 // each chart it changed. Everything else stays as stored. A part already holding what was sent (a
 // retry after a partial save) is skipped, so a retry never reads as stale.
+// A failed save answers with the parts that hold what was sent, written now or
+// before, so the screen names what saved (§15).
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const body = await request.json().catch(() => null);
   let wrote = false;
+  const saved = { settings: false, charts: [] as string[] };
+  const failed = (err: Error) => {
+    log(session.shop, err);
+    return data({ ...refusal("shopify"), saved }, { status: 502 });
+  };
   try {
     // Only the digest and the edits come from the browser (§3).
     const loaded = await getSettings(admin);
@@ -163,6 +170,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       fitFinder: e.fitFinder,
       text: { ...s.text, [l]: { ...s.text[l], noFit: e.noFit } },
     };
+    const same = JSON.stringify(input) === JSON.stringify(s);
+    saved.settings = same;
     // Every chart is checked before anything is written.
     const writes: (() => Promise<unknown>)[] = [];
     const sent = Array.isArray(body?.charts) ? body.charts.slice(0, 200) : [];
@@ -196,18 +205,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           key(f?.ease ?? {}),
           key(fitWords(w)),
         ]);
-      if (c.fit && sig(content) === sig(c)) continue;
+      if (c.fit && sig(content) === sig(c)) {
+        saved.charts.push(id);
+        continue;
+      }
       // The chart's own conflict check (§5), here and again at its write.
       // Before validating, so a chart changed elsewhere asks for a reload.
       if (now !== updatedAt)
         throw new ChartConflictError("This chart changed since you opened it");
       const next = validateChart({ ...chart, content });
-      writes.push(() => updateChart(admin, id, next, updatedAt));
+      writes.push(async () => {
+        await updateChart(admin, id, next, updatedAt);
+        saved.charts.push(id);
+      });
     }
     const digest = typeof body?.digest === "string" ? body.digest : null;
-    if (JSON.stringify(input) !== JSON.stringify(s)) {
+    if (!same) {
       await saveSettings(admin, { ...loaded, digest }, input);
-      wrote = true;
+      saved.settings = wrote = true;
     }
     for (const write of writes) {
       await write();
@@ -215,13 +230,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
     return { ok: true as const };
   } catch (err) {
-    // ponytail: a failure after a write landed shows the drawn save-failed
-    // banner, whose "nothing changed" overclaims; Try saving again finishes
-    // the save. #137 draws a banner naming what saved.
-    if (wrote && err instanceof Error) {
-      log(session.shop, err);
-      return data(refusal("shopify"), { status: 502 });
-    }
+    // After a write landed, any failure is a partial save: Try saving again
+    // finishes it, skipping what landed.
+    if (wrote && err instanceof Error) return failed(err);
     if (
       err instanceof SettingsValidationError ||
       err instanceof ChartValidationError
@@ -246,8 +257,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       err instanceof SettingsReadWriteError || err instanceof AdminApiError
     ))
       throw err;
-    log(session.shop, err);
-    return data(refusal("shopify"), { status: 502 });
+    return failed(err);
   }
 };
 
@@ -374,7 +384,10 @@ type Answer = {
   ok?: true;
   fieldErrors?: FieldErrors;
   error?: { code: string; message: string };
+  saved?: Parts;
 };
+// The parts of a save: the settings, and each chart's fit by id.
+type Parts = { settings: boolean; charts: string[] };
 type Draft = {
   fitFinder: Settings["fitFinder"];
   noFit: string;
@@ -402,6 +415,17 @@ const STRETCH_NAMES: Record<keyof typeof STRETCH, string> = {
 const MARKS: Record<string, [string, string]> = {
   ease: ["Ease", "doesn't start with a number"],
   noFit: ["When no size fits", "is empty"],
+};
+// The half-saved banner's words for some parts, as the canvas puts them.
+const LIST = new Intl.ListFormat("en", { type: "conjunction" });
+const partWords = (parts: string[], charts: FitChart[]) => {
+  const names = charts.filter((c) => parts.includes(c.id)).map((c) => c.name);
+  return [
+    parts.includes("settings") && "your fit finder settings",
+    names.length > 0 && `the ease and stretch for ${LIST.format(names)}`,
+  ]
+    .filter(Boolean)
+    .join(", and ");
 };
 const errorLine = (id: string, words: string) => (
   <p id={`${id}-err`} className="help err">
@@ -436,12 +460,23 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
   const [draft, setDraft] = useState(initial);
   const [local, setLocal] = useState<Answer | null>(null);
   const [dismissed, setDismissed] = useState<Answer>();
+  // The parts the last save sent ("settings" or a chart id) with what was
+  // sent, and those an earlier try saved, so a retry that fails sooner still
+  // counts them.
+  const [sent, setSent] = useState<Record<string, string>>({});
+  const [landed, setLanded] = useState<Record<string, string>>({});
   const saving = fetcher.state !== "idle";
   const answer = saving ? undefined : fetcher.data;
   const notice = local ?? (answer === dismissed ? undefined : answer);
   const errors = notice?.fieldErrors ?? {};
   const marked = Object.keys(errors);
   const code = notice?.error?.code;
+  const held = notice?.saved;
+  const holds = (k: string) =>
+    (held && (k === "settings" ? held.settings : held.charts.includes(k))) ||
+    landed[k] === sent[k];
+  const done = Object.keys(sent).filter(holds);
+  const left = Object.keys(sent).filter((k) => !holds(k));
 
   const save = () => {
     const fieldErrors: FieldErrors = {};
@@ -463,6 +498,15 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
     if (Object.keys(fieldErrors).length) return setLocal({ fieldErrors });
     setLocal(null);
     const edits = { fitFinder: draft.fitFinder, noFit: draft.noFit };
+    const was = { fitFinder: initial.fitFinder, noFit: initial.noFit };
+    const key = JSON.stringify;
+    const parts = Object.fromEntries(charts.map((c) => [c.id, key(c)]));
+    if (key(edits) !== key(was)) parts.settings = key(edits);
+    setLanded((l) => ({
+      ...l,
+      ...Object.fromEntries(done.map((k) => [k, sent[k]])),
+    }));
+    setSent(parts);
     fetcher.submit({ digest: loaded.digest, edits, charts } as never, {
       method: "post",
       encType: "application/json",
@@ -532,6 +576,17 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
         <Banner copy={COPY.conflict}>
           {button("Reload latest", () => revalidator.revalidate())}
           {button("Cancel", dismiss)}
+        </Banner>
+      ) : code && held && done.length > 0 && left.length > 0 ? (
+        <Banner copy={["Some of your changes weren't saved"]}>
+          <s-paragraph>
+            <strong>Saved:</strong> {partWords(done, loaded.charts)}.
+          </s-paragraph>
+          <s-paragraph>
+            <strong>Not saved:</strong> {partWords(left, loaded.charts)}. Your
+            edits are still here.
+          </s-paragraph>
+          {button("Try saving again", save)}
         </Banner>
       ) : (
         code && (
