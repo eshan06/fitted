@@ -134,8 +134,7 @@ async function upload(request: Request, admin: Admin, shop: string) {
   }
 }
 
-// An image the editor uploaded and then let go before a save (Replace,
-// Remove, Discard, leaving): deleted from Files, but only with the `sig` its
+// An upload the editor let go before a save: deleted only with the `sig` its
 // upload answered, so no other file is ever touched.
 async function discard(request: Request, admin: Admin, shop: string) {
   const form = await request.formData().catch(() => null);

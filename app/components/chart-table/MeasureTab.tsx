@@ -81,8 +81,7 @@ export function useMeasureImage(
 
   // ponytail: an image over 20 MB shows "didn't upload" until its own state is drawn.
   const pick = async (f?: File) => {
-    // One upload at a time: a second would leave the first in Files.
-    if (!f || sending) return;
+    if (!f || sending) return; // A second upload would orphan the first.
     setFile(f);
     setView(null);
     const head = new Uint8Array(
