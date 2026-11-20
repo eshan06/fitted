@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createdSummary,
+  getVersion,
   recordVersion,
+  shopTimeZone,
+  versionTime,
   staffName,
   summarize,
 } from "./chart-history.server";
@@ -154,5 +157,48 @@ describe("recording a version", () => {
       detail: "Error",
     });
     expect(logs.join()).not.toContain("Priya");
+  });
+});
+
+describe("finding the version a browser picked", () => {
+  it("looks it up within the shop's chart, and only by an int id", async () => {
+    db.chartVersion.findFirst.mockReset().mockResolvedValue({ id: 7 });
+    await getVersion("a.myshopify.com", "gid://x/1", 7);
+    await getVersion("a.myshopify.com", "gid://x/1", "7");
+    expect(db.chartVersion.findFirst.mock.calls).toEqual([
+      [{ where: { shop: "a.myshopify.com", chartId: "gid://x/1", id: 7 } }],
+      [{ where: { shop: "a.myshopify.com", chartId: "gid://x/1", id: 7 } }],
+    ]);
+    for (const id of [
+      undefined,
+      null,
+      "",
+      "7; drop",
+      -1,
+      1.5,
+      "2147483648",
+      {},
+    ])
+      expect(getVersion("a.myshopify.com", "gid://x/1", id)).toBeNull();
+    expect(db.chartVersion.findFirst).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("a version's time", () => {
+  it("asks Shopify for the store's time zone", async () => {
+    const graphql = vi.fn(async () =>
+      Response.json({ data: { shop: { ianaTimezone: "Europe/Paris" } } }),
+    );
+    expect(await shopTimeZone({ graphql } as never)).toBe("Europe/Paris");
+  });
+
+  it("reads in the store's time zone", () => {
+    const at = "2026-11-14T23:42:00Z";
+    expect(versionTime(at, "America/Los_Angeles")).toBe(
+      "Nov 14, 2026 · 3:42 PM",
+    );
+    expect(versionTime(new Date(at), "Asia/Kolkata")).toBe(
+      "Nov 15, 2026 · 5:12 AM",
+    );
   });
 });

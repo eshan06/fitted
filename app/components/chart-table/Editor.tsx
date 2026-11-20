@@ -273,24 +273,35 @@ export function Editor(props: {
             </s-paragraph>
           </s-banner>
         ))}
-        <div>
-          <Link to="/app/charts">Size charts</Link>
-          <div className="row">
-            <h1>{handle ? "New chart" : initial.name}</h1>
-            {!handle && (
-              <select
-                className="field auto"
-                aria-label="Chart status"
-                value={draft.status}
-                onChange={(e) =>
-                  set({ status: e.target.value as model.Draft["status"] })
-                }
-              >
-                <option value="ACTIVE">Published</option>
-                <option value="DRAFT">Draft</option>
-              </select>
-            )}
+        <div className="row">
+          <div>
+            <Link to="/app/charts">Size charts</Link>
+            <div className="row">
+              <h1>{handle ? "New chart" : initial.name}</h1>
+              {!handle && (
+                <select
+                  className="field auto"
+                  aria-label="Chart status"
+                  value={draft.status}
+                  onChange={(e) =>
+                    set({ status: e.target.value as model.Draft["status"] })
+                  }
+                >
+                  <option value="ACTIVE">Published</option>
+                  <option value="DRAFT">Draft</option>
+                </select>
+              )}
+            </div>
           </div>
+          {/* Copy link and Duplicate join it with #127. */}
+          {!handle && (
+            <details className="more">
+              <summary className="btn2">More actions</summary>
+              <div className="menu">
+                <Link to="history">Version history</Link>
+              </div>
+            </details>
+          )}
         </div>
         <section className="card" aria-label="Chart content">
           <div className="row">

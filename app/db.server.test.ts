@@ -8,6 +8,7 @@ import { resetCachedPlan } from "./models/billing.server";
 import { checkJobs } from "./models/rules.server";
 import {
   VERSION_LIMIT,
+  getVersion,
   listVersions,
   recordVersion,
 } from "./models/chart-history.server";
@@ -384,6 +385,22 @@ describe.runIf(hasDatabase)("the app database on Postgres", () => {
       await prisma.chartVersion.count({ where: { shop, chartId: id } }),
     ).toBe(VERSION_LIMIT);
     expect(versions[1].createdAt <= versions[0].createdAt).toBe(true);
+  });
+
+  it("finds a picked version only within its own shop's chart", async () => {
+    const shop = newShop();
+    const otherShop = newShop();
+    const id = "gid://shopify/Metaobject/4";
+    const chart = { name: "Chart" } as unknown as ChartInput;
+    await recordVersion(shop, id, chart, "Priya N.");
+    const [mine] = await listVersions(shop, id);
+    expect(await getVersion(shop, id, `${mine.id}`)).toMatchObject({
+      id: mine.id,
+    });
+    expect(await getVersion(otherShop, id, mine.id)).toBeNull();
+    expect(
+      await getVersion(shop, "gid://shopify/Metaobject/5", mine.id),
+    ).toBeNull();
   });
 
   it("summarizes a save against the version stored before it", async () => {

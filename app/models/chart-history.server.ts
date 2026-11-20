@@ -4,6 +4,7 @@
 import { isDeepStrictEqual } from "node:util";
 import type { Session } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
+import { type Admin, adminGraphql } from "./admin.server";
 import type { ChartInput } from "./chart.server";
 import { TEMPLATES } from "../components/chart-table/model";
 
@@ -154,3 +155,33 @@ export const listVersions = (shop: string, chartId: string) =>
     orderBy: { id: "desc" },
     take: VERSION_LIMIT,
   });
+
+/**
+ * The version a browser picked, looked up within the shop's chart. Ids are
+ * Postgres ints, so anything that isn't one finds nothing.
+ */
+export function getVersion(shop: string, chartId: string, id: unknown) {
+  const n = typeof id === "number" || typeof id === "string" ? `${id}` : "";
+  if (!/^\d{1,10}$/.test(n) || Number(n) > 2 ** 31 - 1) return null;
+  return db.chartVersion.findFirst({ where: { shop, chartId, id: Number(n) } });
+}
+
+/** Versions show their time in the store's time zone. */
+export async function shopTimeZone(admin: Admin) {
+  const data = await adminGraphql<{ shop: { ianaTimezone: string } }>(
+    admin,
+    `#graphql
+    query FittedShopTimeZone { shop { ianaTimezone } }`,
+    {},
+    { retry: true },
+  );
+  return data.shop.ianaTimezone;
+}
+
+/** "Nov 14, 2026 · 3:42 PM" */
+export function versionTime(at: Date | string, timeZone: string) {
+  const d = new Date(at);
+  const f = (o: Intl.DateTimeFormatOptions) =>
+    new Intl.DateTimeFormat("en-US", { timeZone, ...o }).format(d);
+  return `${f({ month: "short", day: "numeric", year: "numeric" })} · ${f({ hour: "numeric", minute: "2-digit" })}`;
+}
