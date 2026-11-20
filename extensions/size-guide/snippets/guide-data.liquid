@@ -14,6 +14,7 @@
     "units": {{ s.units | json }},
     "link": {{ s.link | json }},
     "popup": {{ s.popup | json }},
+    "placement": {{ s.placement | json }},
     "colors": {{ s.colors | json }},
     "css": {{ s.css | json }},
     "text": {{ s.text[request.locale.iso_code] | default: s.text[primary.iso_code] | json }},
