@@ -6,6 +6,13 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import prisma from "./db.server";
 import { resetCachedPlan } from "./models/billing.server";
 import { checkJobs } from "./models/rules.server";
+import {
+  VERSION_LIMIT,
+  getVersion,
+  listVersions,
+  recordVersion,
+} from "./models/chart-history.server";
+import type { ChartInput } from "./models/chart.server";
 
 // billing.server.ts imports it for plan checks, which nothing here runs. A
 // resolve the job checks requeue finds no store: the offline session is
@@ -55,6 +62,7 @@ describe.runIf(hasDatabase)("the app database on Postgres", () => {
     await prisma.session.deleteMany({ where: { shop: { in: shops } } });
     await prisma.shop.deleteMany({ where: { shop: { in: shops } } });
     await prisma.job.deleteMany({ where: { shop: { in: shops } } });
+    await prisma.chartVersion.deleteMany({ where: { shop: { in: shops } } });
     await prisma.$disconnect();
   });
 
@@ -302,5 +310,76 @@ describe.runIf(hasDatabase)("the app database on Postgres", () => {
       where: { shop: { in: [shop, otherShop] } },
     });
     expect(left.map((j) => j.id).sort()).toEqual(kept.sort());
+  });
+
+  it("deletes a shop's expired staff sessions when it stores a new one", async () => {
+    Object.assign(process.env, {
+      SHOPIFY_API_KEY: "test-api-key",
+      SHOPIFY_API_SECRET: "test-api-secret",
+      SHOPIFY_APP_URL: "https://fitted.test",
+    });
+    const { SessionStorage } =
+      await vi.importActual<typeof import("./shopify.server")>(
+        "./shopify.server",
+      );
+    const fitted = new SessionStorage(prisma);
+    const shop = newShop();
+    const otherShop = newShop();
+    const online = (forShop: string, user: number, expires: Date) =>
+      new Session({
+        id: `${forShop}_${user}`,
+        shop: forShop,
+        state: "state",
+        isOnline: true,
+        accessToken: "test-online-token",
+        expires,
+      });
+    const past = new Date(Date.now() - 60000);
+    const later = new Date(Date.now() + 3600000);
+    await storage.storeSession(offlineSession(shop));
+    await storage.storeSession(online(shop, 1, past));
+    await storage.storeSession(online(shop, 2, later));
+    await storage.storeSession(online(otherShop, 1, past));
+
+    await fitted.storeSession(online(shop, 3, later));
+
+    expect(
+      (await storage.findSessionsByShop(shop)).map((s) => s.id).sort(),
+    ).toEqual([`${shop}_2`, `${shop}_3`, `offline_${shop}`]);
+    expect(await storage.loadSession(`${otherShop}_1`)).toBeDefined();
+  });
+
+  it("keeps each chart's last versions, newest first, within its shop", async () => {
+    const shop = newShop();
+    const otherShop = newShop();
+    const id = "gid://shopify/Metaobject/1";
+    const chart = (n: number) =>
+      ({ name: `Chart ${n}` }) as unknown as ChartInput;
+    expect(await recordVersion(otherShop, id, chart(0), "Jordan K.")).toBe(
+      true,
+    );
+    for (let n = 1; n <= VERSION_LIMIT + 2; n++)
+      await recordVersion(shop, id, chart(n), "Priya N.", `Save ${n}`);
+    // The same chart again, from a retried save, adds nothing.
+    await recordVersion(shop, id, chart(VERSION_LIMIT + 2), "Priya N.");
+
+    const versions = await listVersions(shop, id);
+    expect(versions).toHaveLength(VERSION_LIMIT);
+    expect(versions[0]).toMatchObject({
+      by: "Priya N.",
+      summary: `Save ${VERSION_LIMIT + 2}`,
+      snapshot: chart(VERSION_LIMIT + 2),
+    });
+    expect(versions[VERSION_LIMIT - 1].summary).toBe("Save 3");
+    expect(await listVersions(otherShop, id)).toHaveLength(1);
+    // An id sent by a browser is looked up within the shop's chart.
+    const [theirs] = await listVersions(otherShop, id);
+    expect(await getVersion(shop, id, theirs.id)).toBeNull();
+    expect(
+      await getVersion(otherShop, "gid://shopify/Metaobject/2", theirs.id),
+    ).toBeNull();
+    expect(await getVersion(otherShop, id, theirs.id)).toMatchObject({
+      summary: "First saved version",
+    });
   });
 });

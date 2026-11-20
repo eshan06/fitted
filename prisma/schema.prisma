@@ -54,3 +54,16 @@ model Job {
 
   @@index([shop, kind, createdAt])
 }
+
+// Version history (ARCHITECTURE §5, §14): the last 30 saves of each chart.
+model ChartVersion {
+  id        String   @id @default(uuid())
+  shop      String
+  chartId   String
+  createdAt DateTime @default(now())
+  by        String // "Priya N.", or where it came from ("Imported from Kiwi")
+  summary   String
+  snapshot  Json // the saved ChartInput
+
+  @@index([shop, chartId, createdAt])
+}

@@ -20,6 +20,7 @@ const m = vi.hoisted(() => ({
   canReadProducts: vi.fn(),
   pricingPlansUrl: vi.fn(),
   startResolve: vi.fn(),
+  recordVersion: vi.fn(),
 }));
 vi.mock("../shopify.server", () => ({
   authenticate: { admin: m.authenticate },
@@ -30,6 +31,10 @@ vi.mock("../models/admin.server", async (orig) => ({
   pricingPlansUrl: m.pricingPlansUrl,
 }));
 vi.mock("../models/rules.server", () => ({ startResolve: m.startResolve }));
+vi.mock("../models/chart-history.server", async (orig) => ({
+  ...(await orig<typeof import("../models/chart-history.server")>()),
+  recordVersion: m.recordVersion,
+}));
 vi.mock("../models/billing.server", async (orig) => ({
   ...(await orig<typeof import("../models/billing.server")>()),
   getPlan: m.getPlan,
@@ -120,9 +125,15 @@ beforeEach(() => {
   vi.spyOn(console, "log").mockImplementation((line) => logs.push(line));
   m.authenticate.mockResolvedValue({
     admin,
-    session: { shop: SHOP },
+    session: {
+      shop: SHOP,
+      onlineAccessInfo: {
+        associated_user: { first_name: "Priya", last_name: "Nair" },
+      },
+    },
     redirect,
   });
+  m.recordVersion.mockResolvedValue(true);
   m.getPlan.mockResolvedValue({ plan: "free", checkFailed: false });
   m.countActiveCharts.mockResolvedValue(2);
   m.pricingPlansUrl.mockResolvedValue(PLANS);
@@ -209,6 +220,23 @@ describe("creating a chart", () => {
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe("/app/charts/42");
     expect(m.createChart).toHaveBeenCalledWith(admin, "c-abc123def4", chart());
+    expect(m.recordVersion).toHaveBeenCalledWith(
+      SHOP,
+      ID,
+      chart(),
+      "Priya N.",
+      "Created from the Tops template",
+    );
+  });
+
+  it("opens the new chart saying history missed it when the version write fails", async () => {
+    m.createChart.mockResolvedValue(stored("DRAFT"));
+    m.recordVersion.mockResolvedValue(false);
+    const res = (await post("new", {
+      handle: "c-abc123def4",
+      chart: chart(),
+    })) as Response;
+    expect(res.headers.get("Location")).toBe("/app/charts/42?history=missed");
   });
 
   it("sends a replayed create to the same chart", async () => {
@@ -248,6 +276,23 @@ describe("saving a chart", () => {
     );
     expect(m.publishChart).not.toHaveBeenCalled();
     expect(m.unpublishChart).not.toHaveBeenCalled();
+    // After the chart saved, as the staff member who saved it.
+    expect(m.recordVersion).toHaveBeenCalledWith(SHOP, ID, chart(), "Priya N.");
+    expect(m.recordVersion.mock.invocationCallOrder[0]).toBeGreaterThan(
+      m.updateChart.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("says the chart saved but history missed it when the version write fails", async () => {
+    m.recordVersion.mockResolvedValue(false);
+    expect(await save("DRAFT")).toEqual({ ok: true, historyMissed: true });
+    expect(await save("ACTIVE")).toEqual({ ok: true, historyMissed: true });
+  });
+
+  it("records no version when Shopify refuses the save", async () => {
+    m.updateChart.mockRejectedValue(new ChartConflictError("changed"));
+    expect((await result(save("DRAFT"))).status).toBe(409);
+    expect(m.recordVersion).not.toHaveBeenCalled();
   });
 
   it("publishes after saving when the plan allows another Active chart", async () => {

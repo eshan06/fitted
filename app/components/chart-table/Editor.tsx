@@ -25,6 +25,8 @@ type Answer = {
     plansUrl?: string;
   };
   updatedAt?: string;
+  /** The chart saved, but its version history didn't record it (§5). */
+  historyMissed?: true;
 };
 
 export function Editor(props: {
@@ -35,6 +37,8 @@ export function Editor(props: {
   handle?: string;
   /** Set when the stored chart fails the checks: the server's findings. */
   invalid?: FieldErrors;
+  /** The create saved the chart but not its first version. */
+  historyMissed?: boolean;
 }) {
   const { handle, invalid } = props;
   const fetcher = useFetcher<Answer>();
@@ -192,6 +196,17 @@ export function Editor(props: {
         </button>
       </SaveBar>
       <div className="editor">
+        {(answer?.historyMissed || (props.historyMissed && !answer?.ok)) && (
+          <s-banner
+            tone="warning"
+            heading="Saved, but version history missed it"
+          >
+            <s-paragraph>
+              The chart on your store is up to date. This save won&apos;t show
+              in version history.
+            </s-paragraph>
+          </s-banner>
+        )}
         {notice?.fieldErrors && (
           <s-banner
             tone="critical"
@@ -236,24 +251,36 @@ export function Editor(props: {
             {actions}
           </s-banner>
         )}
-        <div>
-          <Link to="/app/charts">Size charts</Link>
-          <div className="row">
-            <h1>{handle ? "New chart" : initial.name}</h1>
-            {!handle && (
-              <select
-                className="field auto"
-                aria-label="Chart status"
-                value={draft.status}
-                onChange={(e) =>
-                  set({ status: e.target.value as model.Draft["status"] })
-                }
-              >
-                <option value="ACTIVE">Published</option>
-                <option value="DRAFT">Draft</option>
-              </select>
-            )}
+        <div className="row">
+          <div>
+            <Link to="/app/charts">Size charts</Link>
+            <div className="row">
+              <h1>{handle ? "New chart" : initial.name}</h1>
+              {!handle && (
+                <select
+                  className="field auto"
+                  aria-label="Chart status"
+                  value={draft.status}
+                  onChange={(e) =>
+                    set({ status: e.target.value as model.Draft["status"] })
+                  }
+                >
+                  <option value="ACTIVE">Published</option>
+                  <option value="DRAFT">Draft</option>
+                </select>
+              )}
+            </div>
           </div>
+          {!handle && (
+            <details className="more">
+              <summary className="btn2">More actions</summary>
+              <div className="menu" role="menu">
+                <Link to="history" role="menuitem">
+                  Version history
+                </Link>
+              </div>
+            </details>
+          )}
         </div>
         <section className="card" aria-label="Chart content">
           <div className="row">
