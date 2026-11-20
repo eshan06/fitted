@@ -55,7 +55,8 @@ export function ChartTable(props: {
           b: Math.max(range.from, range.to),
         }
       : undefined;
-  const merges = model.merges(draft);
+  // A merge of sizes draws unmerged, so each size stays one to name or remove.
+  const merges = model.merges(draft).filter((m) => m.c0 > 0);
   const mergedAt = (ri: number, ci: number) =>
     merges.find((m) => m.r0 === ri && m.c0 === ci);
   // Cells under a merge, other than its top-left one, aren't drawn.

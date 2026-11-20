@@ -1198,7 +1198,8 @@ describe("table tools", () => {
     await act(async () => byLabel("Column 2 name").focus());
     expect(status()).toContain("Bust column selected");
     // Wrap text follows the selected column.
-    expect(toolbar("Wrap text").disabled).toBe(false);
+    await act(async () => toolbar("Wrap text").click());
+    expect(toolbar("Wrap text").getAttribute("aria-pressed")).toBe("true");
     const unit = document.querySelector<HTMLSelectElement>(
       '[role="status"] select',
     )!;
@@ -1215,11 +1216,28 @@ describe("table tools", () => {
     const c = (sent[0].chart as ChartInput).content;
     expect(c.roundTo).toBe(1);
     expect(c.unit).toBe("in");
+    expect(c.tables[0].wrap).toEqual(["bust"]);
     expect(c.tables[0].columns[1]).toEqual({
       id: "bust",
       kind: "measure",
       unit: "cm",
       convert: false,
     });
+  });
+
+  it("draws a stored merge across columns, and keeps every size reachable under a size merge", async () => {
+    const s = withFit();
+    const t = s.stored.chart.content.tables[0];
+    t.merges = [
+      { row: "xs", col: "bust", rows: 1, cols: 2 },
+      { row: "s", col: "size", rows: 2, cols: 1 },
+    ];
+    await open([s]);
+    expect(byLabel("XS, Bust").closest("td")!.colSpan).toBe(2);
+    expect(document.querySelector('[aria-label="XS, Fit"]')).toBeNull();
+    // Sizes under a size merge stay drawn, so each can be named or removed.
+    expect(byLabel("Size 3").value).toBe("M");
+    await act(async () => byLabel("Size 3").focus());
+    expect(status()).toContain("Size M selected");
   });
 });

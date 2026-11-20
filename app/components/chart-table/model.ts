@@ -630,8 +630,9 @@ export function merge(d: Draft, s: Cells): Draft {
   });
   const top = `${rows[0].id}.${s.col}`;
   const cells = strip(d.cells, (k) => keys.has(k));
-  const words = strip(d.content.words, (k) =>
-    keys.has(k.slice(t.id.length + 1)),
+  const words = strip(
+    d.content.words,
+    (k) => k.startsWith(`${t.id}.`) && keys.has(k.slice(t.id.length + 1)),
   );
   if (kept && t.columns.find((c) => c.id === s.col)?.kind === "measure")
     cells[top] = kept;
