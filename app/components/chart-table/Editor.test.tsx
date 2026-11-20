@@ -385,17 +385,6 @@ describe("chart editor screen", () => {
     ]);
   });
 
-  it("links More actions to the chart's version history, except on a new chart", async () => {
-    await open([stored()]);
-    const link = [...document.querySelectorAll("a")].find(
-      (a) => a.textContent === "Version history",
-    );
-    expect(link?.getAttribute("href")).toBe("/app/charts/42/history");
-    act(() => root?.unmount());
-    await open([{ mode: "new", handle: "c-abc" }], [], "/app/charts/new");
-    expect(text()).not.toContain("More actions");
-  });
-
   it("says when a save landed but version history missed it", async () => {
     await open(
       [stored()],

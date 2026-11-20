@@ -4,7 +4,6 @@
 import { isDeepStrictEqual } from "node:util";
 import type { Session } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
-import { type Admin, adminGraphql } from "./admin.server";
 import type { ChartInput } from "./chart.server";
 import { TEMPLATES } from "../components/chart-table/model";
 
@@ -156,27 +155,3 @@ export const getVersion = (shop: string, chartId: string, id: unknown) =>
   typeof id === "string"
     ? db.chartVersion.findFirst({ where: { shop, chartId, id } })
     : null;
-
-/** Deleting a chart deletes its history. */
-export const deleteVersions = (shop: string, chartId: string) =>
-  db.chartVersion.deleteMany({ where: { shop, chartId } });
-
-/** Versions show their time in the store's time zone. */
-export async function shopTimeZone(admin: Admin) {
-  const data = await adminGraphql<{ shop: { ianaTimezone: string } }>(
-    admin,
-    `#graphql
-    query FittedShopTimeZone { shop { ianaTimezone } }`,
-    {},
-    { retry: true },
-  );
-  return data.shop.ianaTimezone;
-}
-
-/** "Nov 14, 2026 · 3:42 PM" */
-export function versionTime(at: Date | string, timeZone: string) {
-  const d = new Date(at);
-  const f = (o: Intl.DateTimeFormatOptions) =>
-    new Intl.DateTimeFormat("en-US", { timeZone, ...o }).format(d);
-  return `${f({ month: "short", day: "numeric", year: "numeric" })} · ${f({ hour: "numeric", minute: "2-digit" })}`;
-}

@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  createdSummary,
-  staffName,
-  summarize,
-  versionTime,
-} from "./chart-history.server";
+import { createdSummary, staffName, summarize } from "./chart-history.server";
 import type { ChartInput } from "./chart.server";
 
 const chart = (): ChartInput => ({
@@ -111,15 +106,5 @@ describe("who saved a version", () => {
     expect(as("Priya", "")).toBe("Priya");
     expect(as(undefined, "Nair")).toBe("Staff");
     expect(staffName({})).toBe("Staff");
-  });
-});
-
-describe("a version's time", () => {
-  it("shows in the store's time zone", () => {
-    const at = "2026-11-14T23:42:00Z";
-    expect(versionTime(at, "America/Los_Angeles")).toBe(
-      "Nov 14, 2026 · 3:42 PM",
-    );
-    expect(versionTime(at, "Asia/Kolkata")).toBe("Nov 15, 2026 · 5:12 AM");
   });
 });

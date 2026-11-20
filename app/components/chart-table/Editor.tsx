@@ -251,36 +251,24 @@ export function Editor(props: {
             {actions}
           </s-banner>
         )}
-        <div className="row">
-          <div>
-            <Link to="/app/charts">Size charts</Link>
-            <div className="row">
-              <h1>{handle ? "New chart" : initial.name}</h1>
-              {!handle && (
-                <select
-                  className="field auto"
-                  aria-label="Chart status"
-                  value={draft.status}
-                  onChange={(e) =>
-                    set({ status: e.target.value as model.Draft["status"] })
-                  }
-                >
-                  <option value="ACTIVE">Published</option>
-                  <option value="DRAFT">Draft</option>
-                </select>
-              )}
-            </div>
+        <div>
+          <Link to="/app/charts">Size charts</Link>
+          <div className="row">
+            <h1>{handle ? "New chart" : initial.name}</h1>
+            {!handle && (
+              <select
+                className="field auto"
+                aria-label="Chart status"
+                value={draft.status}
+                onChange={(e) =>
+                  set({ status: e.target.value as model.Draft["status"] })
+                }
+              >
+                <option value="ACTIVE">Published</option>
+                <option value="DRAFT">Draft</option>
+              </select>
+            )}
           </div>
-          {!handle && (
-            <details className="more">
-              <summary className="btn2">More actions</summary>
-              <div className="menu" role="menu">
-                <Link to="history" role="menuitem">
-                  Version history
-                </Link>
-              </div>
-            </details>
-          )}
         </div>
         <section className="card" aria-label="Chart content">
           <div className="row">
