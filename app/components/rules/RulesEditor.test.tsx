@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import { createRoutesStub } from "react-router";
+import { createRoutesStub, data } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Rules } from "../../models/rules.server";
 
@@ -81,6 +81,8 @@ afterEach(() => {
 });
 
 // Renders the route with a loader and an action that answer in turn.
+// A poll whose read of the job failed.
+const LOST = Symbol("lost");
 // The screen's polls get `polls` in turn, then the last one again; its
 // matches card gets each chart's entry in `previews`, else none.
 async function open(
@@ -91,9 +93,13 @@ async function open(
 ) {
   const sent: Record<string, unknown>[] = [];
   let n = 0;
-  const poll = vi.fn(() => ({
-    job: polls.length > 1 ? polls.shift() : polls[0],
-  }));
+  const poll = vi.fn(() => {
+    const p = polls.length > 1 ? polls.shift() : polls[0];
+    // As the route answers it.
+    return p === LOST
+      ? data({ mode: "job", job: null, failed: true }, { status: 503 })
+      : { job: p };
+  });
   const loader = vi.fn(({ request }: { request: Request }) => {
     const q = new URL(request.url).searchParams;
     if (q.has("preview"))
@@ -533,6 +539,69 @@ describe("display rules screen", () => {
     expect(poll).toHaveBeenCalledTimes(3);
     await click(buttons("Try again")[0]);
     expect(sent[1]).toEqual({ intent: "apply" });
+  });
+
+  // Regression (#115): a failed poll replaced the screen with an error page.
+  it("keeps applying through a failed poll, says it didn't finish after three, and tries again", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { sent, poll } = await open(
+      [edit(ranked(), "d1", null, { job: job("done", 5) })],
+      [{ status: 200, body: { ok: true, after: 5 } }],
+      [LOST, job("running", 9), LOST, LOST, LOST, job("done", 12)],
+    );
+    await act(async () =>
+      byLabel("Move Women's tops").dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
+      ),
+    );
+    await click(buttons("Save")[0]);
+    for (let i = 0; i < 4; i++)
+      await act(async () => vi.advanceTimersByTime(3000));
+    await settle();
+    // One miss between good reads stays quiet.
+    expect(poll).toHaveBeenCalledTimes(4);
+    expect(headings()).toEqual(["Applying your rules to 340 products"]);
+    for (let i = 0; i < 2; i++)
+      await act(async () => vi.advanceTimersByTime(3000));
+    await settle();
+    expect(poll).toHaveBeenCalledTimes(5);
+    expect(headings()).toEqual(["Your rules didn't finish applying"]);
+    expect(text()).toContain(
+      "They're saved, but Fitted couldn't check its progress, so some products still show their old chart. Fitted tries again within a few minutes.",
+    );
+    expect(document.querySelector("h2#rule")).not.toBeNull();
+    await act(async () => vi.advanceTimersByTime(6000));
+    expect(poll).toHaveBeenCalledTimes(5);
+    await click(buttons("Try again")[0]);
+    expect(sent[1]).toEqual({ intent: "apply" });
+    await act(async () => vi.advanceTimersByTime(3000));
+    await settle();
+    expect(poll).toHaveBeenCalledTimes(6);
+    expect(headings()).toEqual([]);
+  });
+
+  it("polls when the load couldn't read the job, and a save after it didn't finish polls again", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { poll } = await open(
+      [edit(ranked(), "d1", null, { unread: true })],
+      [{ status: 200, body: { ok: true, after: 5 } }],
+      [LOST, LOST, job("running", 9)],
+    );
+    expect(headings()).toEqual([]);
+    for (let i = 0; i < 2; i++)
+      await act(async () => vi.advanceTimersByTime(3000));
+    await settle();
+    expect(poll).toHaveBeenCalledTimes(2);
+    expect(headings()).toEqual(["Your rules didn't finish applying"]);
+    await act(async () =>
+      byLabel("Move Women's tops").dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
+      ),
+    );
+    await click(buttons("Save")[0]);
+    await act(async () => vi.advanceTimersByTime(3000));
+    await settle();
+    expect(headings()).toEqual(["Applying your rules to 340 products"]);
   });
 
   it("shows a merchant's running resolve as applying, but not the daily check's", async () => {
