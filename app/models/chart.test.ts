@@ -530,6 +530,7 @@ describe("validateChart", () => {
 // operation the way the dev store did: json fields stored as JSON strings,
 // `values` replacing the whole record, missing records as RECORD_NOT_FOUND.
 const CHART = "app--448658636801--chart";
+const CDN = "https://cdn.shopify.com/s/files/1/files/m";
 type Rec = {
   id: string;
   handle: string;
@@ -556,7 +557,12 @@ function fakeShop() {
       content: {
         jsonValue: r.values.content ? JSON.parse(r.values.content) : null,
       },
-      measureImage: text("measure_image"),
+      measureImage: {
+        ...text("measure_image"),
+        reference: r.values.measure_image
+          ? { image: { url: `${CDN}${r.values.measure_image.slice(-2)}.png` } }
+          : null,
+      },
       importNote: text("import_note"),
     };
   };
@@ -911,6 +917,13 @@ describe("chart reads and writes", () => {
       created.updatedAt,
     );
     expect(saved.chart?.measureImage).toBe(img);
+    // The editor shows it from Shopify's address, never through Fitted.
+    expect(saved.measureImageUrl).toBe(`${CDN}12.png`);
+    expect((await getChart(shop.admin, created.id)).measureImageUrl).toBe(
+      `${CDN}12.png`,
+    );
+    const plain = await createChart(shop.admin, "c-plainchart", chart());
+    expect(plain.measureImageUrl).toBeUndefined();
   });
 
   it("publishes and unpublishes", async () => {
