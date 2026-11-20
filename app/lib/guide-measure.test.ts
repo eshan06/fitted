@@ -168,6 +168,10 @@ describe("How to measure", () => {
       li.getAttribute("value"),
     );
     expect(numbers).toEqual(["2", "4"]);
+    // With no drawing to match, the list numbers itself, with no gaps.
+    const bare = open(data({ measureImage: null }, { steps: ["x", "b", "h"] }));
+    expect(steps(bare)).toEqual([plain[0], plain[2]]);
+    expect(bare.querySelector(".fitted-steps li[value]")).toBeNull();
     // A name or a text alone is still a step.
     const half = open(data({ strings: { "m.b.text": "", "m.w.name": "" } }));
     expect(steps(half)).toEqual([

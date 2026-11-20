@@ -552,9 +552,9 @@ export function render(root: HTMLElement, g: Guide) {
       isObj(measure) && list(measure.steps, 20) && measure.steps.every(isId)
         ? (measure.steps as string[])
         : [];
-    // The drawing comes only from Shopify's CDN: the store's own
-    // /cdn/shop/files/, where Liquid's image_url points, or cdn.shopify.com,
-    // as the admin has it.
+    // The drawing comes only from Shopify's CDN: /cdn/shop/files/ on the
+    // domain serving the page, where Liquid's image_url points, or
+    // cdn.shopify.com, as the admin has it.
     const image = g.raw.measureImage;
     let src = "";
     try {
@@ -569,8 +569,8 @@ export function render(root: HTMLElement, g: Guide) {
       // Not a URL: no drawing.
     }
     // "Bust. Line 1 on the drawing. Measure around ...", then "Line 2." and
-    // so on. A step left blank is left out, and the rest keep their numbers,
-    // so each still matches its line.
+    // so on. A step left blank is left out. With a drawing, the rest keep
+    // their numbers, so each still matches its line.
     const filled = steps.flatMap((s, i) => {
       const [name, text] = [word(`m.${s}.name`), word(`m.${s}.text`)];
       return name || text ? [{ n: `${i + 1}`, name, text }] : [];
@@ -581,7 +581,7 @@ export function render(root: HTMLElement, g: Guide) {
       const how = [line, text].filter(Boolean).join(" ");
       return h(
         "li",
-        { value: n },
+        { value: src ? n : undefined },
         name && h("strong", {}, `${name}.`),
         name && how && " ",
         how,
