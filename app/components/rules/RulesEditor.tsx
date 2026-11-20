@@ -100,7 +100,7 @@ export function RulesEditor(props: {
   const shopify = useAppBridge();
   const fetcher = useFetcher<Answer>();
   const apply = useFetcher<Answer>();
-  const poll = useFetcher<{ job: Job }>();
+  const poll = useFetcher<{ job: Job; failed?: true }>();
   const preview = useFetcher<{ preview: Preview }>();
   const revalidator = useRevalidator();
   const [redo, setRedo] = useState(false); // Set up rules again
@@ -139,10 +139,18 @@ export function RulesEditor(props: {
   const job =
     polled && polled.at >= (loaded.job?.at ?? 0) ? polled : loaded.job;
   const asked = [fetcher.data, apply.data].filter((a) => a?.ok);
+  // Polls that couldn't read the job retry quietly; the third in a row stops
+  // them and says the rules didn't finish. A save or Try again starts over.
+  const [misses, setMisses] = useState({ data: poll.data, n: 0 });
+  if (poll.data !== misses.data)
+    setMisses({ data: poll.data, n: poll.data?.failed ? misses.n + 1 : 0 });
+  const lost = misses.n >= 3;
+  const retry = () => setMisses({ data: poll.data, n: 0 });
   // ponytail: a resolve that never records its job polls until the page closes.
   const applying =
-    (job?.status === "running" && job.merchant) ||
-    asked.some((a) => (job?.at ?? 0) <= a!.after!);
+    !lost &&
+    ((job?.status === "running" && job.merchant) ||
+      asked.some((a) => (job?.at ?? 0) <= a!.after!));
   const { load } = poll;
   useEffect(() => {
     if (!applying) return;
@@ -204,11 +212,13 @@ export function RulesEditor(props: {
     const bad = Object.keys(fieldErrors).length > 0;
     setLocal(bad ? { fieldErrors, limits } : null);
     const body = { rules, digest: base.digest } as never;
-    if (!bad)
+    if (!bad) {
+      retry();
       return fetcher.submit(body, {
         method: "post",
         encType: "application/json",
       });
+    }
     focus(Object.keys(fieldErrors)[0]);
   };
   // Opens a marked field's chart and moves to the field.
@@ -509,19 +519,20 @@ export function RulesEditor(props: {
             ]}
           />
         ) : (
-          job?.status === "failed" && (
+          (lost || job?.status === "failed") && (
             <Banner
               copy={[
                 "Your rules didn't finish applying",
-                `They're saved, but ${model.reason(job.error)}, so some products still show their old chart. Fitted tries again within a few minutes.`,
+                `They're saved, but ${lost ? "Fitted couldn't check its progress" : model.reason(job!.error)}, so some products still show their old chart. Fitted tries again within a few minutes.`,
               ]}
             >
-              {button("Try again", () =>
+              {button("Try again", () => {
+                retry();
                 apply.submit({ intent: "apply" } as never, {
                   method: "post",
                   encType: "application/json",
-                }),
-              )}
+                });
+              })}
             </Banner>
           )
         )}

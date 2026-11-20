@@ -46,12 +46,32 @@ const optional = <T,>(shop: string, p: Promise<T>) =>
     return null;
   });
 
+// The resolve's progress is app-only state (§13): a failed read is logged and
+// the screen carries on without it.
+const readJob = (shop: string) =>
+  latestResolve(shop).catch((err: unknown) => {
+    console.log(
+      JSON.stringify({
+        level: "error",
+        msg: "Couldn't read the resolve job",
+        shop,
+        route: "app.rules",
+        detail: String(err),
+      }),
+    );
+    return "failed" as const;
+  });
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const { shop } = session;
-  // The screen polls this while a resolve runs.
-  if (new URL(request.url).searchParams.has("job"))
-    return { mode: "job" as const, job: await latestResolve(shop) };
+  // The screen polls this while a resolve runs, and retries a failed read.
+  if (new URL(request.url).searchParams.has("job")) {
+    const job = await readJob(shop);
+    return job === "failed"
+      ? data({ mode: "job" as const, job: null, failed: true }, { status: 503 })
+      : { mode: "job" as const, job };
+  }
   // The matches card of the chart on screen.
   const id = new URL(request.url).searchParams.get("preview");
   if (id !== null)
@@ -67,8 +87,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     for await (const page of chartPages(admin))
       charts.push(...page.map((c) => ({ id: c.id, name: c.name })));
     if (!charts.length) return { mode: "empty" as const };
-    const [job, products, counts, { plan }] = await Promise.all([
-      latestResolve(shop),
+    const [read, products, counts, { plan }] = await Promise.all([
+      readJob(shop),
       // Staff without Products access can't count them.
       optional(shop, countProducts(admin)),
       optional(
@@ -87,7 +107,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const base = {
       mode: "edit" as const,
       charts,
-      job,
+      job: read === "failed" ? null : read,
       products,
       counts,
       free,
@@ -131,8 +151,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       checkFailed = got.checkFailed;
       await saveRules(admin, body?.rules, body?.digest, got.plan);
     }
-    // The screen shows the rules applying until a job newer than this one ends.
-    const after = (await latestResolve(shop))?.at ?? 0;
+    // The screen shows the rules applying until a job newer than this one ends;
+    // unread, any job created from now on is newer (Prisma stamps `createdAt`
+    // with the app's clock).
+    const read = await readJob(shop);
+    const after = read === "failed" ? Date.now() - 1 : (read?.at ?? 0);
     // Every product follows, `auto: false` charts included (§6).
     void startResolve(shop, true);
     return { ok: true as const, after };

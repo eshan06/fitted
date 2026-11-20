@@ -163,6 +163,23 @@ describe("loading display rules", () => {
     expect(m.chartPages).not.toHaveBeenCalled();
   });
 
+  // Regression (#115): a failed read of the resolve job showed an error page.
+  it("keeps the screen when the resolve job can't be read: the load without progress, the poll says so", async () => {
+    m.latestResolve.mockRejectedValue(new Error("Can't reach database"));
+    expect(await load()).toMatchObject({ mode: "edit", job: null });
+    expect(await result(load("?job"))).toEqual({
+      status: 503,
+      body: { mode: "job", job: null, failed: true },
+    });
+    expect(JSON.parse(logs[0])).toEqual({
+      level: "error",
+      msg: "Couldn't read the resolve job",
+      shop: SHOP,
+      route: "app.rules",
+      detail: "Error: Can't reach database",
+    });
+  });
+
   it("links Free to the plans page by the app's real handle, and loads without a count or link Shopify won't give", async () => {
     m.getPlan.mockResolvedValue({ plan: "free", checkFailed: false });
     expect(await load()).toMatchObject({ free: true, plansUrl: PLANS });
@@ -326,6 +343,21 @@ describe("saving display rules", () => {
       body: answer("product_access"),
     });
     expect(m.startResolve).toHaveBeenCalledOnce();
+  });
+
+  // Regression (#115): a failed read after the save showed an error page and skipped the resolve.
+  it("still applies the saved rules when the resolve job can't be read", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(5000);
+    m.latestResolve.mockRejectedValue(new Error("Can't reach database"));
+    expect(await result(post({ rules: rules(), digest: "d1" }))).toEqual({
+      status: 200,
+      body: { ok: true, after: 4999 },
+    });
+    expect(m.saveRules).toHaveBeenCalledOnce();
+    expect(m.startResolve).toHaveBeenCalledExactlyOnceWith(SHOP, true);
+    expect(JSON.parse(logs[0])).toMatchObject({
+      msg: "Couldn't read the resolve job",
+    });
   });
 
   it("refuses staff without Products access before saving anything", async () => {
