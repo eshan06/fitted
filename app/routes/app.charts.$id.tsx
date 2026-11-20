@@ -118,9 +118,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         by,
         createdSummary(input),
       );
-      return redirect(
-        `/app/charts/${created.id.split("/").pop()}${ok ? "" : "?history=missed"}`,
-      );
+      // Not a redirect: the editor hides the save bar first, or the admin's
+      // address bar stays on /app/charts/new (Editor).
+      return {
+        created: created.id.split("/").pop()!,
+        ...(ok ? {} : { historyMissed: true as const }),
+      };
     }
     const { status } = body;
     if (status !== "ACTIVE" && status !== "DRAFT")
