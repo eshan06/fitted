@@ -394,12 +394,14 @@ describe("storedDraft", () => {
     expect(storedDraft(r, "DRAFT", {})).toBeNull();
   });
 
-  it.each(["content.v", "content.roundTo", "content.tables.1.merges"])(
-    "gives up when a finding (%s) is outside what the editor shows",
-    (key) => {
-      expect(storedDraft(raw(), "DRAFT", { [key]: "Wrong" })).toBeNull();
-    },
-  );
+  it.each([
+    "content.v",
+    "content.roundTo",
+    "content.tables.1.merges",
+    "content.words.t2.title",
+  ])("gives up when a finding (%s) is outside what the editor shows", (key) => {
+    expect(storedDraft(raw(), "DRAFT", { [key]: "Wrong" })).toBeNull();
+  });
 
   it("opens a later table's bad values and dropped numbers, as the first table's", () => {
     const r = raw();
@@ -407,7 +409,7 @@ describe("storedDraft", () => {
     r.content.tables[1].rows[0].cells.sz = [6];
     const d = storedDraft(r, "DRAFT", {
       "content.tables.1.rows.0.cells.len": "Use a number above 0",
-      "content.words.t2.title": "Too long",
+      "content.words.t2.note": "Too long",
     })!;
     expect(d.cells["r1.len"]).toBe("0");
     const errs = toInput(d);
@@ -874,6 +876,18 @@ describe("Paste whole chart", () => {
       unit: "in",
       convert: true,
     });
+  });
+
+  it("keeps every other table's typed values when it fills one table", () => {
+    const d = setCell(toDraft(chart(), "DRAFT"), "r1", "len", "25.5");
+    const first = input(replaceTable(d, pasted("Size\tBust\nXS\t31")));
+    expect(first.content.tables[1].rows[0].cells).toEqual({ len: [25.5] });
+    // Filling table 2 through focus keeps the first table's values.
+    const second = input(
+      focus(replaceTable(focus(d, 1), pasted("Size\tLength\nXS\t26")), 1),
+    );
+    expect(second.content.tables[0].rows[0].cells).toEqual({ bust: [31, 32] });
+    expect(second.content.tables[1].rows[0].cells).toEqual({ len: [26] });
   });
 
   it("replaces the table, keeps its note, and marks the cells it can't read", () => {

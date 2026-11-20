@@ -395,7 +395,7 @@ export function Editor(props: {
                       onClick={(e) => {
                         e.preventDefault();
                         setTab(tabOf(p.id!));
-                        setAt(p.table);
+                        if (tabOf(p.id!) === "table") setAt(p.table);
                         setTimeout(() =>
                           document.getElementById(p.id!)?.focus(),
                         );

@@ -414,14 +414,9 @@ export function storedDraft(
     }),
   };
   // Every finding must land on a field the editor shows: the units, a
-  // table's note, a later table's heading and line under it, or one
-  // problems() can point at.
+  // table's note, or one problems() can point at.
   const shown = new Set(
-    content.tables.flatMap((t, i) =>
-      (i ? ["note", "title", "sub"] : ["note"]).map(
-        (w) => `content.words.${t.id}.${w}`,
-      ),
-    ),
+    content.tables.map((t) => `content.words.${t.id}.note`),
   );
   const rest = Object.fromEntries(
     Object.entries(errors).filter(
@@ -885,7 +880,12 @@ export function replaceTable(d: Draft, p: Pasted): Draft {
     const [a, b] = k.split(".");
     return a === t.id && !["title", "sub", "note"].includes(b) && !isKept(b);
   });
-  const cells = strip(next.cells, (k) => !isKept(k.split(".")[1]));
+  // Only this table's values go; the other tables' stay as typed.
+  const mine = new Set(t.rows.map((r) => r.id));
+  const cells = strip(next.cells, (k) => {
+    const [r, c] = k.split(".");
+    return mine.has(r) && !isKept(c);
+  });
   const old = new Map(t.columns.map((c) => [c.id, c]));
   const columns = p.columns.map((c, j): Column => {
     const was = old.get(cols[j]);

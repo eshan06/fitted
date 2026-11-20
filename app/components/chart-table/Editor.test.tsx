@@ -1904,6 +1904,56 @@ describe("More tables", () => {
     expect(validateChart(sent[0].chart).content.fit?.table).toBe("t2");
   });
 
+  it("fills table 2 from a paste, marks what it can't read there, and keeps table 1", async () => {
+    const { sent } = await open([twoTables()]);
+    await click("Edit table");
+    await click("Paste whole chart");
+    await type(
+      document.querySelector<HTMLInputElement>("dialog textarea")!,
+      "Size\tLength\nXS\t26\nS\tlong",
+    );
+    await click("Replace the table");
+    expect(tables()).toContain("2. Garment measurements *");
+    expect(byLabel("XS, Length").value).toBe("26");
+    expect(byLabel("S, Length").getAttribute("aria-invalid")).toBe("true");
+    await type(byLabel("S, Length"), "27");
+    await click("Save");
+    const c = validateChart(sent[0].chart).content;
+    expect(c.tables[0].rows[0].cells).toEqual({ bust: [31, 32] });
+    expect(c.tables[1].rows.map((r) => r.cells)).toEqual([
+      { len: [26] },
+      { len: [27] },
+    ]);
+  });
+
+  it("moves table 2's findings with a removed size, and keeps its switch once it has none", async () => {
+    const s = twoTables();
+    s.stored.chart.content.tables[1].rows.push({ id: "r2", cells: {} });
+    s.stored.chart.content.words["t2.r2.sz"] = "S";
+    await open([s]);
+    await click("Edit table");
+    await type(byLabel("S, Length"), "0");
+    await click("Save");
+    expect(byLabel("S, Length").getAttribute("aria-invalid")).toBe("true");
+    await act(async () => byLabel("Size 1").focus());
+    await click("Remove size");
+    await act(async () =>
+      document.querySelector<HTMLElement>("dialog s-button[tone]")!.click(),
+    );
+    // S moved up to the first size, and its finding with it.
+    expect(byLabel("S, Length").getAttribute("aria-invalid")).toBe("true");
+    expect(byLabel("Size 1").value).toBe("S");
+    await act(async () => byLabel("Size 1").focus());
+    await click("Remove size");
+    await act(async () =>
+      document.querySelector<HTMLElement>("dialog s-button[tone]")!.click(),
+    );
+    expect(document.querySelector('s-banner[tone="critical"]')).toBeNull();
+    expect(tables()).toContain("2. Garment measurements *");
+    await click("1. Body measurements");
+    expect(byLabel("XS, Bust").value).toBe("31–32");
+  });
+
   it("asks before leaving with unsaved edits in table 2", async () => {
     bridge.saveBar.leaveConfirmation.mockReturnValue(new Promise(() => {}));
     await open([twoTables()]);
