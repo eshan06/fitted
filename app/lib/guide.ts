@@ -30,8 +30,7 @@ export type Guide = {
   font: string; // an uploaded font's URL
   colors: { text: string; accent: string; bg: string } | null;
   css: string; // custom CSS
-  // Where it shows (§7 placement). The app block's link on its product page
-  // steps aside for the floating tab link style and for a CSS selector.
+  // Where it shows (§7 placement).
   page: boolean; // the app block's link on its product page
   quick: boolean; // in a theme's quick view
   featured: boolean; // in a featured product section
@@ -177,7 +176,7 @@ export function parseGuide(json: string | null | undefined): Guide | null {
         ? { text: hex[0], accent: hex[1], bg: hex[2] }
         : null,
     css: cssProblem(d.css) ? "" : (d.css as string),
-    page: place.productBlock !== false && link.style !== "tab" && !selector,
+    page: place.productBlock !== false,
     quick: place.quickView === true,
     featured: place.featured === true,
     selector,

@@ -60,8 +60,8 @@ const styles = (g: Guide) =>
       g.css,
   });
 
-// Puts the app embed's links back after the theme redraws what they follow.
-const placed: (() => unknown)[] = [];
+// The app embed's links after a selector, tried again on every change.
+const placed: (() => void)[] = [];
 // Puts the app embed's link after the first element the merchant's selector
 // matches; false when none does, or this browser can't read the selector.
 const putAfter = (block: HTMLElement, selector: string) => {
@@ -83,7 +83,9 @@ function setup(block: HTMLElement, load: Load) {
   if (!g || !link || !dialog?.showModal || !body?.replaceChildren) return;
   // Where the block sits (the snippet's place): its product page, or a theme's
   // quick view of it (a popup around it); a featured product section; the
-  // embed's link after a selector. The embed prints the tab only when it's on.
+  // embed's tab, or its link after a selector. The embed prints those only
+  // when they're on, and hides the app block's link on its page (data-page)
+  // while its tab, as the link's style, or its placed link stands in.
   const place = block.dataset.place;
   const popup = block.parentElement?.closest("dialog,[role=dialog]");
   const shown =
@@ -91,13 +93,13 @@ function setup(block: HTMLElement, load: Load) {
       ? popup
         ? g.quick
         : g.page
-      : place === "featured"
-        ? g.featured
-        : place !== "after" || putAfter(block, g.selector);
+      : place !== "featured" || g.featured;
   if (!shown) return;
-  if (place === "after")
-    placed.push(() => block.isConnected || putAfter(block, g.selector));
-  if (!document.getElementById("fitted-css")) document.head.append(styles(g));
+  if (place === "main" && !popup) block.dataset.page = "";
+  const reveal = () => {
+    if (!document.getElementById("fitted-css")) document.head.append(styles(g));
+    link.style.display = "";
+  };
   // The merchant's words and icon, else the extension's word and the ruler.
   const words = link.querySelector("span");
   if (words && g.label) words.textContent = g.label;
@@ -161,29 +163,32 @@ function setup(block: HTMLElement, load: Load) {
     if (backdrop || el.closest("[data-fitted-close]")) dialog.close();
     else if (el.closest("[data-fitted-retry]")) attempt();
   });
-  // Escape closes the guide on its key up, and neither key goes further, so a
-  // theme's quick view under the guide stays open whichever key it closes on.
-  // An Escape that ends typing in an input method is left to that.
-  for (const type of ["keydown", "keyup"])
-    dialog.addEventListener(type, (e) => {
-      const key = e as KeyboardEvent;
-      if (key.key !== "Escape" || key.isComposing) return;
-      e.preventDefault();
-      e.stopPropagation();
-      if (type === "keyup") dialog.close();
-    });
   link.addEventListener("click", () => {
     paint();
     if (state === "idle") attempt();
     else if (state === "ready") sync();
     dialog.showModal();
   });
-  link.style.display = "";
+  if (place !== "after") return reveal();
+  // The link after the merchant's selector waits for that element, which a
+  // script may draw later, and goes back after it whenever the theme redraws
+  // it, with its title's id, which some themes rename as they redraw.
+  const id = heading?.id ?? "";
+  const put = () => {
+    if (block.dataset.placed != null && block.isConnected) return;
+    if (!putAfter(block, g.selector)) return;
+    block.dataset.placed = "";
+    if (heading) heading.id = id;
+    reveal();
+  };
+  put();
+  placed.push(put);
 }
 
 /**
  * Sets up every block on the page now, and any the theme or its editor adds
- * later, and puts the embed's links back after a theme redraws their place.
+ * later, and places the embed's links after a selector once their element
+ * is there, and again after a theme redraws it.
  */
 export function start(load: Load) {
   const scan = () => {
@@ -192,6 +197,23 @@ export function start(load: Load) {
       .querySelectorAll<HTMLElement>(".fitted-guide:not([data-ready])")
       .forEach((block) => setup(block, load));
   };
+  // Escape closes the open guide on its key up, wherever focus is, and
+  // neither key goes further, so a theme's quick view under the guide stays
+  // open whichever key it closes on.
+  for (const type of ["keydown", "keyup"])
+    addEventListener(
+      type,
+      (e) => {
+        const open = document.querySelector<HTMLDialogElement>(
+          ".fitted-dialog[open]",
+        );
+        if ((e as KeyboardEvent).key !== "Escape" || !open) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (type === "keyup") open.close();
+      },
+      true,
+    );
   const go = () => {
     scan();
     const changes = { childList: true, subtree: true };

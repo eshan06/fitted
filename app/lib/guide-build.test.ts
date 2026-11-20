@@ -131,7 +131,7 @@ describe("size guide Liquid", () => {
       rtl: true,
       colors: null,
       css: ".fitted-link { letter-spacing: .1em }",
-      page: false, // a selector takes the app block's place
+      page: true,
       quick: true,
       featured: false,
       selector: ".product-form__input--size",
@@ -198,6 +198,8 @@ describe("size guide Liquid", () => {
       "render 'guide', p: product, chart: chart, id: 'tab', place: 'tab'",
       "assign load = true",
       "endif",
+      "if s.link.style == 'tab'",
+      "endif",
       "if s.placement.selector != blank",
       "render 'guide', p: product, chart: chart, id: 'after', place: 'after'",
       "assign load = true",
@@ -208,6 +210,15 @@ describe("size guide Liquid", () => {
     ]);
     expect(embed).toContain(
       `<script src="{{ 'loader.js' | asset_url }}" defer></script>`,
+    );
+    // What stands in for the app block's link: guide-loader.test.ts runs these.
+    const hide = embed.match(/<style>[\s\S]*?<\/style>/g);
+    expect(hide).toEqual([
+      "<style>.fitted-guide[data-page]>.fitted-link{display:none!important}</style>",
+      "<style>body:has(.fitted-guide[data-placed]) .fitted-guide[data-page]>.fitted-link{display:none!important}</style>",
+    ]);
+    expect(embed.indexOf(hide![0])).toBeGreaterThan(
+      embed.indexOf("if s.link.style == 'tab' -%}"),
     );
   });
 

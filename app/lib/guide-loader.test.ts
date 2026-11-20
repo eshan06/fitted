@@ -371,7 +371,7 @@ describe("loader", () => {
         link: { style: "text", icon: "none" },
       }),
     );
-    expect(link.textContent?.trim()).toBe("Fit <b>guide</b>");
+    expect(link.querySelector("span")?.textContent).toBe("Fit <b>guide</b>");
     expect(link.querySelector("svg, b")).toBeNull();
     expect(dialog.querySelector(".fitted-title")?.textContent).toBe(
       "Find your fit",
@@ -545,15 +545,14 @@ describe("placement", () => {
   };
 
   it.each([
-    ["by default", {}, {}, true],
-    ["but not with that placement off", { productBlock: false }, {}, false],
-    ["but not when the link is the floating tab", {}, { style: "tab" }, false],
-    ["but not when it goes after a selector", { selector: ".size" }, {}, false],
+    ["by default", {}, true],
+    ["but not with that placement off", { productBlock: false }, false],
   ])(
     "shows the app block's link on its product page %s",
-    async (_, placement, link, on) => {
-      const { link: el } = await mount(placed(placement, link));
-      expect(shown(el)).toBe(on);
+    async (_, placement, on) => {
+      const { root, link } = await mount(placed(placement));
+      expect(shown(link)).toBe(on);
+      expect(root.hasAttribute("data-page")).toBe(on);
     },
   );
 
@@ -568,18 +567,45 @@ describe("placement", () => {
       expect(shown(document.querySelector<HTMLElement>(".fitted-link")!)).toBe(
         false,
       );
-      // The product page's own choices don't apply there.
-      const settings = placed(
-        { quickView: true, selector: ".x" },
-        { style: "tab" },
-      );
-      document.body.innerHTML = `${start}${block(settings)}${end}`;
+      document.body.innerHTML = `${start}${block(placed({ quickView: true }))}${end}`;
       await tick();
-      expect(shown(document.querySelector<HTMLElement>(".fitted-link")!)).toBe(
-        true,
-      );
+      const guide = document.querySelector<HTMLElement>(".fitted-guide")!;
+      expect(shown(guide.querySelector(".fitted-link")!)).toBe(true);
+      // Not its product page, so the embed's styles never hide it.
+      expect(guide.hasAttribute("data-page")).toBe(false);
     },
   );
+
+  // The embed's styles (blocks/embed.liquid), as it prints them.
+  const [tabStyle, afterStyle] = read("blocks/embed.liquid").match(
+    /<style>[\s\S]*?<\/style>/g,
+  )!;
+  const display = (el: Element) => getComputedStyle(el).display;
+
+  it("lets the tab, as the link's style, stand in for the app block's link on its page, not in a quick view", async () => {
+    const settings = placed({ quickView: true }, { style: "tab" });
+    document.body.innerHTML = `${tabStyle}${block(settings)}<div role="dialog">${block(settings)}</div>`;
+    await tick();
+    const [page, quick] = document.querySelectorAll(".fitted-link");
+    expect([display(page), display(quick)]).toEqual(["none", "inline-flex"]);
+  });
+
+  it("lets the placed selector link stand in for the app block's link, and only once placed", async () => {
+    const json = placed({ selector: ".late" });
+    document.body.innerHTML = `${afterStyle}${block(json)}${block(json, "Linen Wrap Top", contact, "after")}`;
+    await tick();
+    const [page, after] =
+      document.querySelectorAll<HTMLElement>(".fitted-link");
+    // Nothing matches yet: the app block's link stays.
+    expect([shown(after), display(page)]).toEqual([false, "inline-flex"]);
+    // A script draws the element later; the link goes after it.
+    document.body.insertAdjacentHTML("afterbegin", '<div class="late"></div>');
+    await tick();
+    expect(document.querySelector(".late")?.nextElementSibling).toBe(
+      after.closest(".fitted-guide"),
+    );
+    expect([shown(after), display(page)]).toEqual([true, "none"]);
+  });
 
   it("has Select pick the size in the quick view's own product form", async () => {
     const json = sized({ placement: { quickView: true } });
@@ -654,13 +680,20 @@ describe("placement", () => {
       "Selected: M",
     );
     guide.querySelector("dialog")!.close();
-    // The theme redraws its size picker, taking the link with it.
-    document.querySelector(".shopify-section")!.innerHTML = form("L", "picker");
+    // The theme redraws its size picker, taking the link with it, and renames
+    // the ids in what it drops first, as Dawn's does.
+    const section = document.querySelector(".shopify-section")!;
+    section.querySelectorAll("[id]").forEach((el) => (el.id += "-1700000000"));
+    section.innerHTML = form("L", "picker");
     await tick();
     expect(guide.isConnected).toBe(true);
     expect(guide.previousElementSibling).toBe(
       document.querySelector(".picker"),
     );
+    const dialog = guide.querySelector("dialog")!;
+    expect(
+      guide.querySelector(`#${dialog.getAttribute("aria-labelledby")}`),
+    ).not.toBeNull();
   });
 
   it.each([
@@ -677,35 +710,44 @@ describe("placement", () => {
     },
   );
 
-  it("closes on Escape without the key reaching a theme's quick view underneath", async () => {
+  it("closes on Escape, wherever focus is, without the key reaching a theme's quick view underneath", async () => {
     document.body.innerHTML = `<div role="dialog">${block(placed({ quickView: true }))}</div>`;
     await tick();
     const theme = vi.fn();
     const quick = document.querySelector('[role="dialog"]')!;
-    for (const type of ["keydown", "keyup"])
+    for (const type of ["keydown", "keyup"]) {
       quick.addEventListener(type, theme);
+      document.addEventListener(type, theme);
+    }
     const link = document.querySelector<HTMLElement>(".fitted-link")!;
     const dialog = document.querySelector("dialog")!;
-    link.click();
-    await tick();
-    const x = dialog.querySelector(".fitted-x")!;
-    const key = (type: string, k = "Escape") => {
+    const key = (on: Element, type: string, k = "Escape") => {
       const e = new KeyboardEvent(type, {
         key: k,
         bubbles: true,
         cancelable: true,
       });
-      x.dispatchEvent(e);
+      on.dispatchEvent(e);
       return e;
     };
-    x.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Tab", bubbles: true }),
-    );
-    expect(theme).toHaveBeenCalledTimes(1); // other keys go on as usual
-    expect(key("keydown").defaultPrevented).toBe(true);
-    expect(dialog.open).toBe(true);
-    key("keyup");
-    expect(dialog.open).toBe(false);
-    expect(theme).toHaveBeenCalledTimes(1);
+    // Focus in the guide, or on the page after a press on a table cell.
+    for (const on of [dialog.querySelector(".fitted-x")!, document.body]) {
+      link.click();
+      await tick();
+      theme.mockClear();
+      key(on, "keydown", "Tab");
+      expect(theme).toHaveBeenCalled(); // other keys go on as usual
+      theme.mockClear();
+      expect(key(on, "keydown").defaultPrevented).toBe(true);
+      expect(dialog.open).toBe(true);
+      key(on, "keyup");
+      expect(dialog.open).toBe(false);
+      expect(theme).not.toHaveBeenCalled();
+    }
+    // With the guide closed, Escape is the theme's again.
+    expect(key(document.body, "keyup").defaultPrevented).toBe(false);
+    expect(theme).toHaveBeenCalled();
+    for (const type of ["keydown", "keyup"])
+      document.removeEventListener(type, theme);
   });
 });

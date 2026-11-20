@@ -216,15 +216,10 @@ describe("parseGuide", () => {
       "",
     ]);
     expect(where({ productBlock: false })).toEqual([false, false, false, ""]);
-    // The floating tab link style and a selector each take the block's place.
-    expect(where({}, { style: "tab" })).toEqual([false, false, false, ""]);
-    expect(where({ selector: ".size" })).toEqual([
-      false,
-      false,
-      false,
-      ".size",
-    ]);
-    expect(where({ selector: "  " })[0]).toBe(true);
+    // The embed, not this, hides the block's link for these (§9).
+    expect(where({}, { style: "tab" })).toEqual([true, false, false, ""]);
+    expect(where({ selector: ".size" })).toEqual([true, false, false, ".size"]);
+    expect(where({ selector: "  " })).toEqual([true, false, false, ""]);
     expect(where({ selector: ".a\n.b" })).toEqual([true, false, false, ""]);
   });
 
