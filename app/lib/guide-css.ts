@@ -1,10 +1,13 @@
 // The size guide's styles (ARCHITECTURE §9), from the Storefront and
 // GuideStates boards. The loader adds them once, so nothing render-blocking
 // lands in the theme's <head>, and the admin preview (#23) can add the same
-// string. Colors sit in variables for #31 to set.
+// string. The loader sets the three colors and the font on .fitted-guide from
+// the Appearance settings (§7); the other shades mix from them.
 export const css = [
+  ".fitted-guide{--fitted-bg:#fff;--fitted-text:#161616;--fitted-accent:#2448a8}",
   ".fitted-link{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 2px;border:0;background:none;color:inherit;font:inherit;font-weight:600;text-decoration:underline;text-underline-offset:4px;cursor:pointer}",
-  ".fitted-dialog{--fitted-bg:#fff;--fitted-text:#161616;--fitted-muted:#3a3a3a;--fitted-accent:#2448a8;--fitted-tint:#e9eef9;--fitted-line:#d9dde3;box-sizing:border-box;width:calc(100% - 32px);max-width:640px;max-height:calc(100% - 80px);margin:40px auto auto;padding:0;border:0;border-radius:0;background:var(--fitted-bg);color:var(--fitted-text);box-shadow:0 24px 64px rgba(0,0,0,.28);overflow:auto;text-align:start;line-height:1.5}",
+  ".fitted-dialog{--fitted-muted:color-mix(in srgb,var(--fitted-text) 84%,var(--fitted-bg));--fitted-line:color-mix(in srgb,var(--fitted-text) 16%,var(--fitted-bg));--fitted-faint:color-mix(in srgb,var(--fitted-text) 10%,var(--fitted-bg));--fitted-tint:color-mix(in srgb,var(--fitted-accent) 10%,var(--fitted-bg));--fitted-alert:color-mix(in srgb,#d72c0d 8%,var(--fitted-bg));--fitted-alert-line:color-mix(in srgb,#d72c0d 40%,var(--fitted-bg));box-sizing:border-box;width:calc(100% - 32px);max-width:640px;max-height:calc(100% - 80px);margin:40px auto auto;padding:0;border:0;border-radius:0;background:var(--fitted-bg);color:var(--fitted-text);font-family:var(--fitted-font);box-shadow:0 24px 64px rgba(0,0,0,.28);overflow:auto;text-align:start;line-height:1.5}",
+  "@supports not (color:color-mix(in srgb,red,red)){.fitted-dialog{--fitted-muted:#3a3a3a;--fitted-line:#d9dde3;--fitted-faint:#e6eaf2;--fitted-tint:#e9eef9;--fitted-alert:#fdeceb;--fitted-alert-line:#e0a9a1}}",
   ".fitted-dialog::backdrop{background:rgba(22,22,22,.55)}",
   "html:has(.fitted-dialog[open]){overflow:hidden}",
   ".fitted-dialog *{box-sizing:border-box}",
@@ -38,15 +41,15 @@ export const css = [
   ".fitted-foot{position:sticky;bottom:0;z-index:1;display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;margin-bottom:-28px;padding:16px 0 28px;border-top:2px solid var(--fitted-text);background:var(--fitted-bg)}",
   ".fitted-foot strong{font-size:16px;font-weight:600}",
   ".fitted-foot strong span{color:var(--fitted-accent)}",
-  ".fitted-dialog .fitted-btn{display:inline-flex;align-items:center;justify-content:center;min-height:48px;padding:0 22px;border:1px solid var(--fitted-accent);border-radius:2px;background:var(--fitted-accent);color:#fff;font-size:15px;font-weight:600}",
+  ".fitted-dialog .fitted-btn{display:inline-flex;align-items:center;justify-content:center;min-height:48px;padding:0 22px;border:1px solid var(--fitted-accent);border-radius:2px;background:var(--fitted-accent);color:var(--fitted-bg);font-size:15px;font-weight:600}",
   ".fitted-dialog .fitted-ghost{border-color:currentColor;background:var(--fitted-bg);color:inherit}",
-  ".fitted-alert{display:flex;flex-direction:column;gap:14px;padding:18px;border:1px solid #e0a9a1;border-radius:2px;background:#fdeceb}",
+  ".fitted-alert{display:flex;flex-direction:column;gap:14px;padding:18px;border:1px solid var(--fitted-alert-line);border-radius:2px;background:var(--fitted-alert)}",
   ".fitted-alert p{margin:0;font-size:15px;line-height:1.6}",
   ".fitted-actions{display:flex;flex-wrap:wrap;gap:12px}",
   ".fitted-alert .fitted-help{font-size:13px;line-height:1.5;color:var(--fitted-muted)}",
   ".fitted-help a{color:var(--fitted-accent);text-underline-offset:3px}",
-  ".fitted-sk{display:block;height:12px;background:#e6eaf2}",
-  ".fitted-skrow{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:16px;padding:14px 12px;border-bottom:1px solid #e6eaf2}",
+  ".fitted-sk{display:block;height:12px;background:var(--fitted-faint)}",
+  ".fitted-skrow{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:16px;padding:14px 12px;border-bottom:1px solid var(--fitted-faint)}",
   ".fitted-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}",
   // Phones: a bottom sheet, with larger switches and full-width error
   // buttons below the contact line.

@@ -1,6 +1,7 @@
 // Settings in the `$app.settings` shop metafield (ARCHITECTURE §7). The
 // Appearance and Fit finder screens write it whole, with the digest they
 // loaded, so a save over a newer one is refused (§6) instead of dropping it.
+import { COLOR, FONT_URL, cssProblem } from "../lib/appearance";
 
 // A check returns the problem, or undefined. `T` is the type it accepts, so
 // Settings below is derived from the checks and can't drift from them.
@@ -11,11 +12,8 @@ const oneOf =
   <const T extends readonly unknown[]>(...list: T): Check<T[number]> =>
   (v) =>
     list.includes(v) ? undefined : "Pick one of the options";
-const COLOR = /^#[0-9a-f]{6}$/i;
 const color: Check<string> = (v) =>
   typeof v === "string" && COLOR.test(v) ? undefined : "Use a #rrggbb color";
-// An upload to Shopify Files, safe to print inside CSS url() and an attribute.
-const FONT_URL = /^https:\/\/cdn\.shopify\.com\/[^\s"'()\\<]+$/;
 const font: Check<"theme" | { fileUrl: string }> = (v) =>
   v === "theme" ||
   (isObj(v) &&
@@ -29,14 +27,7 @@ const selector: Check<string> = (v) =>
   typeof v === "string" && v.length <= 200 && !/[\r\n<]/.test(v)
     ? undefined
     : "Use one line of at most 200 characters";
-const css: Check<string> = (v) =>
-  typeof v !== "string"
-    ? "Must be text"
-    : Buffer.byteLength(v) > 10 * 1024
-      ? "Keep custom CSS under 10 KB"
-      : v.includes("<")
-        ? `Custom CSS can't contain "<"`
-        : undefined;
+const css: Check<string> = cssProblem;
 const line: Check<string> = (v) =>
   typeof v === "string" && v.trim() && v.length <= 200 && !/[\r\n]/.test(v)
     ? undefined
@@ -87,7 +78,7 @@ export type Settings = { v: 1 } & {
   colors:
     | { mode: "theme" }
     | { mode: "custom"; text: string; accent: string; background: string };
-  css: string; // at most 10 KB, refused if it contains "<"
+  css: string; // passes cssProblem (app/lib/appearance.ts)
   text: Record<string, Text>; // by locale; the primary locale is required
 };
 

@@ -129,6 +129,67 @@ describe("parseGuide", () => {
     expect(parseGuide(data({ units: { default: "cm" } }))?.sys).toBe("cm");
   });
 
+  it("reads the Appearance settings the guide applies", () => {
+    const font = "https://cdn.shopify.com/s/files/1/0001/font.woff2?v=1";
+    const g = parseGuide(
+      data({
+        text: { label: "Fit guide", header: "Find your fit", noFit: "None." },
+        link: { style: "text", icon: "none" },
+        popup: { rtl: true, font: { fileUrl: font } },
+        colors: {
+          mode: "custom",
+          text: "#202223",
+          accent: "#B3301C",
+          background: "#fffaf0",
+        },
+        css: ".fitted-link { background: url(https://cdn.shopify.com/a.png) }",
+      }),
+    );
+    expect(g).toMatchObject({
+      label: "Fit guide",
+      header: "Find your fit",
+      icon: "none",
+      rtl: true,
+      font,
+      colors: { text: "#202223", accent: "#B3301C", bg: "#fffaf0" },
+      css: ".fitted-link { background: url(https://cdn.shopify.com/a.png) }",
+    });
+  });
+
+  it("keeps the extension's words and the theme's look for settings that are missing or don't validate", () => {
+    const none = {
+      label: "",
+      header: "",
+      icon: "ruler",
+      rtl: false,
+      font: "",
+      colors: null,
+      css: "",
+    };
+    expect(parseGuide(data())).toMatchObject(none);
+    const bad = (s: Record<string, unknown>) =>
+      expect(parseGuide(data(s))).toMatchObject(none);
+    bad({
+      text: { label: "Fit\nguide", header: "x".repeat(201) },
+      link: { icon: "star" },
+      popup: { rtl: "true", font: { fileUrl: "https://evil.example/a.woff2" } },
+      colors: {
+        mode: "custom",
+        text: "#202223",
+        accent: "red",
+        background: "#fff",
+      },
+      css: ".fitted-link { background: url(https://evil.example/t.gif) }",
+    });
+    bad({
+      text: { label: "  ", header: 7 },
+      popup: { font: { fileUrl: 'https://cdn.shopify.com/a");x:url("' } },
+      colors: { mode: "theme", text: "#000000" },
+      css: "</style><script>",
+    });
+    bad({ text: "Fit guide", popup: { font: "theme" }, css: 42 });
+  });
+
   it.each([
     ["text that isn't JSON", "{"],
     ["no data", ""],

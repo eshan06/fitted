@@ -67,10 +67,13 @@ describe("size guide Liquid", () => {
     ],
     "c.words | json": { "t1.m.size": "M", tips: "Measure snugly." },
     "chart.strings.value | json": { "t1.m.size": "Moyen" },
-    "shop.metafields['$app'].settings.value.units | json": {
-      default: "cm",
-      toggle: true,
-    },
+    "s.units | json": { default: "cm", toggle: true },
+    "s.link | json": { style: "text", icon: "none" },
+    "s.popup | json": { rtl: true, font: "theme" },
+    "s.colors | json": { mode: "theme" },
+    "s.css | json": ".fitted-link { letter-spacing: .1em }",
+    "s.text[request.locale.iso_code] | default: s.text[primary.iso_code] | json":
+      { label: "Guide des tailles", header: "Tailles", noFit: "Aucune." },
     "localization.country.iso_code | json": "US",
     "request.locale.iso_code | json": "fr",
   };
@@ -78,6 +81,13 @@ describe("size guide Liquid", () => {
   it("prints only these values, each through | json, so never content.fit", () => {
     expect(outputs(snippet)).toEqual(Object.keys(values));
     expect(snippet).not.toMatch(/\becho\b/);
+  });
+
+  it("reads settings only from Fitted's own metafield, which no one else writes (§4)", () => {
+    expect(snippet).toContain(
+      "{%- assign s = shop.metafields['$app'].settings.value -%}",
+    );
+    expect(snippet.match(/metafields/g)).toHaveLength(1);
   });
 
   it("prints data that parseGuide reads", () => {
@@ -92,6 +102,12 @@ describe("size guide Liquid", () => {
       sys: "cm",
       locale: "fr",
       words: { "t1.m.size": "Moyen", tips: "Measure snugly." },
+      label: "Guide des tailles",
+      header: "Tailles",
+      icon: "none",
+      rtl: true,
+      colors: null,
+      css: ".fitted-link { letter-spacing: .1em }",
     });
   });
 
