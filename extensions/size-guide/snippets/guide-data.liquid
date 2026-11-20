@@ -1,15 +1,17 @@
 {%- comment -%}
   One product's chart for the size guide (ARCHITECTURE §9). Every value goes
   through | json, which escapes < so no word can end the script tag. Only the
-  content keys the guide reads are printed, so content.fit never is. The
-  settings words are the shopper's language's, else the primary language's (§7).
+  content keys the guide reads are printed, and content.fit, with the handle
+  that names the shopper's stored answers, only on Pro (§10). The settings
+  words are the shopper's language's, else the primary language's (§7).
 {%- endcomment -%}
 {%- assign c = chart.content.value -%}
 {%- assign s = shop.metafields['$app'].settings.value -%}
+{%- assign plan = shop.metafields['$app'].plan.value -%}
 {%- assign primary = shop.published_locales | where: 'primary' | first -%}
 <script type="application/json" data-fitted>
   {
-    "chart": { "v": {{ c.v | json }}, "unit": {{ c.unit | json }}, "roundTo": {{ c.roundTo | json }}, "tables": {{ c.tables | json }}, "words": {{ c.words | json }} },
+    "chart": { "v": {{ c.v | json }}, "unit": {{ c.unit | json }}, "roundTo": {{ c.roundTo | json }}, "tables": {{ c.tables | json }}, "words": {{ c.words | json }}{% if plan == 'pro' %}, "fit": {{ c.fit | json }}{% endif %} },
     "strings": {{ chart.strings.value | json }},
     "units": {{ s.units | json }},
     "link": {{ s.link | json }},
@@ -19,6 +21,8 @@
     "css": {{ s.css | json }},
     "text": {{ s.text[request.locale.iso_code] | default: s.text[primary.iso_code] | json }},
     "country": {{ localization.country.iso_code | json }},
-    "locale": {{ request.locale.iso_code | json }}
+    "locale": {{ request.locale.iso_code | json }},
+    "plan": {{ plan | json }}{% if plan == 'pro' %},
+    "handle": {{ chart.system.handle | json }}{% endif %}
   }
 </script>

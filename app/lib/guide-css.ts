@@ -1,6 +1,6 @@
 // The size guide's styles (ARCHITECTURE §9), from the Storefront and
 // GuideStates boards. The loader adds css once, so nothing render-blocking
-// lands in the theme's <head>; render adds tableCss with the tables it draws,
+// lands in the theme's <head>; render adds tableCss with the tabs it draws,
 // so loader.js carries only what the link, the popup and its loading and error
 // states need. The admin preview (#23) can add the same strings. The loader
 // sets the three colors and the font on .fitted-guide from the Appearance
@@ -64,8 +64,24 @@ export const tableCss = /* @__PURE__ */ [
   ".fitted-foot strong{font-size:16px;font-weight:600}",
   ".fitted-foot strong span{color:var(--fitted-accent)}",
   ".fitted-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}",
-  // Phones: tighter tables and larger switches.
+  // The tabs, then Find my size (§10): its questions and the result.
+  ".fitted-tabs{display:flex;flex-wrap:wrap;border-bottom:1px solid var(--fitted-line)}",
+  ".fitted-dialog .fitted-tabs button{min-height:44px;margin-right:20px;padding:0 2px;border:0;border-bottom:2px solid transparent;border-radius:0;background:none;color:var(--fitted-muted);font-size:15px;font-weight:500}",
+  ".fitted-dialog .fitted-tabs [aria-pressed=true]{border-bottom-color:var(--fitted-text);color:var(--fitted-text);font-weight:600}",
+  ".fitted-fit{--fitted-edge:color-mix(in srgb,var(--fitted-text) 62%,var(--fitted-bg));display:flex;flex-wrap:wrap;gap:14px 12px;margin:0}",
+  ".fitted-fit>*{flex:1 1 100%}",
+  ".fitted-fit>label{display:flex;flex:1 1 160px;flex-direction:column;gap:6px;font-size:14px;font-weight:600}",
+  ".fitted-fit input[type=text],.fitted-fit select{width:100%;min-height:44px;margin:0;padding:0 10px;border:1px solid var(--fitted-edge);border-radius:2px;background:var(--fitted-bg);color:var(--fitted-text);font-family:inherit;font-size:15px;font-weight:400}",
+  ".fitted-fit fieldset{display:flex;flex-wrap:wrap;gap:8px;min-width:0;margin:0;padding:0;border:0}",
+  ".fitted-fit legend{margin-bottom:6px;padding:0;font-size:14px;font-weight:600}",
+  ".fitted-opt{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 14px;border:1px solid var(--fitted-edge);border-radius:2px;font-size:15px;cursor:pointer}",
+  ".fitted-opt input{margin:0;accent-color:var(--fitted-accent)}",
+  ".fitted-dialog .fitted-fine{margin:0;font-size:13px;line-height:1.5;color:var(--fitted-muted)}",
+  ".fitted-result{display:flex;flex-direction:column;gap:12px;padding-top:14px;border-top:2px solid var(--fitted-text)}",
+  ".fitted-result .fitted-h3 span{color:var(--fitted-accent)}",
+  // Phones: tighter tables and tabs, and larger switches.
   "@media (max-width:600px){",
+  ".fitted-dialog .fitted-tabs button{margin-right:14px;font-size:14px}",
   ".fitted-table{min-width:0;font-size:14px}",
   ".fitted-table th,.fitted-table td{padding-left:8px;padding-right:8px}",
   ".fitted-bar{justify-content:flex-start}",
