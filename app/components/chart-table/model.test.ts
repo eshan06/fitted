@@ -605,6 +605,14 @@ describe("table tools", () => {
     expect(unmerge(m, "s", "bust").content.tables[0].merges).toEqual([]);
   });
 
+  it("leaves words outside the first table alone when merging", () => {
+    const d = setWord(fitted(), "t2.xs.fit", "Kept");
+    const m = merge(d, { col: "fit", a: 0, b: 1 });
+    expect(m.content.words["t2.xs.fit"]).toBe("Kept");
+    expect(m.content.words["t1.xs.fit"]).toBe("Relaxed");
+    expect(m.content.words).not.toHaveProperty(["t1.s.fit"]);
+  });
+
   it("merges two or more cells that aren't merged yet", () => {
     const d = merge(fitted(), { col: "fit", a: 0, b: 1 });
     expect(canMerge(fitted(), { col: "fit", a: 1, b: 1 })).toBe(false);
