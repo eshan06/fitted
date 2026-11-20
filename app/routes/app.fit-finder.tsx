@@ -775,6 +775,7 @@ function ShopperPreview(props: {
   const fit = { ...c.fit, ease, stretch: own.stretch };
   const result = findSize({ unit: c.unit, tables: [c.table], fit }, answers);
   const step = lastStep(c, answers);
+  const why = reasonText({ ...c, fit }, result);
   const n = c.fit.questions.length;
   return (
     <aside className="card shopper" aria-label="Shopper preview">
@@ -791,8 +792,8 @@ function ShopperPreview(props: {
         </div>
         <span className="bar" />
         <strong className="words">{step.words}</strong>
-        {step.options.map((o) => (
-          <span key={o.label} className={o.on ? "opt on" : "opt"}>
+        {step.options.map((o, i) => (
+          <span key={i} className={o.on ? "opt on" : "opt"}>
             {o.label}
           </span>
         ))}
@@ -805,13 +806,13 @@ function ShopperPreview(props: {
         {result.row === null ? (
           <>
             <span>{props.noFit}</span>
-            <span>{reasonText(c, result)}</span>
+            {why && <span>{why}</span>}
           </>
         ) : (
           <>
             <strong>Your size</strong>
             <span className="size">{size(c, result.row)}</span>
-            <span>{reasonText(c, result)}</span>
+            {why && <span>{why}</span>}
             <span className="cart">Select {size(c, result.row)}</span>
           </>
         )}

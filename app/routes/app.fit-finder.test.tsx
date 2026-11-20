@@ -907,7 +907,7 @@ describe("a chart's ease and stretch", () => {
         "Question 3 of 3Find my size",
         "How do you like tops to fit?SnugRegularRelaxedBackSee my size",
         "Your sizeL",
-        "Your 37.5 in bust falls in L on this chart, and you like a regular fit.",
+        "Your 37.5 in bust with 2 in of ease falls in L on this chart, and you like a regular fit.",
         "Select L",
       ].join(""),
     );
@@ -933,10 +933,12 @@ describe("a chart's ease and stretch", () => {
   it("previews the unsaved ease and stretch, and the no-fit words when nothing fits", async () => {
     await open();
     await type(ease(), "+5 in at bust"); // 42.5 in: past XL's 42
-    expect(preview()).toContain("falls in XL on this chart"); // some stretch
+    expect(preview()).toContain(
+      "Your 37.5 in bust with 5 in of ease falls in XL on this chart",
+    ); // some stretch
     await type(labelled("Stretch"), "none");
     expect(preview()).toContain(
-      `${saved().text.en.noFit}Your 37.5 in bust is past XL, the largest size on this chart.`,
+      `${saved().text.en.noFit}Your 37.5 in bust with 5 in of ease is past XL, the largest size on this chart.`,
     );
     expect(preview()).not.toContain("Your size");
     await type(noFit(), "Message us for a fitting.");
@@ -944,7 +946,7 @@ describe("a chart's ease and stretch", () => {
     // Ease that doesn't read yet previews the saved ease.
     await type(ease(), "+5 in at");
     await type(labelled("Stretch"), "some");
-    expect(preview()).toContain("falls in L on this chart");
+    expect(preview()).toContain("with 2 in of ease falls in L on this chart");
     none();
   });
 

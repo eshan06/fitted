@@ -259,28 +259,29 @@ group("what shoppers see", () => {
         answers,
       ),
     );
-  it("says why, in the canvas's words, with the ease applied", () => {
+  it("says why, in the canvas's words, naming the ease it added", () => {
     expect(reason(named({}))).toBe(
       "Your 37.5 in bust falls in M on this chart, and you like a regular fit.",
     );
+    // 37.5 in is M on the chart; with 2 in of ease it's L.
     expect(reason(named())).toBe(
-      "Your 37.5 in bust falls in L on this chart, and you like a regular fit.",
+      "Your 37.5 in bust with 2 in of ease falls in L on this chart, and you like a regular fit.",
     );
     expect(reason(named({ bust: 1.25 }))).toBe(
-      "Your 37.5 in bust falls between M and L on this chart, and you like a regular fit, so L.",
+      "Your 37.5 in bust with 1.25 in of ease falls between M and L on this chart, and you like a regular fit, so L.",
     );
     // Some stretch lets M reach 38.75 in.
     expect(reason(named({ bust: 1.25 }), undefined, "some")).toBe(
-      "Your 37.5 in bust falls in M on this chart, and you like a regular fit.",
+      "Your 37.5 in bust with 1.25 in of ease falls in M on this chart, and you like a regular fit.",
     );
   });
 
   it("says why off the chart, and from the usual size or the choices", () => {
     expect(reason(named({ bust: 10 }))).toBe(
-      "Your 37.5 in bust is past XL, the largest size on this chart.",
+      "Your 37.5 in bust with 10 in of ease is past XL, the largest size on this chart.",
     );
     expect(reason(named({ bust: -10 }))).toBe(
-      "Your 37.5 in bust is below XS, the smallest size on this chart.",
+      "Your 37.5 in bust with -10 in of ease is below XS, the smallest size on this chart.",
     );
     expect(reason(named(), { q2: "m", q3: "regular" })).toBe(
       "You usually wear M, and you like a regular fit.",

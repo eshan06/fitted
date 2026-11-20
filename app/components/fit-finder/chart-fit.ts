@@ -168,12 +168,16 @@ export function lastStep(c: FitChart, answers: Answers) {
   return { words: words(c, q), options };
 }
 
-// Why findSize picked what it did, as the shopper reads it. The sample always
-// likes a regular fit, so the fit-moved reasons never show here.
+// Why findSize picked what it did, as the shopper reads it, naming the ease
+// in `c.fit` it added to the measurement. The sample always likes a regular
+// fit, so the fit-moved reasons never show here.
 export function reasonText(c: FitChart, { reason }: FitResult) {
   const v = reason.values;
   const s = (k: string) => size(c, String(v[k]));
-  const m = `Your ${v.value} ${v.unit} ${label(c, String(v.col)).toLowerCase()}`;
+  const col = String(v.col);
+  const ease = c.fit.ease[col];
+  const unit = measures(c).find((m) => m.id === col)?.unit;
+  const m = `Your ${v.value} ${v.unit} ${label(c, col).toLowerCase()}${ease ? ` with ${round2(ease)} ${unit} of ease` : ""}`;
   const fit = v.fit ? `, and you like a ${v.fit} fit` : "";
   const text: Record<string, () => string> = {
     in: () => `${m} falls in ${s("size")} on this chart${fit}.`,
