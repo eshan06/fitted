@@ -44,7 +44,7 @@ export type HomeData =
       themeUrl: string; // the theme editor, adding the size guide block
       charts: number;
       active: number;
-      limit: number | null; // Free's limit of published charts, once reached
+      limit: number | null; // Free's limit of published charts; null on paid plans
       imported: number;
       fitLive: boolean;
       rows: HomeRow[];
@@ -75,10 +75,7 @@ async function loadHome(admin: Admin, shop: string): Promise<HomeData> {
       themeUrl: themeEditorUrl(shop),
       charts: charts.length,
       active,
-      limit:
-        plan === "free" && active >= FREE_ACTIVE_CHARTS
-          ? FREE_ACTIVE_CHARTS
-          : null,
+      limit: plan === "free" ? FREE_ACTIVE_CHARTS : null,
       // Imports mint `i-` handles (§5). ponytail: every import source will, so
       // #34 tells Kiwi's apart before CSV import ships.
       imported: charts.filter((c) => c.handle.startsWith("i-")).length,
@@ -492,7 +489,7 @@ export function Dashboard(h: Ok) {
   );
 }
 
-function PlanBanner({ plan, yearly, plansUrl, active, limit }: Ok) {
+function PlanBanner({ plan, yearly, plansUrl, charts, active, limit }: Ok) {
   const link = (
     <s-link href={plansUrl} target="_top">
       Change plan
@@ -513,7 +510,8 @@ function PlanBanner({ plan, yearly, plansUrl, active, limit }: Ok) {
         </s-stack>
       </s-banner>
     );
-  if (limit)
+  // A first install (no charts yet) keeps the Free banner below.
+  if (limit && charts > 0)
     return (
       <s-banner
         tone="info"
@@ -521,9 +519,9 @@ function PlanBanner({ plan, yearly, plansUrl, active, limit }: Ok) {
       >
         <s-stack gap="small-200">
           <s-paragraph>
-            {
-              "Drafts don't count. To publish a 4th, set one to Draft or move to Standard, $9 a month."
-            }
+            {active < limit
+              ? `Drafts don't count. For more than ${limit}, move to Standard, $9 a month.`
+              : "Drafts don't count. To publish a 4th, set one to Draft or move to Standard, $9 a month."}
           </s-paragraph>
           {link}
         </s-stack>
