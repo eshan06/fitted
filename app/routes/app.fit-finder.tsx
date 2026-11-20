@@ -62,8 +62,7 @@ const COPY: Record<string, string[]> = {
     "Your fit finder settings didn't load",
     "Fitted couldn't reach your store just now. Nothing has changed for shoppers.",
   ],
-  // Not drawn yet (#128's drawing pass): a write failed after others landed.
-  // Its line names what saved and what didn't (§15), so the server sends it.
+  // Not drawn yet (#128): the server's line names what saved and what didn't (§15).
   partial: ["Only some of your fit finder changes were saved"],
   conflict: [
     "Fit finder settings changed since you opened them",
@@ -87,13 +86,9 @@ const fitChart = ({ id, updatedAt, name, chart }: StoredChart): FitChart[] => {
   const words = Object.entries(c.words).filter(
     ([k]) => k.startsWith(`${table.id}.`) || k.startsWith("fit."),
   );
-  const { columns, rows } = table;
+  const { unit, fit } = c;
   return [
-    {
-      ...{ id, updatedAt, name, unit: c.unit, fit: c.fit },
-      table: { id: table.id, columns, rows },
-      words: Object.fromEntries(words),
-    },
+    { id, updatedAt, name, unit, fit, table, words: Object.fromEntries(words) },
   ];
 };
 
