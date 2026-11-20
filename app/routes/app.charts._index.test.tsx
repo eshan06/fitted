@@ -1,11 +1,11 @@
 // @vitest-environment happy-dom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import type { LoaderFunctionArgs } from "react-router";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { createRoutesStub } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AdminApiError } from "../models/admin.server";
-import type { StoredChart } from "../models/chart.server";
+import { ChartNotFoundError, type StoredChart } from "../models/chart.server";
 
 const m = vi.hoisted(() => ({
   authenticate: vi.fn(),
@@ -13,6 +13,9 @@ const m = vi.hoisted(() => ({
   countChartProducts: vi.fn(),
   getPlan: vi.fn(),
   pricingPlansUrl: vi.fn(),
+  canReadProducts: vi.fn(),
+  deleteChart: vi.fn(),
+  startResolve: vi.fn(),
 }));
 vi.mock("../shopify.server", () => ({
   authenticate: { admin: m.authenticate },
@@ -21,10 +24,13 @@ vi.mock("../models/chart.server", async (orig) => ({
   ...(await orig<typeof import("../models/chart.server")>()),
   chartPages: m.chartPages,
   countChartProducts: m.countChartProducts,
+  deleteChart: m.deleteChart,
 }));
+vi.mock("../models/rules.server", () => ({ startResolve: m.startResolve }));
 vi.mock("../models/admin.server", async (orig) => ({
   ...(await orig<typeof import("../models/admin.server")>()),
   pricingPlansUrl: m.pricingPlansUrl,
+  canReadProducts: m.canReadProducts,
 }));
 vi.mock("../models/billing.server", async (orig) => ({
   ...(await orig<typeof import("../models/billing.server")>()),
@@ -32,6 +38,7 @@ vi.mock("../models/billing.server", async (orig) => ({
 }));
 const {
   default: SizeCharts,
+  action,
   loader,
   filterRows,
 } = await import("./app.charts._index");
@@ -76,6 +83,9 @@ beforeEach(() => {
   m.authenticate.mockResolvedValue({ admin, session: { shop: SHOP } });
   m.getPlan.mockResolvedValue({ plan: "free", checkFailed: false });
   m.pricingPlansUrl.mockResolvedValue(PLANS);
+  m.canReadProducts.mockResolvedValue(true);
+  m.deleteChart.mockResolvedValue(undefined);
+  m.startResolve.mockResolvedValue(undefined);
   m.countChartProducts.mockImplementation(async (_a, ids: string[]) =>
     Object.fromEntries(ids.map((id) => [id, { count: 7, atLeast: false }])),
   );
@@ -156,6 +166,114 @@ describe("loading the list", () => {
   });
 });
 
+const CHART = "gid://shopify/Metaobject/1";
+const del = async (id?: string) => {
+  const body = new FormData();
+  if (id !== undefined) body.set("id", id);
+  const res = await action({
+    request: new Request("https://fitted.test/app/charts?index", {
+      method: "POST",
+      body,
+    }),
+  } as ActionFunctionArgs);
+  return res instanceof Response
+    ? res
+    : "data" in (res as object)
+      ? (res as { data: unknown; init: { status: number } })
+      : { data: res, init: { status: 200 } };
+};
+
+describe("deleting a chart", () => {
+  it("deletes it, then resolves every product as the merchant's", async () => {
+    expect(await del(CHART)).toMatchObject({
+      data: { ok: true },
+      init: { status: 200 },
+    });
+    expect(m.canReadProducts).toHaveBeenCalledWith(admin);
+    expect(m.deleteChart).toHaveBeenCalledExactlyOnceWith(admin, CHART);
+    expect(m.canReadProducts.mock.invocationCallOrder[0]).toBeLessThan(
+      m.deleteChart.mock.invocationCallOrder[0],
+    );
+    expect(m.startResolve).toHaveBeenCalledExactlyOnceWith(SHOP, true);
+    expect(m.deleteChart.mock.invocationCallOrder[0]).toBeLessThan(
+      m.startResolve.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("counts a chart that's already gone as deleted, so a repeat is done", async () => {
+    m.deleteChart.mockRejectedValue(new ChartNotFoundError());
+    expect(await del(CHART)).toMatchObject({ data: { ok: true } });
+    expect(m.startResolve).toHaveBeenCalledExactlyOnceWith(SHOP, true);
+  });
+
+  it.each([
+    ["no id", undefined],
+    ["an empty id", ""],
+    ["a product id", "gid://shopify/Product/1"],
+    ["a numeric id", "1"],
+  ])("refuses %s with 422 and touches nothing", async (_, id) => {
+    expect(await del(id)).toMatchObject({
+      data: {
+        fieldErrors: { id: expect.stringContaining("nothing was deleted") },
+      },
+      init: { status: 422 },
+    });
+    expect(m.canReadProducts).not.toHaveBeenCalled();
+    expect(m.deleteChart).not.toHaveBeenCalled();
+    expect(m.startResolve).not.toHaveBeenCalled();
+  });
+
+  it("refuses staff without Products access before deleting", async () => {
+    m.canReadProducts.mockResolvedValue(false);
+    expect(await del(CHART)).toMatchObject({
+      data: {
+        error: {
+          code: "product_access",
+          message: expect.stringContaining("Nothing was deleted."),
+        },
+      },
+      init: { status: 403 },
+    });
+    expect(m.deleteChart).not.toHaveBeenCalled();
+    expect(m.startResolve).not.toHaveBeenCalled();
+  });
+
+  // A failed delete may have landed with its answer lost, so it still resolves.
+  it.each([
+    ["the access check", () => m.canReadProducts, 0],
+    ["the delete", () => m.deleteChart, 1],
+  ])(
+    "answers 502 when %s fails and logs the detail",
+    async (_, failing, resolves) => {
+      failing().mockRejectedValue(
+        new AdminApiError("Shopify request failed", "HTTP 503 raw text"),
+      );
+      const res = await del(CHART);
+      expect(res).toMatchObject({
+        data: { error: { code: "shopify" } },
+        init: { status: 502 },
+      });
+      expect(JSON.stringify(res)).not.toContain("raw text");
+      expect(JSON.parse(logs[0])).toEqual({
+        level: "error",
+        msg: "Shopify request failed",
+        shop: SHOP,
+        route: "app.charts._index",
+        detail: "HTTP 503 raw text",
+      });
+      expect(m.startResolve).toHaveBeenCalledTimes(resolves);
+      if (resolves) expect(m.startResolve).toHaveBeenCalledWith(SHOP, true);
+    },
+  );
+
+  it("passes the library's login redirect on and deletes nothing", async () => {
+    const login = new Response(null, { status: 302 });
+    m.authenticate.mockRejectedValue(login);
+    await expect(del(CHART)).rejects.toBe(login);
+    expect(m.deleteChart).not.toHaveBeenCalled();
+  });
+});
+
 const row = (n: number, name: string, status: Row["status"]): Row => ({
   id: `gid://shopify/Metaobject/${n}`,
   name,
@@ -184,14 +302,22 @@ describe("the screen", () => {
   (
     globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
   ).IS_REACT_ACT_ENVIRONMENT = true;
-  // Each load streams the next list; the last one repeats.
+  // Each load streams the next list; the last one repeats. `answers` are the
+  // delete action's, in turn; `posted` collects the ids it was sent.
+  let answers: unknown[] = [];
+  let posted: unknown[] = [];
   const show = async (...lists: Promise<List>[]) => {
     let calls = 0;
+    posted = [];
     const Stub = createRoutesStub([
       {
         path: "/",
         Component: SizeCharts,
         loader: () => ({ list: lists[Math.min(calls++, lists.length - 1)] }),
+        action: async ({ request }) => {
+          posted.push((await request.formData()).get("id"));
+          return answers.shift();
+        },
       },
     ]);
     const el = document.createElement("div");
@@ -301,5 +427,132 @@ describe("the screen", () => {
     const link = banner?.querySelector("s-link");
     expect(link?.getAttribute("href")).toBe(PLANS);
     expect(link?.getAttribute("target")).toBe("_top");
+  });
+
+  describe("delete", () => {
+    const one = (n: number) => [
+      ...ROWS,
+      { ...row(4, "Belts", "DRAFT"), products: { count: n, atLeast: false } },
+    ];
+    const open = async (el: Element, name: string) => {
+      const menu = el.querySelector(
+        `s-menu[accessibilityLabel="Actions for ${name}"]`,
+      ) as HTMLElement;
+      const trigger = el.querySelector(
+        `s-button[accessibilityLabel="Actions for ${name}"]`,
+      );
+      expect(trigger?.getAttribute("commandFor")).toBe(menu.id);
+      const item = menu.querySelector("s-button") as HTMLElement;
+      expect(item.getAttribute("commandFor")).toBe("delete-chart");
+      expect(item.getAttribute("command")).toBe("--show");
+      await act(async () => item.click());
+      return el.querySelector("s-modal#delete-chart") as HTMLElement;
+    };
+
+    it.each([
+      [
+        "Women's tops",
+        0,
+        "It shows on 10 products. They'll show the next chart that matches them, or no size guide.",
+      ],
+      [
+        "Shoes",
+        0,
+        "It shows on 30+ products. They'll show the next chart that matches them, or no size guide.",
+      ],
+      [
+        "Belts",
+        1,
+        "It shows on 1 product. They'll show the next chart that matches them, or no size guide.",
+      ],
+      ["Belts", 0, "No products show it."],
+    ])("names %s and how many products show it", async (name, n, copy) => {
+      const el = await show(Promise.resolve({ rows: one(n), limit: null }));
+      const modal = await open(el, name);
+      expect(modal.getAttribute("heading")).toBe(`Delete ${name}?`);
+      expect(modal.textContent).toContain(copy);
+      expect(modal.querySelector("s-banner")).toBeNull();
+      const cancel = button(modal, "Cancel");
+      expect(cancel.getAttribute("command")).toBe("--hide");
+      expect(cancel.getAttribute("commandFor")).toBe("delete-chart");
+    });
+
+    it("deletes the chart and reloads the list without it", async () => {
+      answers = [{ ok: true }];
+      const el = await show(
+        Promise.resolve({ rows: ROWS, limit: null }),
+        Promise.resolve({ rows: ROWS.slice(1), limit: null }),
+      );
+      const modal = await open(el, "Women's tops");
+      const hide = vi.fn();
+      Object.assign(modal, { hideOverlay: hide });
+      await act(async () => button(modal, "Delete").click());
+      await act(() => new Promise((r) => setTimeout(r, 10)));
+      expect(posted).toEqual(["gid://shopify/Metaobject/1"]);
+      expect(hide).toHaveBeenCalledOnce();
+      expect(el.querySelectorAll("s-table-row")).toHaveLength(2);
+      expect(el.textContent).not.toContain("Women's tops");
+    });
+
+    it("keeps the confirmation open with the reason and Try again", async () => {
+      answers = [
+        { error: { code: "shopify", message: "Fitted didn't get an answer." } },
+        { ok: true },
+      ];
+      const el = await show(Promise.resolve({ rows: ROWS, limit: null }));
+      const modal = await open(el, "Women's tops");
+      const hide = vi.fn();
+      Object.assign(modal, { hideOverlay: hide });
+      await act(async () => button(modal, "Delete").click());
+      await act(() => new Promise((r) => setTimeout(r, 10)));
+      const banner = modal.querySelector("s-banner");
+      expect(banner?.getAttribute("tone")).toBe("critical");
+      expect(banner?.getAttribute("heading")).toBe(
+        "We couldn't delete this chart",
+      );
+      expect(banner?.textContent).toBe("Fitted didn't get an answer.");
+      expect(hide).not.toHaveBeenCalled();
+
+      await act(async () => button(modal, "Try again").click());
+      await act(() => new Promise((r) => setTimeout(r, 10)));
+      expect(posted).toHaveLength(2);
+      expect(hide).toHaveBeenCalledOnce();
+    });
+
+    it("opens fresh after a failure, for another chart or the same one", async () => {
+      answers = [{ error: { code: "shopify", message: "No answer." } }];
+      const el = await show(Promise.resolve({ rows: ROWS, limit: null }));
+      let modal = await open(el, "Women's tops");
+      await act(async () => button(modal, "Delete").click());
+      await act(() => new Promise((r) => setTimeout(r, 10)));
+      expect(modal.querySelector("s-banner")).not.toBeNull();
+      for (const name of ["Women's tops", "Kids' outerwear"]) {
+        modal = await open(el, name);
+        expect(modal.querySelector("s-banner")).toBeNull();
+        expect(button(modal, "Delete")).toBeDefined();
+      }
+    });
+
+    it("shows Delete loading and Cancel disabled while it deletes", async () => {
+      answers = [new Promise(() => {})];
+      const el = await show(Promise.resolve({ rows: ROWS, limit: null }));
+      const modal = await open(el, "Women's tops");
+      expect(button(modal, "Cancel").hasAttribute("disabled")).toBe(false);
+      await act(async () => button(modal, "Delete").click());
+      await act(() => new Promise((r) => setTimeout(r, 10)));
+      expect(button(modal, "Delete").hasAttribute("loading")).toBe(true);
+      expect(button(modal, "Cancel").hasAttribute("disabled")).toBe(true);
+    });
+
+    it("shows a refused id's message from the action", async () => {
+      answers = [{ fieldErrors: { id: "Reload the page and try again." } }];
+      const el = await show(Promise.resolve({ rows: ROWS, limit: null }));
+      const modal = await open(el, "Kids' outerwear");
+      await act(async () => button(modal, "Delete").click());
+      await act(() => new Promise((r) => setTimeout(r, 10)));
+      expect(modal.querySelector("s-banner")?.textContent).toBe(
+        "Reload the page and try again.",
+      );
+    });
   });
 });
