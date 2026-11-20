@@ -591,6 +591,8 @@ function Editor(props: { loaded: Loaded; themeUrl: string }) {
           variant="primary"
           onClick={save}
           loading={saving ? "" : undefined}
+          // A save remounts the editor, which would drop the upload.
+          disabled={fontUpload.sending}
         >
           Save
         </button>

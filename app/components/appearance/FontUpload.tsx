@@ -49,15 +49,23 @@ export function useFontUpload(font: Font, put: (v: Font) => void) {
     form.append("file", f);
     uploader.submit(form, { method: "post", encType: "multipart/form-data" });
   };
-  // A picked file takes the old font's place, uploaded or not.
+  // A font that passes the checks takes the old font's place, uploaded or
+  // not; an unreadable file reads as not a font.
   const pick = async (f?: File) => {
     if (!f) return;
-    put("theme");
     setFile(f);
-    const head = new Uint8Array(await f.slice(0, 4).arrayBuffer());
+    const head = new Uint8Array(
+      await f
+        .slice(0, 4)
+        .arrayBuffer()
+        .catch(() => new ArrayBuffer(0)),
+    );
     if (!fontType(f.name, head)) setView("type");
     else if (f.size > FONT_MAX) setView("size");
-    else send(f);
+    else {
+      put("theme");
+      send(f);
+    }
   };
   const reset = (v: View | null = null) => {
     sentOver.current = null;
@@ -187,5 +195,6 @@ export function useFontUpload(font: Font, put: (v: Font) => void) {
       </>
     ),
     reset: () => reset(),
+    sending,
   };
 }

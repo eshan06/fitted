@@ -814,4 +814,106 @@ describe("font upload screen", () => {
     expect(text()).toContain("saved in your Shopify Files");
     expect(labelled("Font").value).toBe("upload");
   });
+
+  // The staged upload's POST waits until `release` is called.
+  const holdUpload = () => {
+    const { calls, sent } = fakeFiles();
+    let release = () => {};
+    sent.mockImplementation(
+      () =>
+        new Promise((r) => {
+          release = () => r(new Response(null, { status: 204 }));
+        }),
+    );
+    return { calls, release: () => release() };
+  };
+  const button = (label: string) =>
+    [...document.querySelectorAll("button")].find(
+      (b) => b.textContent === label,
+    )!;
+
+  it("takes a dropped file", async () => {
+    const { calls } = fakeFiles();
+    await open();
+    await type(labelled("Font"), "upload");
+    const drop = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(drop, "dataTransfer", {
+      value: { files: [font("Sora-Regular.woff2")] },
+    });
+    await act(async () =>
+      document.querySelector(".font-drop")!.dispatchEvent(drop),
+    );
+    await settle();
+    expect(drop.defaultPrevented).toBe(true);
+    expect(calls).toHaveLength(3);
+    expect(text()).toContain("Sora-Regular.woff2");
+    expect(text()).toContain("saved in your Shopify Files");
+  });
+
+  it("holds Save while a font uploads, then saves it with the other edits", async () => {
+    const upload = holdUpload();
+    await open();
+    await type(byId("label"), "Fit guide");
+    await type(labelled("Font"), "upload");
+    await choose(font("Sora-Regular.woff2"));
+    expect(document.querySelector('[role="status"]')!.textContent).toBe(
+      "Uploading Sora-Regular.woff2",
+    );
+    expect(button("Save").disabled).toBe(true);
+    upload.release();
+    await settle();
+    expect(button("Save").disabled).toBe(false);
+    await click("Save");
+    expect(store.value!.popup.font).toEqual({ fileUrl: FILE_URL });
+    expect(store.value!.text.en.label).toBe("Fit guide");
+  });
+
+  it("drops an upload when Match my theme is picked while it runs", async () => {
+    const upload = holdUpload();
+    await open();
+    await type(labelled("Font"), "upload");
+    await choose(font("Sora-Regular.woff2"));
+    await type(labelled("Font"), "theme");
+    upload.release();
+    await settle();
+    expect(labelled("Font").value).toBe("theme");
+    expect(text()).not.toContain("Sora-Regular.woff2");
+    expect(saveBar()).toBeNull();
+  });
+
+  it("keeps a stored font through a refused Replace, and Discard brings it back after a failed one", async () => {
+    const s = saved();
+    s.popup.font = { fileUrl: "https://cdn.shopify.com/s/files/1/a.woff2" };
+    store = fakeStore(s);
+    fakeFiles({ target: 503 });
+    await open();
+    await choose(font("notes.txt"));
+    expect(text()).toContain("notes.txt isn't a font file");
+    expect(saveBar()).toBeNull();
+
+    await choose(font("Sora-Regular.woff2"));
+    expect(text()).toContain("Sora-Regular.woff2 didn't upload");
+    await click("Discard");
+    expect(document.querySelector('[role="alert"]')).toBeNull();
+    expect(text()).toContain("a.woff2Saved in your Shopify Files");
+
+    await type(labelled("Font"), "theme");
+    await click("Save");
+    expect(store.value!.popup.font).toBe("theme");
+  });
+
+  it("says an unreadable file isn't a font", async () => {
+    const { calls } = fakeFiles();
+    await open();
+    await type(labelled("Font"), "upload");
+    const f = font("Sora.woff2");
+    f.slice = () => {
+      const b = new Blob();
+      b.arrayBuffer = () => Promise.reject(new DOMException("gone"));
+      return b;
+    };
+    await choose(f);
+    expect(text()).toContain("Sora.woff2 isn't a font file");
+    expect(calls).toEqual([]);
+  });
 });
