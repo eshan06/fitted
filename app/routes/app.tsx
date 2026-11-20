@@ -19,7 +19,7 @@ import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { authenticate } from "../shopify.server";
 import {
   getPlan,
-  planConfirmedAt,
+  lastConfirmedPlan,
   type Plan,
   type PlanState,
 } from "../models/billing.server";
@@ -30,19 +30,25 @@ export type PlanCheck = PlanState & { confirmed: string | null };
 // never holds up the screen. A screen can read it from here instead of calling
 // getPlan in its own loader; gated actions call getPlan themselves.
 async function planCheck(shop: string): Promise<PlanCheck> {
+  let state: PlanState | null = null;
   try {
-    const state = await getPlan(shop);
-    const at = state.checkFailed ? await planConfirmedAt(shop) : null;
-    const confirmed =
-      at?.toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-        timeZone: "UTC",
-      }) ?? null;
-    return { ...state, confirmed };
+    // A check still running when the stream must close (entry.server.tsx)
+    // shows as not answered; the check itself carries on.
+    state = await Promise.race([getPlan(shop), sleep(SHOW_WITHIN_MS)]);
+    if (state && !state.checkFailed) return { ...state, confirmed: null };
+    const last = await lastConfirmedPlan(shop);
+    return {
+      plan: state?.plan ?? last.plan,
+      checkFailed: true,
+      confirmed:
+        last.at?.toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+          timeZone: "UTC",
+        }) ?? null,
+    };
   } catch (error) {
-    // The billing module's rule for a plan it can't confirm: Free.
     console.log(
       JSON.stringify({
         level: "error",
@@ -52,9 +58,13 @@ async function planCheck(shop: string): Promise<PlanCheck> {
         error: String(error),
       }),
     );
-    return { plan: "free", checkFailed: true, confirmed: null };
+    // The billing module's rule for a plan it can't confirm: Free.
+    return { plan: state?.plan ?? "free", checkFailed: true, confirmed: null };
   }
 }
+const SHOW_WITHIN_MS = 4_000; // under entry.server.tsx's 5-second streamTimeout
+const sleep = (ms: number) =>
+  new Promise<null>((resolve) => setTimeout(() => resolve(null), ms));
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -65,7 +75,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // The redirected load joins this check, and reports it if it fails.
     getPlan(session.shop, { recheck: true }).catch(() => {});
     url.searchParams.delete("plan_handle");
-    throw redirect(url.pathname + url.search);
+    // One leading slash: "//host" would leave the app.
+    throw redirect(url.pathname.replace(/^\/+/, "/") + url.search);
   }
 
   return {
@@ -101,7 +112,8 @@ export default function App() {
         <s-link href={href("/app/appearance")}>Appearance & languages</s-link>
       </s-app-nav>
       <Suspense fallback={null}>
-        <Await resolve={plan}>
+        {/* Only past the stream's limit, which planCheck stays under. */}
+        <Await resolve={plan} errorElement={null}>
           {(check) => <PlanCheckBanner {...check} />}
         </Await>
       </Suspense>

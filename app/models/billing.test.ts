@@ -105,19 +105,20 @@ describe("plan gates", () => {
   );
 });
 
-describe("planConfirmedAt", () => {
-  it("gives when the session's shop last had its plan confirmed, or null", async () => {
+describe("lastConfirmedPlan", () => {
+  it("gives the session's shop's last confirmed plan and when, or Free and null", async () => {
     findUnique.mockResolvedValueOnce(row("standard", 90));
-    await expect(billing.planConfirmedAt(shop)).resolves.toEqual(
-      new Date(now.getTime() - 90 * 60_000),
-    );
-    expect(findUnique).toHaveBeenCalledWith({
-      where: { shop },
-      select: { planCheckedAt: true },
+    await expect(billing.lastConfirmedPlan(shop)).resolves.toEqual({
+      plan: "standard",
+      at: new Date(now.getTime() - 90 * 60_000),
     });
+    expect(findUnique).toHaveBeenCalledWith({ where: { shop } });
 
     findUnique.mockResolvedValueOnce(null); // never confirmed, or uninstalled
-    await expect(billing.planConfirmedAt(shop)).resolves.toBeNull();
+    await expect(billing.lastConfirmedPlan(shop)).resolves.toEqual({
+      plan: "free",
+      at: null,
+    });
   });
 });
 
