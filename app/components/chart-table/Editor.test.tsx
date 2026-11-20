@@ -475,6 +475,28 @@ describe("chart editor screen", () => {
     expect(byLabel("XS, Bust").value).toBe("31–32");
   });
 
+  it("stays where the merchant went when they leave before the save bar hides", async () => {
+    let hidden = () => {};
+    bridge.saveBar.hide.mockImplementation(
+      () => new Promise<void>((r) => (hidden = r)),
+    );
+    await open(
+      [newChart, newChart],
+      [{ status: 200, body: { created: "42" } }],
+      "/app/charts/new",
+    );
+    await createJeans();
+    await act(async () =>
+      [...document.querySelectorAll<HTMLElement>("a")]
+        .find((a) => a.textContent === "Size charts")!
+        .click(),
+    );
+    await settle();
+    await act(async () => hidden());
+    await settle();
+    expect(text()).toContain("Left for /app/charts");
+  });
+
   it("links More actions to the chart's version history, except on a new chart", async () => {
     await open([stored()]);
     const link = [...document.querySelectorAll("details.more a")].find(
