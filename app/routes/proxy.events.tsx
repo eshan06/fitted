@@ -106,12 +106,11 @@ function tally(map: Map<string, Count>, key: string, until: number) {
   return c;
 }
 
-// The shopper's IP, on the layout §12 expects: Shopify adds it to
-// X-Forwarded-For as it signs the request on, and the host in front of this
-// app adds Shopify's after it. Entries before it are whatever the browser
-// sent. Without it, only the day's cap applies, so no shopper's event is
-// refused for another's. The counts key a hash of it under a key this process
-// never shares, so no IP outlives its request.
+// The shopper's IP, on the layout §12 records: Shopify replaces
+// X-Forwarded-For with it as it signs the request on, and the host in front of
+// this app adds Shopify's address after it. Without it, only the day's cap
+// applies, so no shopper's event is refused for another's. The counts key a
+// hash of it under a key this process never shares, so they hold no IP.
 const shopperIp = (request: Request) =>
   request.headers.get("x-forwarded-for")?.split(",").at(-2)?.trim();
 const IP_KEY = randomBytes(32);
