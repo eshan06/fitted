@@ -555,4 +555,133 @@ describe("the screen", () => {
       );
     });
   });
+
+  describe("export", () => {
+    const FILE = "fitted-charts-2026-11-19.csv";
+    // The export's bytes: a UTF-8 BOM, then the CSV.
+    const BYTES = [0xef, 0xbb, 0xbf, ...new TextEncoder().encode("Fitted,1\n")];
+    const csv = () =>
+      new Response(new Uint8Array(BYTES), {
+        headers: {
+          "Content-Type": "text/csv; charset=utf-8",
+          "Content-Disposition": `attachment; filename="${FILE}"`,
+        },
+      });
+    let fetched: string[];
+    let saved: { blob: Blob; name: string }[];
+    let answer: () => Promise<Response>;
+    beforeEach(() => {
+      fetched = [];
+      saved = [];
+      vi.stubGlobal("fetch", (url: string) => {
+        fetched.push(url);
+        return answer();
+      });
+      const blobs = new Map<string, Blob>();
+      URL.createObjectURL = (b: Blob) => {
+        blobs.set(`blob:${blobs.size}`, b);
+        return `blob:${blobs.size - 1}`;
+      };
+      URL.revokeObjectURL = () => {};
+      vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(
+        function (this: HTMLAnchorElement) {
+          saved.push({ blob: blobs.get(this.href)!, name: this.download });
+        },
+      );
+    });
+    afterEach(() => vi.unstubAllGlobals());
+    const exportCsv = async (el: Element, label = "Export CSV") => {
+      await act(async () => button(el, label).click());
+      await act(() => new Promise((r) => setTimeout(r, 10)));
+    };
+
+    it("offers Export CSV only over a list of charts", async () => {
+      const loaded = await show(Promise.resolve({ rows: ROWS, limit: null }));
+      expect(button(loaded, "Export CSV").slot).toBe("secondary-actions");
+      for (const list of [
+        new Promise<List>(() => {}),
+        Promise.resolve({ rows: [], limit: null }),
+        Promise.resolve({ error: { code: "shopify", message: "x" } }),
+      ]) {
+        const el = await show(list as Promise<List>);
+        expect(button(el, "Export CSV")).toBeUndefined();
+      }
+    });
+
+    it("downloads every chart's CSV, BOM included, and warns about spreadsheets", async () => {
+      answer = async () => csv();
+      const el = await show(Promise.resolve({ rows: ROWS, limit: null }));
+      await exportCsv(el);
+      expect(fetched).toEqual(["/app/export"]);
+      expect(saved).toHaveLength(1);
+      expect(saved[0].name).toBe(FILE);
+      expect([...new Uint8Array(await saved[0].blob.arrayBuffer())]).toEqual(
+        BYTES,
+      );
+      const banner = el.querySelector("s-banner");
+      expect(banner?.getAttribute("tone")).toBe("info");
+      expect(banner?.getAttribute("heading")).toBe(
+        `Exported 3 charts to ${FILE}`,
+      );
+      expect(banner?.textContent).toBe(
+        "It's in your downloads. If you save it from Excel or Google Sheets, check your sizes before importing it again, since they can turn 10-12 into a date or 00 into 0.",
+      );
+      expect(button(el, "Export CSV")).toBeDefined();
+    });
+
+    it("shows Exporting while the file builds, and ignores a second click", async () => {
+      let finish: (r: Response) => void = () => {};
+      answer = () => new Promise((r) => (finish = r));
+      const el = await show(Promise.resolve({ rows: ROWS, limit: null }));
+      await exportCsv(el);
+      const busy = button(el, "Exporting");
+      expect(busy.hasAttribute("loading")).toBe(true);
+      expect(el.querySelector('[role="status"]')?.textContent).toBe(
+        "Exporting 3 charts to CSV",
+      );
+      await exportCsv(el, "Exporting");
+      expect(fetched).toHaveLength(1);
+      await act(async () => finish(csv()));
+      await act(() => new Promise((r) => setTimeout(r, 10)));
+      expect(saved).toHaveLength(1);
+      expect(el.querySelector('[role="status"]')).toBeNull();
+    });
+
+    it.each([
+      [
+        "Shopify failed (502)",
+        async () =>
+          Response.json(
+            { error: { code: "shopify", message: "x" } },
+            { status: 502 },
+          ),
+      ],
+      ["the network failed", () => Promise.reject(new TypeError("offline"))],
+      [
+        "a page came back instead of the file",
+        async () =>
+          new Response("<html></html>", {
+            headers: { "Content-Type": "text/html" },
+          }),
+      ],
+    ])("saves nothing when %s, and Try again exports", async (_, failed) => {
+      answer = failed;
+      const el = await show(Promise.resolve({ rows: ROWS, limit: null }));
+      await exportCsv(el);
+      expect(saved).toHaveLength(0);
+      const banner = el.querySelector("s-banner");
+      expect(banner?.getAttribute("tone")).toBe("critical");
+      expect(banner?.getAttribute("heading")).toBe("Charts didn't export");
+      expect(banner?.querySelector("s-paragraph")?.textContent).toBe(
+        "Shopify didn't respond, so no file was downloaded. Your charts haven't changed.",
+      );
+
+      answer = async () => csv();
+      await exportCsv(banner!, "Try again");
+      expect(saved).toHaveLength(1);
+      expect(el.querySelector("s-banner")?.getAttribute("heading")).toBe(
+        `Exported 3 charts to ${FILE}`,
+      );
+    });
+  });
 });
