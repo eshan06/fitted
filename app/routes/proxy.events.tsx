@@ -81,17 +81,21 @@ async function read(request: Request) {
   return text + decoder.decode();
 }
 
-// Requests counted per key until a time. A map at MAX_KEYS drops the key whose
-// count started first, so the maps stay bounded.
+// Requests counted per key until a time. Each map holds its counts in the
+// order they end, so ended ones, with their IPs, go from the front on the next
+// request, and a map at MAX_KEYS drops its oldest count.
 // ponytail: counts live in this one instance's memory (§17); a shared store if
 // Railway ever runs two.
 type Count = { n: number; until: number };
 const perIp = new Map<string, Count>();
 const perShop = new Map<string, Count>();
 function tally(map: Map<string, Count>, key: string, until: number) {
+  for (const [k, c] of map) {
+    if (c.until > Date.now()) break;
+    map.delete(k);
+  }
   let c = map.get(key);
-  if (!c || c.until <= Date.now()) {
-    map.delete(key);
+  if (!c) {
     if (map.size >= MAX_KEYS) map.delete(map.keys().next().value as string);
     map.set(key, (c = { n: 0, until }));
   }
