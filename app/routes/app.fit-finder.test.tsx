@@ -1279,6 +1279,11 @@ describe("the question editor", () => {
       "Pick at least one size for this answer.",
     );
     expect(labelled("Answer 1").getAttribute("aria-invalid")).toBe("true");
+    const group = answer(1).querySelector('[role="group"]')!;
+    expect(
+      document.getElementById(group.getAttribute("aria-describedby")!)!
+        .textContent,
+    ).toBe("Pick at least one size for this answer.");
     expect(listed()).toHaveLength(3);
 
     await type(labelled("Answer 1"), " Narrow ");
