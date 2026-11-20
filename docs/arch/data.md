@@ -147,7 +147,7 @@ type Settings = {
     | { mode: "theme" }
     | { mode: "custom"; text: string; accent: string; background: string };
   units: { default: "country" | "in" | "cm"; toggle: boolean };
-  css: string; // at most 10 KB, refused if it contains "<"
+  css: string; // at most 10 KB; no "<", "\" or @import; loads files only through url() to Shopify Files
   fitFinder: {
     type: "basic" | "advanced" | "custom";
     answers: "inputs" | "sliders";
