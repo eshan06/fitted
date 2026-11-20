@@ -17,6 +17,26 @@
     "kg": "kg",
     "choose": "Choose size {size}",
     "selected": "Selected: {size}",
-    "select": "Select {size}"
+    "select": "Select {size}",
+    "sections": "Size guide sections",
+    "fit": "Find my size",
+    "optional": "{question} (optional)",
+    "no_tape": "No tape measure? Leave {measure} empty and we'll start from the size you usually wear.",
+    "snug": "Snug",
+    "regular": "Regular",
+    "relaxed": "Relaxed",
+    "recommend": "We recommend {size}",
+    "measured": "Your {value} {unit} {col}{ease}",
+    "eased": " with {ease} of ease",
+    "liked": ", and you like a {fit} fit",
+    "stretched": ", counting the fabric's stretch",
+    "so": ", so {size}",
+    "why_in": "{m} falls in {size} on this chart{stretch}{fit}{so}.",
+    "why_between": "{m} falls between {below} and {above} on this chart{fit}, so {size}.",
+    "why_large": "{m} is past {size}, the largest size on this chart.",
+    "why_small": "{m} is below {size}, the smallest size on this chart.",
+    "why_usual": "You usually wear {size}{fit}{so}.",
+    "why_choice": "Your answers leave only {size} on this chart.",
+    "no_fit": "We couldn't find a good match. Check the size chart or message us."
   }
 }

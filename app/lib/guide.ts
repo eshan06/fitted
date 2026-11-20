@@ -1,14 +1,25 @@
 // The shopper's size guide (ARCHITECTURE §9): re-validates the chart Liquid
 // printed and draws the Size chart tab: the US/UK/EU/AU and in/cm switches,
 // the tables, row select, and the footer that picks the size in the theme's
-// product form. No dependencies and no React, so the admin preview (#23) can
-// draw with it too. Chart words reach the page only as text nodes and
-// attribute values, never as HTML.
+// product form, and on Pro the Find my size tab (§10). No dependencies and
+// no React, so the admin preview (#23) can draw with it too. Chart words reach
+// the page only as text nodes and attribute values, never as HTML.
 import { COLOR, FONT_URL, cssProblem } from "./appearance";
-import { convert, type Column, type Table, type Unit } from "./fit-finder";
+import {
+  convert,
+  findSize,
+  type Answers,
+  type Column,
+  type Fit,
+  type FitResult,
+  type Question,
+  type Table,
+  type Unit,
+} from "./fit-finder";
 import { tableCss } from "./guide-css";
 
 type Sys = "in" | "cm"; // inches and pounds, or centimeters and kilograms
+type Measure = Extract<Column, { kind: "measure" }>;
 type Grid = Table & {
   merges?: { row: string; col: string; rows: number; cols: number }[];
   wrap?: string[];
@@ -35,6 +46,7 @@ export type Guide = {
   quick: boolean; // in a theme's quick view
   featured: boolean; // in a featured product section
   selector: string; // the element the app embed's link goes after
+  raw: Record<string, unknown>; // all the snippet printed, for guide.js
 };
 
 const isObj = (v: unknown): v is Record<string, unknown> =>
@@ -180,7 +192,36 @@ export function parseGuide(json: string | null | undefined): Guide | null {
     quick: place.quickView === true,
     featured: place.featured === true,
     selector,
+    raw: d,
   };
+}
+
+// The fit finder a Pro store's chart printed (§10), checked again like the
+// tables, or null, which leaves out Find my size.
+function fitOf(g: Guide) {
+  const { plan, chart } = g.raw as { plan: unknown; chart: { fit?: unknown } };
+  const f = chart.fit;
+  const table = isObj(f) && g.tables.find((tb) => tb.id === f.table);
+  if (plan !== "pro" || !isObj(f) || !table) return null;
+  const measure = (c: unknown) =>
+    table.columns.some((x) => x.id === c && x.kind === "measure");
+  const ok =
+    ["none", "some", "high"].includes(f.stretch as string) &&
+    isObj(f.ease) &&
+    Object.values(f.ease).every((n) => typeof n === "number") &&
+    list(f.questions, 6) &&
+    f.questions.every(
+      (q) =>
+        isObj(q) &&
+        isId(q.id) &&
+        (q.kind === "measure"
+          ? measure(q.col)
+          : q.kind === "choice"
+            ? list(q.options, 20) &&
+              q.options.every((o) => isObj(o) && isId(o.id) && list(o.rows, 60))
+            : q.kind === "usual_size" || q.kind === "fit"),
+    );
+  return ok ? { table, fit: f as Fit } : null;
 }
 
 type Kid = Node | string | false | null | undefined;
@@ -213,18 +254,18 @@ const systemOf = (country: string) =>
 const FORM = 'form[action*="/cart/add"]';
 
 /**
- * Tells Fitted what the shopper did in the guide (ARCHITECTURE §12): the type
- * and the chart and product ids the block's snippet printed, never anything
- * about the shopper. Sent once, never retried, and not at all without those
- * ids, as in the admin preview.
+ * Tells Fitted what the shopper did in the guide (ARCHITECTURE §12): the type,
+ * the chart and product ids the block's snippet printed, and a fit result's
+ * size row id, never anything about the shopper. Sent once, never retried,
+ * and not at all without those ids, as in the admin preview.
  */
-function track(root: HTMLElement, type: string) {
+function track(root: HTMLElement, type: string, size?: string) {
   const ids = root.closest<HTMLElement>(".fitted-guide")?.dataset;
   if (!ids?.chart || !ids.product) return;
   const { chart, product } = ids;
   try {
     const id = crypto.randomUUID();
-    const event = JSON.stringify({ id, type, chart, product });
+    const event = JSON.stringify({ id, type, chart, product, size });
     navigator.sendBeacon("/apps/fitted/events", event);
   } catch {
     // A browser without sendBeacon or randomUUID sends nothing.
@@ -385,8 +426,9 @@ export function render(root: HTMLElement, g: Guide) {
   };
 
   // The theme's size controls: radios and selects around the product form
-  // nearest the block, never past its section, skipping variant ids and
-  // quantities. Read fresh each time, as themes redraw them.
+  // nearest the block, never past its section, skipping variant ids,
+  // quantities and the guide's own fields. Read fresh each time, as themes
+  // redraw them.
   const controls = () => {
     const block = root.closest(".fitted-guide");
     const end = block?.closest(".shopify-section");
@@ -396,7 +438,11 @@ export function render(root: HTMLElement, g: Guide) {
       "input[type=radio], select",
     );
     return [...(els ?? [])].filter(
-      (el) => !el.disabled && el.name !== "id" && el.name !== "quantity",
+      (el) =>
+        !el.disabled &&
+        el.name !== "id" &&
+        el.name !== "quantity" &&
+        !el.closest(".fitted-guide"),
     );
   };
   const option = (el: HTMLSelectElement, size: string) =>
@@ -458,10 +504,11 @@ export function render(root: HTMLElement, g: Guide) {
     vals: string[],
     on: string,
     say = (v: string) => v,
+    look = "fitted-seg",
   ) =>
     h(
       "div",
-      { role: "group", "aria-label": t(name), class: "fitted-seg" },
+      { role: "group", "aria-label": t(name), class: look },
       ...vals.map((v) =>
         h(
           "button",
@@ -479,19 +526,268 @@ export function render(root: HTMLElement, g: Guide) {
       toggle && seg("units", "fitted-sys", ["in", "cm"], sys, t),
     );
 
+  // Find my size (§10): the chart's questions, then, once each one a shopper
+  // can't skip has an answer, findSize's pick and why. Answers never leave
+  // the browser: no request carries one, and only sessionStorage keeps them,
+  // so the next product with this chart starts from them.
+  function fitTab() {
+    const found = fitOf(g);
+    if (!found) return null;
+    const { table: ft, fit } = found;
+    const qs = fit.questions;
+    const measured = qs.flatMap((q) => (q.kind === "measure" ? [q] : []));
+    const key = isStr(g.raw.handle) && `fitted:answers:${g.raw.handle}`;
+    const size = (row: string) => word(`${ft.id}.${row}.${ft.columns[0].id}`);
+    const label = (c: string) => word(`${ft.id}.${c}`);
+    const col = (c: string) => ft.columns.find((x) => x.id === c) as Measure;
+    const lower = (s: string) => s.toLocaleLowerCase(g.locale);
+    // An extension word with its {name}s filled in.
+    const fill = (k: string, v: Record<string, string>) =>
+      t(k).replace(/\{(\w+)\}/g, (_, n: string) => v[n] ?? "");
+    const comma = nf.formatToParts(0.5).some((p) => p.value === ",");
+    // A measurement as typed, like "35.5", "35,5 cm" or "90cm": in the unit
+    // it names, else the units the guide shows. Leaving the field writes it
+    // out, so the shopper sees which unit Fitted read.
+    const kinds = (c: Measure): Unit[] =>
+      ["in", "cm"].includes(c.unit ?? g.unit) ? ["in", "cm"] : ["lb", "kg"];
+    const typed = (text: string, c: Measure) => {
+      const m = /^\s*(\d+(?:[.,]\d+)?)\s*(.*)$/.exec(text);
+      const value = Number(m?.[1].replace(",", "."));
+      if (!m || !isNum(value)) return undefined;
+      const unit = kinds(c).find((u) => [u, norm(t(u))].includes(norm(m[2])));
+      return { value, unit: unit ?? shown(c.unit ?? g.unit, c.convert, sys) };
+    };
+    const written = (m: { value: number; unit: Unit }) =>
+      `${String(m.value).replace(".", comma ? "," : ".")} ${t(m.unit)}`;
+
+    // With every measurement skippable, the usual size stands in.
+    const names = measured.map((m) => lower(label(m.col)));
+    const hint =
+      names.length > 0 &&
+      measured.every((m) => m.optional) &&
+      fill("no_tape", { measure: new Intl.ListFormat(g.locale).format(names) });
+    const form = h("form", { class: "fitted-fit" });
+    for (const q of qs) {
+      const words = word(`fit.${q.id}`);
+      const opts =
+        q.kind === "fit"
+          ? ["snug", "regular", "relaxed"].map((v) => [v, t(v)])
+          : q.kind === "choice"
+            ? q.options.map((o) => [o.id, word(`fit.${q.id}.${o.id}`)])
+            : null;
+      const one = (v: string, w: string) =>
+        h(
+          "label",
+          { class: "fitted-opt" },
+          h("input", { type: "radio", name: q.id, value: v, "data-q": q.id }),
+          w,
+        );
+      form.append(
+        opts
+          ? h(
+              "fieldset",
+              {},
+              h("legend", {}, words),
+              ...opts.map(([v, w]) => one(v, w)),
+            )
+          : h(
+              "label",
+              {},
+              q.kind === "measure" && q.optional
+                ? fill("optional", { question: words })
+                : words,
+              q.kind === "measure"
+                ? h("input", {
+                    type: "text",
+                    inputmode: "decimal",
+                    autocomplete: "off",
+                    "data-q": q.id,
+                  })
+                : h(
+                    "select",
+                    { "data-q": q.id },
+                    h("option", { value: "" }),
+                    ...ft.rows.map((r) =>
+                      h("option", { value: r.id }, size(r.id)),
+                    ),
+                  ),
+            ),
+      );
+      if (q.kind === "usual_size" && hint)
+        form.append(h("p", { class: "fitted-fine" }, hint));
+    }
+    const out = h("div", { class: "fitted-result" });
+    const status = h("p", { class: "fitted-sr", role: "status" });
+    form.append(out, status);
+    const fields = (q: Question) => [
+      ...form.querySelectorAll<HTMLInputElement | HTMLSelectElement>(
+        `[data-q="${q.id}"]`,
+      ),
+    ];
+    const read = () => {
+      const a: Answers = {};
+      for (const q of qs) {
+        const el = fields(q).find(
+          (x) => x.type !== "radio" || (x as HTMLInputElement).checked,
+        );
+        if (el?.value)
+          a[q.id] =
+            q.kind === "measure" ? typed(el.value, col(q.col)) : el.value;
+      }
+      return a;
+    };
+    // What another product with this chart left, back in the fields.
+    try {
+      const old: unknown = JSON.parse(
+        (key && sessionStorage.getItem(key)) || "{}",
+      );
+      for (const q of isObj(old) ? qs : []) {
+        const a = (old as Record<string, unknown>)[q.id];
+        for (const el of fields(q))
+          if (q.kind === "measure")
+            el.value =
+              isObj(a) &&
+              isNum(a.value) &&
+              kinds(col(q.col)).includes(a.unit as Unit)
+                ? written(a as { value: number; unit: Unit })
+                : "";
+          else if (el.type === "radio")
+            (el as HTMLInputElement).checked = el.value === a;
+          else el.value = isStr(a) ? a : "";
+      }
+    } catch {
+      // No storage, or nothing readable there: the fields start empty.
+    }
+
+    // Why findSize picked what it did, in the extension's words.
+    const why = ({ reason: { key: k, values: v } }: FitResult) => {
+      const [, , base, moved] = k.split(".");
+      const s = (n: string) => (v[n] === undefined ? "" : size(`${v[n]}`));
+      const c = v.col === undefined ? null : col(`${v.col}`);
+      let m = "";
+      let stretch = "";
+      if (c) {
+        const own = c.unit ?? g.unit;
+        const unit = v.unit as Unit;
+        const ease = fit.ease[c.id];
+        const cell = ft.rows.find((r) => r.id === v[moved ? "from" : "size"])
+          ?.cells[c.id];
+        const at = convert(+v.value, unit, own);
+        // Past the size's own top value, only the stretch held it (§10).
+        if (
+          base === "in" &&
+          cell &&
+          at !== null &&
+          at + (ease || 0) > cell[cell.length - 1]
+        )
+          stretch = t("stretched");
+        const eased = `${number(ease, own, unit)} ${t(unit)}`;
+        m = fill("measured", {
+          value: nf.format(+v.value),
+          unit: t(unit),
+          col: lower(label(c.id)),
+          ease: ease ? fill("eased", { ease: eased }) : "",
+        });
+      }
+      return base === "none"
+        ? ""
+        : fill(`why_${base}`, {
+            m,
+            stretch,
+            size: s(moved ? "from" : "size"),
+            below: s("below"),
+            above: s("above"),
+            fit: v.fit ? fill("liked", { fit: lower(t(`${v.fit}`)) }) : "",
+            so: moved ? fill("so", { size: s("size") }) : "",
+          });
+    };
+    const show = (r: FitResult | null) => {
+      out.hidden = !r;
+      const text = isObj(g.raw.text) ? line(g.raw.text.noFit) : "";
+      const said = r && why(r);
+      const head =
+        r?.row === null
+          ? [text || t("no_fit")]
+          : around("recommend", h("span", {}, size(r?.row ?? "")));
+      out.replaceChildren(
+        ...(r ? [h("h3", { class: "fitted-h3" }, ...head)] : []),
+        ...(said ? [h("p", { class: "fitted-note" }, said)] : []),
+      );
+      status.textContent = [...out.children]
+        .map((k) => k.textContent)
+        .join(" ");
+    };
+    let sent: string | undefined; // the last result Fitted was told
+    // tell is false for the answers the guide opens with, which the shopper
+    // didn't give on this page.
+    const update = (tell = true) => {
+      const a = read();
+      try {
+        if (key) sessionStorage.setItem(key, JSON.stringify(a));
+      } catch {
+        // No storage: the answers last until the page goes.
+      }
+      // Every answer a shopper can't skip, and one besides a fit to go on
+      // when the finder asks one.
+      const other = qs.filter((q) => q.kind !== "fit");
+      const ready =
+        (!other.length || other.some((q) => a[q.id] !== undefined)) &&
+        qs.every(
+          (q) => (q.kind === "measure" && q.optional) || a[q.id] !== undefined,
+        );
+      const r = ready
+        ? findSize({ unit: g.unit, tables: g.tables, fit }, a)
+        : null;
+      // A result unlike the last one told.
+      if (tell && r && (r.row ?? "") !== sent) {
+        sent = r.row ?? "";
+        track(root, "fit_result", r.row ?? undefined);
+      }
+      show(r);
+    };
+    // The result follows a field the shopper leaves, a pick, or Enter, which
+    // never submits. No submit, input or change reaches a theme's form around
+    // the guide.
+    const settle = (el: HTMLInputElement) => {
+      const q = measured.find((x) => x.id === el.dataset.q);
+      const m = q && typed(el.value, col(q.col));
+      if (m) el.value = written(m);
+      update();
+    };
+    for (const type of ["submit", "input", "change"])
+      form.addEventListener(type, (e) => {
+        e.stopPropagation();
+        if (type === "submit") e.preventDefault();
+        if (type === "change") settle(e.target as HTMLInputElement);
+      });
+    form.addEventListener("keydown", (e) => {
+      const el = e.target as HTMLInputElement;
+      if (e.key !== "Enter" || el.type !== "text") return;
+      e.preventDefault();
+      settle(el);
+    });
+    update(false);
+    form.hidden = true;
+    return form;
+  }
+
   // Switches redraw only the tables, so focus stays on the switch pressed.
   root.addEventListener("click", (e) => {
     const hit = (sel: string) => {
       const el = (e.target as Element).closest<HTMLElement>(sel);
       return el && root.contains(el) ? el : null;
     };
-    const opt = hit("[data-fitted-region], [data-fitted-sys]");
+    const opt = hit(
+      "[data-fitted-region], [data-fitted-sys], [data-fitted-tab]",
+    );
     if (opt) {
       region = opt.dataset.fittedRegion ?? region;
       sys = (opt.dataset.fittedSys as Sys | undefined) ?? sys;
       opt.parentElement
         ?.querySelectorAll("button")
         .forEach((b) => b.setAttribute("aria-pressed", `${b === opt}`));
+      chart.hidden = opt.dataset.fittedTab === "fit";
+      if (finder) finder.hidden = !chart.hidden;
       draw();
     } else if (hit("[data-fitted-select]")) apply();
     else {
@@ -499,7 +795,13 @@ export function render(root: HTMLElement, g: Guide) {
       if (tr?.dataset.fittedSize) choose(tr.dataset.fittedSize);
     }
   });
-  root.replaceChildren(...[bar, part, foot].filter((k) => !!k));
+  // With Find my size, tabs: the Size chart's parts, or Find my size.
+  const chart = h("div", { class: "fitted-part" }, bar, part, foot);
+  const finder = fitTab();
+  const tabs =
+    finder &&
+    seg("sections", "fitted-tab", ["chart", "fit"], "chart", t, "fitted-tabs");
+  root.replaceChildren(...[tabs, chart, finder].filter((k) => !!k));
   draw();
   const sync = () => {
     track(root, "open");

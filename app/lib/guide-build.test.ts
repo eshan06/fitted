@@ -82,6 +82,12 @@ describe("size guide Liquid", () => {
       },
     ],
     "c.words | json": { "t1.m.size": "M", tips: "Measure snugly." },
+    "c.fit | json": {
+      table: "t1",
+      questions: [{ id: "q1", kind: "usual_size" }],
+      ease: {},
+      stretch: "none",
+    },
     "chart.strings.value | json": { "t1.m.size": "Moyen" },
     "s.units | json": { default: "cm", toggle: true },
     "s.link | json": { style: "text", icon: "none" },
@@ -99,26 +105,53 @@ describe("size guide Liquid", () => {
       { label: "Guide des tailles", header: "Tailles", noFit: "Aucune." },
     "localization.country.iso_code | json": "US",
     "request.locale.iso_code | json": "fr",
+    "plan | json": "pro",
+    "chart.system.handle | json": "c-abc0000001",
   };
+  // The data the snippet prints on a store with that plan.
+  const printed = (plan: string) =>
+    JSON.parse(
+      (/<script[^>]*>([\s\S]*)<\/script>/.exec(snippet)?.[1] ?? "")
+        .replace(
+          /\{% if plan == 'pro' %\}([\s\S]*?)\{% endif %\}/g,
+          (_, pro: string) => (plan === "pro" ? pro : ""),
+        )
+        .replace(/\{\{-?\s*([\s\S]*?)\s*-?\}\}/g, (_, out: string) =>
+          JSON.stringify(out === "plan | json" ? plan : values[out]),
+        ),
+    );
 
-  it("prints only these values, each through | json, so never content.fit", () => {
+  it("prints only these values, each through | json", () => {
     expect(outputs(snippet)).toEqual(Object.keys(values));
     expect(snippet).not.toMatch(/\becho\b/);
   });
 
-  it("reads settings only from Fitted's own metafield, which no one else writes (§4)", () => {
+  it("reads only Fitted's own metafields, which no one else writes (§4)", () => {
     expect(snippet).toContain(
       "{%- assign s = shop.metafields['$app'].settings.value -%}",
     );
-    expect(snippet.match(/metafields/g)).toHaveLength(1);
+    expect(snippet).toContain(
+      "{%- assign plan = shop.metafields['$app'].plan.value -%}",
+    );
+    expect(snippet.match(/metafields/g)).toHaveLength(2);
+  });
+
+  it("prints the fit finder and the handle that keeps its answers only on Pro (§10)", () => {
+    expect(printed("pro")).toMatchObject({
+      plan: "pro",
+      handle: "c-abc0000001",
+      chart: { fit: values["c.fit | json"] },
+    });
+    for (const plan of ["free", "standard"]) {
+      const d = printed(plan);
+      expect(d.plan).toBe(plan);
+      expect(d).not.toHaveProperty("handle");
+      expect(d.chart).not.toHaveProperty("fit");
+    }
   });
 
   it("prints data that parseGuide reads", () => {
-    const json = (
-      /<script[^>]*>([\s\S]*)<\/script>/.exec(snippet)?.[1] ?? ""
-    ).replace(/\{\{-?\s*([\s\S]*?)\s*-?\}\}/g, (_, out: string) =>
-      JSON.stringify(values[out]),
-    );
+    const json = JSON.stringify(printed("pro"));
     expect(parseGuide(json)).toMatchObject({
       unit: "in",
       roundTo: 0.5,
@@ -154,6 +187,18 @@ describe("size guide Liquid", () => {
     const en = JSON.parse(ext("locales/en.default.json")).size_guide;
     expect(new Set(used)).toEqual(new Set(Object.keys(en)));
     expect([block, embed].join()).not.toContain("size_guide.");
+  });
+
+  it("prints Find my size's words only on Pro, the plan that shows it (§10)", () => {
+    const [, before, pro] =
+      /([\s\S]*)\{%- if shop\.metafields\['\$app'\]\.plan\.value == 'pro' %\}([\s\S]*?)\{%- endif %\}/.exec(
+        guide,
+      ) ?? [];
+    const used = (src = "") =>
+      [...src.matchAll(/data-t-(\w+)=/g)].map((m) => m[1]);
+    expect(used(pro)).toEqual(expect.arrayContaining(["fit", "recommend"]));
+    expect(used(before)).toEqual(expect.arrayContaining(["chart", "select"]));
+    expect(used(before)).not.toContain("fit");
   });
 
   it("keeps {size} in the words the guide fills with a size", () => {

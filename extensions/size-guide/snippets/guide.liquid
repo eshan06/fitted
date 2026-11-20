@@ -12,7 +12,8 @@
   text and CSS values. The tab's styles come with it, after loader.js's, so
   they win over the link's and lose to custom CSS that starts .fitted-guide.
   The chart and product ids are what guide.js's events name (§12). The theme
-  editor gets none, so a merchant trying the guide adds no opens.
+  editor gets none, so a merchant trying the guide adds no opens. Find my
+  size's words come only on Pro, the one plan that shows it (§10).
 {%- endcomment -%}
 {%- assign title_id = 'fitted-title-' | append: id -%}
 <div
@@ -63,6 +64,28 @@
         data-t-choose="{{ 'size_guide.choose' | t }}"
         data-t-selected="{{ 'size_guide.selected' | t }}"
         data-t-select="{{ 'size_guide.select' | t }}"
+        {%- if shop.metafields['$app'].plan.value == 'pro' %}
+        data-t-sections="{{ 'size_guide.sections' | t }}"
+        data-t-fit="{{ 'size_guide.fit' | t }}"
+        data-t-optional="{{ 'size_guide.optional' | t }}"
+        data-t-no_tape="{{ 'size_guide.no_tape' | t }}"
+        data-t-snug="{{ 'size_guide.snug' | t }}"
+        data-t-regular="{{ 'size_guide.regular' | t }}"
+        data-t-relaxed="{{ 'size_guide.relaxed' | t }}"
+        data-t-recommend="{{ 'size_guide.recommend' | t }}"
+        data-t-measured="{{ 'size_guide.measured' | t }}"
+        data-t-eased="{{ 'size_guide.eased' | t }}"
+        data-t-liked="{{ 'size_guide.liked' | t }}"
+        data-t-stretched="{{ 'size_guide.stretched' | t }}"
+        data-t-so="{{ 'size_guide.so' | t }}"
+        data-t-why_in="{{ 'size_guide.why_in' | t }}"
+        data-t-why_between="{{ 'size_guide.why_between' | t }}"
+        data-t-why_large="{{ 'size_guide.why_large' | t }}"
+        data-t-why_small="{{ 'size_guide.why_small' | t }}"
+        data-t-why_usual="{{ 'size_guide.why_usual' | t }}"
+        data-t-why_choice="{{ 'size_guide.why_choice' | t }}"
+        data-t-no_fit="{{ 'size_guide.no_fit' | t }}"
+        {%- endif %}
       ></div>
     </div>
     <template data-state="loading">
