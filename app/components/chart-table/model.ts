@@ -656,13 +656,25 @@ export const unmerge = (d: Draft, row: string, col: string) =>
 
 type Column = Content["tables"][0]["columns"][number];
 type Country = Extract<Column, { kind: "country" }>["country"];
-// As CSV import reads a label (ARCHITECTURE §13): a country it starts or ends
-// with, or a unit at its end, searched only in its last characters.
+// A label read as CSV import's infer() reads it (docs/arch/import.md), whose
+// .server module the editor can't import, so these mirror its patterns: a
+// size system or an age, a unit at its end, or a country it starts or ends
+// with. Each matches one way only, on at most a label's last 32 characters.
+const WORDS = String.raw`inch(?:es)?|ins?|cms?|centimet(?:er|re)s?|lbs?|pounds?|kgs?|kilo(?:gram)?s?`;
+const SYS = "IT|FR|DE|ES|JP|CN|KR|BR|MX|RU";
+const SYSTEM = new RegExp(
+  String.raw`^(?:${SYS}|Ages?|Months?|Years?)(?![\p{L}\p{N}])|(?<![\p{L}\p{N}])(?:${SYS})[)\]]?$`,
+  "iu",
+);
+const OTHER = String.raw`mm|millimet(?:er|re)s?|met(?:er|re)s?|ft|oz|ounces?|grams?`;
+const LABEL_UNIT = new RegExp(
+  String.raw`(?:[\s,([-]*(?<![\p{L}\p{N}])(?:(${WORDS})|${OTHER})\.?\s*(?:[)\]]\s*)?|\s*\(\s*[gm]\s*\)\s*)$`,
+  "iu",
+);
 const COUNTRY =
   /^(US|UK|EU|AU)[RAS]?(?![\p{L}\p{N}])|(?<![\p{L}\p{N}])(US|UK|EU|AU)[RAS]?[)\]]?$/iu;
-const UNIT_END =
-  /[\s(]+(inch(?:es)?|in|cms?|centimet(?:er|re)s?)\.?\s*\)?\s*$/i;
-/** A table pasted from a spreadsheet or a web page, as text cells. */
+const UNITS = { i: "in", c: "cm", l: "lb", p: "lb", k: "kg" } as const;
+/** A table pasted from a spreadsheet or a web page, as text cells; a row may be short. */
 export type Pasted = { head: string[]; rows: string[][]; columns: Column[] };
 /**
  * The table in pasted text, or null when it holds none: a header row and at
@@ -676,14 +688,38 @@ export function readPaste(text: string): Pasted | null {
     .filter((l) => l.some(Boolean));
   if (lines.length < 2) return null;
   // Columns with nothing in them, as a spreadsheet's padding, are left out.
-  const width = lines.reduce((w, l) => Math.max(w, l.length), 0);
-  const keep = Array.from({ length: width }, (_, j) => j).filter((j) =>
-    lines.some((l) => l[j]),
-  );
+  const used: boolean[] = [];
+  for (const l of lines) l.forEach((c, j) => c && (used[j] = true));
+  const keep = used.flatMap((u, j) => (u ? [j] : []));
   if (keep.length < 2) return null;
-  const [head, ...rows] = lines.map((l) => keep.map((j) => l[j] ?? ""));
+  // How many kept columns start before index i, so a short row costs its length.
+  const before = [0];
+  for (let i = 0; i < used.length; i++) before.push(before[i] + +!!used[i]);
+  const [first, ...rows] = lines.map((l) =>
+    keep.slice(0, before[Math.min(l.length, used.length)]).map((j) => l[j]),
+  );
+  const head = keep.map((_, j) => first[j] ?? "");
+  // Filled cells and numbers per column, counted in one pass.
+  const filled = keep.map(() => 0);
+  const nums = keep.map(() => 0);
+  for (const r of rows)
+    r.forEach((c, j) => {
+      if (!c) return;
+      filled[j]++;
+      if (Array.isArray(parseCell(c))) nums[j]++;
+    });
   const columns = head.map((label, j): Column => {
     if (j === 0) return { id: "", kind: "size" };
+    if (SYSTEM.test(label)) return { id: "", kind: "text" };
+    const tail = label.slice(-32);
+    const u = LABEL_UNIT.exec(tail);
+    // A unit Fitted can't hold stays as typed, never guessed at.
+    if (u && !u[1]) return { id: "", kind: "text" };
+    if (u) {
+      head[j] = label.slice(0, label.length - tail.length + u.index);
+      const unit = UNITS[u[1][0].toLowerCase() as keyof typeof UNITS];
+      return { id: "", kind: "measure", unit, convert: true };
+    }
     const country = COUNTRY.exec(label);
     if (country)
       return {
@@ -691,22 +727,10 @@ export function readPaste(text: string): Pasted | null {
         kind: "country",
         country: (country[1] ?? country[2]).toUpperCase() as Country,
       };
-    const tail = label.slice(-24);
-    const u = UNIT_END.exec(tail);
-    if (u) {
-      head[j] = label.slice(0, label.length - tail.length + u.index);
-      return {
-        id: "",
-        kind: "measure",
-        unit: u[1][0].toLowerCase() === "c" ? "cm" : "in",
-        convert: true,
-      };
-    }
-    // Mostly words is a text column; the rest are measurements, and a cell
-    // that isn't a number comes in marked.
-    const filled = rows.filter((r) => r[j]);
-    const nums = filled.filter((r) => Array.isArray(parseCell(r[j])));
-    return nums.length * 2 < filled.length
+    // Mostly words is text. The rest are measurements, an empty column too,
+    // and a cell that isn't a number comes in marked: unlike CSV import, a
+    // tie goes to the measurement, so one typo in two sizes isn't lost.
+    return nums[j] * 2 < filled[j]
       ? { id: "", kind: "text" }
       : { id: "", kind: "measure", convert: true };
   });
@@ -779,7 +803,7 @@ export function replaceTable(d: Draft, p: Pasted): Draft {
   p.rows.forEach((r, ri) =>
     columns.forEach((c, j) => {
       const at = `${rows[ri]}.${c.id}`;
-      if (c.kind === "measure") cells[at] = r[j];
+      if (c.kind === "measure") cells[at] = r[j] ?? "";
       else if (r[j]) words[`${t.id}.${at}`] = r[j];
     }),
   );

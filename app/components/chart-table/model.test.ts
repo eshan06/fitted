@@ -706,6 +706,27 @@ describe("Paste whole chart", () => {
     expect(found(p)).toBe("Found 1 size and 2 measurements: Waist and Length");
   });
 
+  it("never reads a size system, an age or a unit it can't hold as a length", () => {
+    const p = pasted(
+      "Size\tIT\tAge\tWeight (kg)\tDiameter (mm)\tEU Bust (cm)\tFit\nS\t40\t2-3\t60\t12\t86\t1\nM\t42\t4-5\t65\t14\t90\tSlim\nL\t44\t6-7\t70\t16\t94\tRelaxed",
+    );
+    expect(p.columns.slice(1)).toEqual([
+      { id: "", kind: "text" },
+      { id: "", kind: "text" },
+      { id: "", kind: "measure", unit: "kg", convert: true },
+      { id: "", kind: "text" },
+      { id: "", kind: "measure", unit: "cm", convert: true },
+      // Mostly words is text.
+      { id: "", kind: "text" },
+    ]);
+    expect(p.head.slice(3)).toEqual([
+      "Weight",
+      "Diameter (mm)",
+      "EU Bust",
+      "Fit",
+    ]);
+  });
+
   it("finds no table in prose, one line, or one column", () => {
     for (const t of [
       "",
@@ -721,7 +742,46 @@ describe("Paste whole chart", () => {
     const start = performance.now();
     readPaste(`Size\t${"(".repeat(50000)}in\n${"9\t".repeat(50000)}`);
     readPaste(`${" ".repeat(200000)}\n${"US".repeat(100000)}\tx`);
+    // A wide header over many short rows costs each row only its own cells.
+    const wide = readPaste(
+      `${"h\t".repeat(100000)}\n${"S\t1\n".repeat(100000)}`,
+    );
+    expect(wide!.rows[0]).toEqual(["S", "1"]);
     expect(performance.now() - start).toBeLessThan(1000);
+  });
+
+  it("fills a short row's missing cells as empty", () => {
+    const next = replaceTable(
+      blankDraft(),
+      pasted("Size\tBust\tWaist\nS\t33\nM\t35\t28"),
+    );
+    expect(next.cells).toEqual({
+      "r1.c1": "33",
+      "r1.c2": "",
+      "r2.c1": "35",
+      "r2.c2": "28",
+    });
+  });
+
+  it("keeps a measurement's unit and conversion when the paste names none", () => {
+    const d = setMeasure(toDraft(chart(), "DRAFT"), "bust", {
+      unit: "cm",
+      convert: false,
+    });
+    const plain = replaceTable(d, pasted("Size\tBust\nXS\t80"));
+    expect(plain.content.tables[0].columns[1]).toEqual({
+      id: "bust",
+      kind: "measure",
+      unit: "cm",
+      convert: false,
+    });
+    const named = replaceTable(d, pasted("Size\tBust (in)\nXS\t31"));
+    expect(named.content.tables[0].columns[1]).toEqual({
+      id: "bust",
+      kind: "measure",
+      unit: "in",
+      convert: true,
+    });
   });
 
   it("replaces the table, keeps its note, and marks the cells it can't read", () => {
