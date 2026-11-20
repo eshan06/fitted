@@ -1,6 +1,14 @@
 // @vitest-environment happy-dom
 import { readFileSync } from "node:fs";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+  type MockInstance,
+} from "vitest";
 import { reasonText } from "../components/fit-finder/chart-fit";
 import { findSize, type Answers, type Fit, type Table } from "./fit-finder";
 import { parseGuide, render } from "./guide";
@@ -127,10 +135,11 @@ const pick = (root: Element, q: string, value: string) => {
   els[0].value = value;
   fire(els[0], "input", "change");
 };
-// What the result says, or null while it waits for answers.
+// What the result says, or null while it waits for answers: the pick or the
+// no-fit words, why, and which size it shows when that's another.
 const said = (root: Element) => {
   const out = root.querySelector<HTMLElement>(".fitted-result")!;
-  return out.hidden ? null : [...out.children].map((el) => el.textContent);
+  return out.hidden ? null : texts(out, ":scope > h3, :scope > .fitted-note");
 };
 const answer = (root: Element, a: Record<string, string>) => {
   for (const [q, v] of Object.entries(a))
@@ -271,6 +280,27 @@ describe("Find my size", () => {
     );
     const none = open(data({ questions: [fit.questions[1]] }));
     expect(none.querySelector(".fitted-fine")).toBeNull();
+  });
+
+  it("names sizes merged in the size column by the merge's word, as the Size chart does", () => {
+    const json = JSON.parse(data());
+    json.chart.tables[0].merges = [{ row: "l", col: "size", rows: 2, cols: 1 }];
+    json.chart.words["tops.l.size"] = "L/XL";
+    delete json.chart.words["tops.xl.size"];
+    const root = open(JSON.stringify(json));
+    const [usual] = fields(root, "q2") as HTMLSelectElement[];
+    expect([...usual.options].map((o) => o.text)).toEqual([
+      "",
+      "XS",
+      "S",
+      "M",
+      "L/XL",
+      "L/XL",
+    ]);
+    expect(answer(root, { q2: "xl", q3: "regular" })).toEqual([
+      "We recommend L/XL",
+      "You usually wear L/XL, and you like a regular fit.",
+    ]);
   });
 
   it("draws a choice's answers in their words", () => {
@@ -757,5 +787,431 @@ describe("Find my size's events (§12)", () => {
       type: "fit_result",
       size: "l",
     });
+  });
+});
+
+describe("Find my size's result screen (§7)", () => {
+  // The result's parts below the reason.
+  const bars = (root: Element) =>
+    [...root.querySelectorAll<HTMLElement>(".fitted-gauge")].map((el) => [
+      el.getAttribute("aria-label"),
+      el.lastElementChild?.getAttribute("style"),
+    ]);
+  const others = (root: Element) =>
+    [...root.querySelectorAll(".fitted-others button")].map((b) => [
+      b.textContent,
+      b.getAttribute("aria-pressed"),
+    ]);
+  const peek = (root: Element, size: string) =>
+    [...root.querySelectorAll<HTMLElement>(".fitted-others button")]
+      .find((b) => b.textContent === size)!
+      .click();
+  // findSize's place for a size on a column, as the mark's style has it.
+  const at = (f: Partial<Fit>, a: Answers, row: string, col: string) => {
+    const r = findSize(
+      { unit: "in", tables: [tops], fit: { ...fit, ...f } },
+      a,
+    );
+    return `--fitted-at: ${r.bars.find((b) => b.row === row)!.cols[col]}%;`;
+  };
+  const bust: Answers = {
+    q1: { value: 35.5, unit: "in" },
+    q2: "m",
+    q3: "regular",
+  };
+
+  it("draws the shown size's fit bar for each measurement, tight to loose, as drawn", () => {
+    const waist = { id: "q5", kind: "measure", col: "waist", optional: true };
+    const f = {
+      questions: [fit.questions[0], waist, ...fit.questions.slice(1)],
+    } as Partial<Fit>;
+    const root = open(data(f));
+    expect(
+      answer(root, { q1: "37", q5: "28", q2: "m", q3: "regular" }),
+    ).toEqual([
+      "We recommend L",
+      "Your 37 in bust falls between M and L on this chart, and you like a regular fit, so L.",
+    ]);
+    const a: Answers = {
+      q1: { value: 37, unit: "in" },
+      q5: { value: 28, unit: "in" },
+      q2: "m",
+      q3: "regular",
+    };
+    expect(bars(root)).toEqual([
+      ["Bust: just right", at(f, a, "l", "bust")],
+      ["Waist: loose", at(f, a, "l", "waist")],
+    ]);
+    expect(texts(root, ".fitted-bars > span[aria-hidden]")).toEqual([
+      "Bust",
+      "Waist",
+    ]);
+    const scale = root.querySelector(".fitted-scale")!;
+    expect(scale.getAttribute("aria-hidden")).toBe("true");
+    expect(texts(scale, "span")).toEqual(["Tight", "Just right", "Loose"]);
+    // Each bar holds the line, the just-right band and the size's mark.
+    expect(root.querySelector(".fitted-gauge")?.children).toHaveLength(3);
+  });
+
+  it("offers the pick and the sizes on either side, and shows how another would fit", () => {
+    const root = open(data());
+    answer(root, { q1: "35.5", q2: "m", q3: "regular" });
+    expect(others(root)).toEqual([
+      ["S", "false"],
+      ["M", "true"],
+      ["L", "false"],
+    ]);
+    const group = root.querySelector(".fitted-others")!;
+    expect(group.getAttribute("role")).toBe("group");
+    expect(
+      root.querySelector(`#${group.getAttribute("aria-labelledby")}`)
+        ?.textContent,
+    ).toBe("See other sizes:");
+    expect(bars(root)).toEqual([
+      ["Bust: just right", at({}, bust, "m", "bust")],
+    ]);
+
+    peek(root, "S");
+    expect(said(root)).toEqual([
+      "We recommend M",
+      "Your 35.5 in bust falls in M on this chart, and you like a regular fit.",
+      "Showing how S would fit",
+    ]);
+    expect(root.querySelector(".fitted-result strong")?.textContent).toBe("S");
+    expect(bars(root)).toEqual([["Bust: tight", at({}, bust, "s", "bust")]]);
+    expect(others(root)).toEqual([
+      ["S", "true"],
+      ["M", "false"],
+      ["L", "false"],
+    ]);
+    // Focus stays on the size pressed, though the result redraws.
+    expect(document.activeElement?.textContent).toBe("S");
+    // Screen readers hear which size the bars now show.
+    expect(root.querySelector(".fitted-fit [role=status]")?.textContent).toBe(
+      "We recommend M Your 35.5 in bust falls in M on this chart, and you like a regular fit. Showing how S would fit",
+    );
+
+    peek(root, "L");
+    expect(bars(root)).toEqual([["Bust: loose", at({}, bust, "l", "bust")]]);
+    peek(root, "M");
+    expect(said(root)).toHaveLength(2);
+    // A new result shows its own pick.
+    peek(root, "L");
+    pick(root, "q3", "snug");
+    expect(said(root)?.[0]).toBe("We recommend S");
+    expect(others(root).find(([, on]) => on === "true")).toEqual(["S", "true"]);
+  });
+
+  it("offers one size beside a pick at either end", () => {
+    const root = open(data());
+    answer(root, { q1: "31.5", q2: "xs", q3: "regular" });
+    expect(others(root)).toEqual([
+      ["XS", "true"],
+      ["S", "false"],
+    ]);
+  });
+
+  it("follows the fit bars and other sizes settings", () => {
+    const off = open(data({}, { fitFinder: { fitBars: false } }));
+    answer(off, { q1: "35.5", q2: "m", q3: "regular" });
+    // Other sizes only make sense with bars to show.
+    expect(off.querySelector(".fitted-bars, .fitted-others")).toBeNull();
+    sessionStorage.clear();
+    const alone = open(data({}, { fitFinder: { otherSizes: false } }));
+    answer(alone, { q1: "35.5", q2: "m", q3: "regular" });
+    expect(alone.querySelector(".fitted-others")).toBeNull();
+    expect(bars(alone)).toHaveLength(1);
+  });
+
+  it("has no bars or other sizes without a measurement to place", () => {
+    const root = open(data());
+    expect(answer(root, { q2: "m", q3: "regular" })?.[0]).toBe(
+      "We recommend M",
+    );
+    expect(root.querySelector(".fitted-bars, .fitted-others")).toBeNull();
+    // Nor when nothing fits.
+    sessionStorage.clear();
+    const none = open(data());
+    answer(none, { q1: "50", q2: "m", q3: "regular" });
+    expect(
+      none.querySelector(".fitted-bars, .fitted-others, .fitted-act button"),
+    ).toBeNull();
+  });
+
+  it("names measurements and sizes as text, never as HTML", () => {
+    const evil = '<img src=x onerror="alert(1)">';
+    const json = JSON.parse(data());
+    Object.assign(json.chart.words, { "tops.bust": evil, "tops.s.size": evil });
+    const root = open(JSON.stringify(json));
+    answer(root, { q1: "35.5", q2: "m", q3: "regular" });
+    peek(root, evil);
+    expect(root.querySelector("img")).toBeNull();
+    expect(bars(root)[0][0]).toBe(`${evil}: tight`);
+    expect(root.querySelector(".fitted-result strong")?.textContent).toBe(evil);
+  });
+
+  it("notes how the measurements are used under every result, the no-fit one too", () => {
+    const root = open(data());
+    answer(root, { q1: "35.5", q2: "m", q3: "regular" });
+    const link = root.querySelector<HTMLAnchorElement>(".fitted-act a")!;
+    expect(link.textContent).toBe("How we use your measurements");
+    const note = root.querySelector(link.getAttribute("href")!)!;
+    expect(note.textContent).toBe(
+      "We use these measurements to suggest a size for this product.",
+    );
+    expect(note.parentElement).toBe(root.querySelector(".fitted-result"));
+    type(root, "q1", "50");
+    expect(said(root)?.[0]).toBe(
+      "We couldn't find a good match. Check the size chart or message us.",
+    );
+    expect(root.querySelector(".fitted-act a")?.textContent).toBe(
+      "How we use your measurements",
+    );
+    expect(texts(root, ".fitted-result > .fitted-fine")).toHaveLength(1);
+    // Each guide's note has its own id.
+    const other = open(data({}, { handle: "c-dresses001" }));
+    answer(other, { q2: "m", q3: "regular" });
+    expect(other.querySelector(".fitted-act a")?.getAttribute("href")).not.toBe(
+      link.getAttribute("href"),
+    );
+  });
+
+  it("leaves the note out when it's turned off, or the finder asks no measurement", () => {
+    const off = open(data({}, { fitFinder: { note: false } }));
+    answer(off, { q1: "35.5", q2: "m", q3: "regular" });
+    expect(
+      off.querySelector(".fitted-act, .fitted-result .fitted-fine"),
+    ).toBeNull();
+    const choice = open(data({ questions: [shoulders] }));
+    pick(choice, "q4", "average");
+    expect(said(choice)?.[0]).toBe("We recommend M");
+    expect(
+      choice.querySelector(".fitted-act, .fitted-result .fitted-fine"),
+    ).toBeNull();
+  });
+});
+
+describe("Find my size's Add to cart", () => {
+  // The tops in five sizes, Size their first option.
+  const sized = {
+    id: [101, 102, 103, 104, 105],
+    o1: ["XS", "S", "M", "L", "XL"],
+    o2: [null, null, null, null, null],
+    o3: [null, null, null, null, null],
+  };
+  const button =
+    '<input type="hidden" name="id" value="103"><input name="quantity" value="1"><button type="submit" name="add">Add to cart</button>';
+  // A product section like Dawn's: the size radios, the installment form,
+  // which has no button, then the product form, and the block naming its
+  // chart and product.
+  const page = (
+    over: Record<string, unknown> = {},
+    form = button,
+    radios = ["XS", "S", "M", "L", "XL"],
+  ) => {
+    const sizes = radios
+      .map(
+        (s) =>
+          `<input type="radio" name="Size-1" value="${s}"${s === "M" ? " checked" : ""}>`,
+      )
+      .join("");
+    document.body.innerHTML = `<div class="shopify-section"><div>${sizes}<form action="/cart/add" class="installment"><input type="hidden" name="id" value="103"></form><form action="/cart/add" class="product">${form}</form><div class="fitted-guide" data-chart="gid://shopify/Metaobject/1301" data-product="gid://shopify/Product/8812"><dialog><div class="fitted-body"></div></dialog></div></div></div>`;
+    document.querySelector("dialog")!.showModal();
+    const root = document.querySelector<HTMLElement>(".fitted-body")!;
+    return open(data({}, { variants: sized, ...over }), root);
+  };
+  // What each theme form submitted, and with which button.
+  const submitted = () => {
+    const seen: unknown[] = [];
+    for (const form of document.querySelectorAll<HTMLFormElement>(
+      "form[action]",
+    ))
+      form.addEventListener("submit", (e) => {
+        e.preventDefault();
+        seen.push([
+          form.className,
+          [...new FormData(form)],
+          (e as SubmitEvent).submitter?.getAttribute("name"),
+        ]);
+      });
+    return seen;
+  };
+  const act = (root: Element) =>
+    root.querySelector<HTMLButtonElement>(".fitted-act button");
+  const theme = (size: string) =>
+    document.querySelector<HTMLInputElement>(
+      `input[name="Size-1"][value="${size}"]`,
+    )!;
+  // The block names its chart and product, so the guide sends events.
+  let beacon: MockInstance<Navigator["sendBeacon"]>;
+  beforeEach(() => {
+    beacon = vi.spyOn(navigator, "sendBeacon").mockReturnValue(true);
+  });
+
+  it("adds the size shown through the theme's product form, as its own button would", () => {
+    const root = page();
+    const sent = submitted();
+    answer(root, { q1: "35.5", q2: "m", q3: "regular" });
+    expect(act(root)?.textContent).toBe("Add M to cart");
+    [...root.querySelectorAll<HTMLElement>(".fitted-others button")]
+      .find((b) => b.textContent === "L")!
+      .click();
+    expect(act(root)?.textContent).toBe("Add L to cart");
+    beacon.mockClear();
+    act(root)!.click();
+    expect(root.closest("dialog")!.open).toBe(false);
+    // The theme hears the size picked, as with Select, and its form sends
+    // that size's variant: never an answer, never the installment form.
+    expect(theme("L").checked).toBe(true);
+    expect(sent).toEqual([
+      [
+        "product",
+        [
+          ["id", "104"],
+          ["quantity", "1"],
+        ],
+        "add",
+      ],
+    ]);
+    // Fitted hears the size row added, and nothing about the shopper.
+    const events = beacon.mock.calls.map(([, body]) =>
+      JSON.parse(body as string),
+    );
+    expect(events).toEqual([
+      {
+        id: expect.any(String),
+        type: "add_to_cart",
+        chart: "gid://shopify/Metaobject/1301",
+        product: "gid://shopify/Product/8812",
+        size: "l",
+      },
+    ]);
+  });
+
+  it("adds the variant with that size and the form's other options, though the theme hasn't updated its id yet", () => {
+    // Color, then Size. The form shows White in S; Dawn updates the id only
+    // once it has fetched the new variant, after the submit.
+    const root = page(
+      {
+        variants: {
+          id: [201, 202, 203, 204],
+          o1: ["Black", "Black", "White", "White"],
+          o2: ["S", "M", "S", "M"],
+          o3: [null, null, null, null],
+        },
+      },
+      button.replace('value="103"', 'value="203"'),
+      ["S", "M"],
+    );
+    const sent = submitted();
+    answer(root, { q1: "35.5", q2: "m", q3: "regular" });
+    act(root)!.click();
+    expect(sent).toEqual([
+      [
+        "product",
+        [
+          ["id", "204"],
+          ["quantity", "1"],
+        ],
+        "add",
+      ],
+    ]);
+  });
+
+  it.each<[string, Record<string, unknown>, string?]>([
+    ["Add to cart is off", { fitFinder: { addToCart: false } }],
+    [
+      "the product has no such variant",
+      { variants: { ...sized, o1: ["XS", "Small", "M", "L", "XL"] } },
+    ],
+    [
+      "the form is another product's",
+      {},
+      button.replace('value="103"', 'value="999"'),
+    ],
+    ["the form has no button", {}, button.replace(/<button.*<\/button>/, "")],
+    ["the variants are missing", { variants: null }],
+    ["the variants don't read", { variants: { id: ["102"], o1: ["S"] } }],
+  ])("offers Select instead when %s", (_, over, form) => {
+    const root = page(over, form);
+    const sent = submitted();
+    answer(root, { q1: "35.5", q2: "m", q3: "snug" });
+    expect(act(root)?.textContent).toBe("Select S");
+    beacon.mockClear();
+    act(root)!.click();
+    expect([theme("S").checked, root.closest("dialog")!.open]).toEqual([
+      true,
+      false,
+    ]);
+    expect(sent).toEqual([]);
+    expect(beacon).not.toHaveBeenCalled();
+  });
+
+  it("offers Select in a browser that can't submit a form as its button does", () => {
+    const { requestSubmit } = HTMLFormElement.prototype;
+    // @ts-expect-error Safari before 16 has no requestSubmit.
+    delete HTMLFormElement.prototype.requestSubmit;
+    try {
+      const root = page();
+      answer(root, { q1: "35.5", q2: "m", q3: "regular" });
+      expect(act(root)?.textContent).toBe("Select M");
+    } finally {
+      HTMLFormElement.prototype.requestSubmit = requestSubmit;
+    }
+  });
+
+  it("offers neither for a size the theme's controls don't have", () => {
+    const root = page({}, button, ["XS", "S", "M"]);
+    answer(root, { q1: "37", q2: "m", q3: "regular" });
+    expect(said(root)?.[0]).toBe("We recommend L");
+    expect(act(root)).toBeNull();
+    expect(root.querySelector(".fitted-act a")).not.toBeNull();
+  });
+
+  it("checks the theme's form again on each open", () => {
+    const id = () =>
+      document.querySelector<HTMLInputElement>(".product [name=id]")!;
+    page({}, button.replace('value="103"', 'value="999"'));
+    // The block's guide, drawn again with the sync its loader keeps.
+    const root = document.querySelector<HTMLElement>(".fitted-body")!;
+    const sync = render(root, parseGuide(data({}, { variants: sized }))!);
+    answer(root, { q1: "35.5", q2: "m", q3: "regular" });
+    expect(act(root)?.textContent).toBe("Select M");
+    id().value = "103";
+    sync();
+    expect(act(root)?.textContent).toBe("Add M to cart");
+    id().value = "999";
+    sync();
+    expect(act(root)?.textContent).toBe("Select M");
+  });
+
+  it("keeps Find my size's answers out of the theme's form, even with the guide inside it", () => {
+    // The embed's link placed inside the theme's product form.
+    document.body.innerHTML = `<div class="shopify-section"><div><input type="radio" name="Size-1" value="M" checked><form action="/cart/add" class="product">${button}<div class="fitted-guide"><dialog><div class="fitted-body"></div></dialog></div></form></div></div>`;
+    document.querySelector("dialog")!.showModal();
+    const root = open(
+      data({}, { variants: sized }),
+      document.querySelector<HTMLElement>(".fitted-body")!,
+    );
+    const sent = submitted();
+    answer(root, { q1: "35.5", q2: "m", q3: "regular" });
+    // Settling answers submits nothing.
+    expect(sent).toEqual([]);
+    act(root)!.click();
+    expect(sent).toHaveLength(1);
+    // A browser's form data holds only the fields a form owns, and every
+    // named field of Find my size belongs to its own form. (happy-dom's
+    // FormData takes every field inside the form, so the test can't ask it.)
+    const theme = document.querySelector<HTMLFormElement>(".product")!;
+    const named = root.querySelectorAll<HTMLInputElement>(".fitted-fit [name]");
+    expect(named.length).toBeGreaterThan(0);
+    for (const el of named) expect(el.form).not.toBe(theme);
+    const owned = [...theme.elements] as HTMLInputElement[];
+    expect(
+      owned.filter((el) => el.form === theme && el.name).map((el) => el.name),
+    ).toEqual(["id", "quantity", "add"]);
+    expect(theme.querySelector<HTMLInputElement>("[name=id]")?.value).toBe(
+      "103",
+    );
   });
 });

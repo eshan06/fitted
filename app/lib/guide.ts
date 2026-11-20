@@ -252,6 +252,7 @@ const systemOf = (country: string) =>
       .map((p) => p.split(":") as [string, string]),
   ).get(country) ?? country;
 const FORM = 'form[action*="/cart/add"]';
+let ids = 0; // numbers each Find my size, for its elements' ids
 
 /**
  * Tells Fitted what the shopper did in the guide (ARCHITECTURE §12): the type,
@@ -325,6 +326,18 @@ export function render(root: HTMLElement, g: Guide) {
   let pick = ""; // the picked size, as a key of labels
   const labels = new Map<string, string>(); // size key to its label as written
   const across = new Map<Element, string[]>(); // cells merged across rows: their sizes
+  // Each row's size word. A merge in the size column gives every row it
+  // covers the merge's word, so they read as one size.
+  const sizesOf = (tb: Grid) => {
+    const keys = tb.rows.map((r) =>
+      word(`${tb.id}.${r.id}.${tb.columns[0].id}`),
+    );
+    for (const m of tb.merges ?? []) {
+      const r = tb.rows.findIndex((x) => x.id === m.row);
+      if (m.col === tb.columns[0].id) keys.fill(keys[r], r, r + m.rows);
+    }
+    return keys;
+  };
 
   const table = (tb: Grid): Kid[] => {
     const own = systems(tb);
@@ -334,9 +347,7 @@ export function render(root: HTMLElement, g: Guide) {
     );
     const wrap = (c: Column) =>
       tb.wrap?.includes(c.id) ? "fitted-wrap" : undefined;
-    const keys = tb.rows.map((r) =>
-      word(`${tb.id}.${r.id}.${tb.columns[0].id}`),
-    );
+    const keys = sizesOf(tb);
     // Cells a merge covers are left out, except its first shown cell, which
     // holds the merge's top-left cell across the shown columns it spans.
     const spans = new Map<string, { c: number; rows: number; cols: number }>();
@@ -345,7 +356,6 @@ export function render(root: HTMLElement, g: Guide) {
       const r = tb.rows.findIndex((x) => x.id === m.row);
       const c = tb.columns.findIndex((x) => x.id === m.col);
       for (let i = r; i < r + m.rows; i++) {
-        if (c === 0) keys[i] = keys[r];
         for (let j = c; j < c + m.cols; j++) covered.add(`${i},${j}`);
       }
       const inside = cols.filter(({ j }) => j >= c && j < c + m.cols);
@@ -425,16 +435,19 @@ export function render(root: HTMLElement, g: Guide) {
     ];
   };
 
-  // The theme's size controls: radios and selects around the product form
-  // nearest the block, never past its section, skipping variant ids,
-  // quantities and the guide's own fields. Read fresh each time, as themes
-  // redraw them.
-  const controls = () => {
+  // Around the product form nearest the block, never past its section.
+  const scope = () => {
     const block = root.closest(".fitted-guide");
     const end = block?.closest(".shopify-section");
     let p = block?.parentElement;
     while (p && !p.querySelector(FORM)) p = p === end ? null : p.parentElement;
-    const els = p?.querySelectorAll<HTMLInputElement | HTMLSelectElement>(
+    return p;
+  };
+  // The theme's size controls: radios and selects there, skipping variant
+  // ids, quantities and the guide's own fields. Read fresh each time, as
+  // themes redraw them.
+  const controls = () => {
+    const els = scope()?.querySelectorAll<HTMLInputElement | HTMLSelectElement>(
       "input[type=radio], select",
     );
     return [...(els ?? [])].filter(
@@ -481,13 +494,13 @@ export function render(root: HTMLElement, g: Guide) {
     go.textContent = around("select", label).join("");
     go.hidden = !pick || !offer(pick);
   };
-  // Sets the picked size in the theme's form the way a shopper would, so the
-  // theme updates its price and button, then closes the guide.
-  const apply = () => {
-    const el = offer(pick);
+  // Sets a size in the theme's form the way a shopper would, so the theme
+  // updates its price and button, then closes the guide.
+  const apply = (size: string) => {
+    const el = offer(size);
     root.closest("dialog")?.close();
     if (el && "options" in el) {
-      el.value = option(el, pick)?.value ?? el.value;
+      el.value = option(el, size)?.value ?? el.value;
       for (const type of ["input", "change"])
         el.dispatchEvent(new Event(type, { bubbles: true }));
     } else if (el && !el.checked) el.click();
@@ -526,10 +539,13 @@ export function render(root: HTMLElement, g: Guide) {
       toggle && seg("units", "fitted-sys", ["in", "cm"], sys, t),
     );
 
+  let redo = () => {}; // redraws Find my size's result, once there is one
   // Find my size (§10): the chart's questions, then, once each one a shopper
-  // can't skip has an answer, findSize's pick and why. Answers never leave
-  // the browser: no request carries one, and only sessionStorage keeps them,
-  // so the next product with this chart starts from them.
+  // can't skip has an answer, findSize's pick and why, and as the Result
+  // screen settings (§7) ask, its fit bars, the sizes beside it, Add to cart
+  // and the measurements note. Answers never leave the browser: no request
+  // carries one, and only sessionStorage keeps them, so the next product with
+  // this chart starts from them.
   function fitTab() {
     const found = fitOf(g);
     if (!found) return null;
@@ -537,7 +553,9 @@ export function render(root: HTMLElement, g: Guide) {
     const qs = fit.questions;
     const measured = qs.flatMap((q) => (q.kind === "measure" ? [q] : []));
     const key = isStr(g.raw.handle) && `fitted:answers:${g.raw.handle}`;
-    const size = (row: string) => word(`${ft.id}.${row}.${ft.columns[0].id}`);
+    const sized = sizesOf(ft);
+    const size = (row: string) =>
+      sized[ft.rows.findIndex((r) => r.id === row)] ?? "";
     const label = (c: string) => word(`${ft.id}.${c}`);
     const col = (c: string) => ft.columns.find((x) => x.id === c) as Measure;
     const lower = (s: string) => s.toLocaleLowerCase(g.locale);
@@ -701,22 +719,223 @@ export function render(root: HTMLElement, g: Guide) {
             so: moved ? fill("so", { size: s("size") }) : "",
           });
     };
-    const show = (r: FitResult | null) => {
+    // The Result screen settings (§7): each part shows unless turned off.
+    const ff = isObj(g.raw.fitFinder) ? g.raw.fitFinder : {};
+    const on = (k: string) => ff[k] !== false;
+    // The product's variants as the snippet printed them: each id with its
+    // options by position.
+    const vs = isObj(g.raw.variants) ? g.raw.variants : {};
+    const variants = (Array.isArray(vs.id) ? vs.id : []).flatMap((id, i) => {
+      const o: (string | null)[] = [vs.o1, vs.o2, vs.o3].map((a) =>
+        Array.isArray(a) && isStr(a[i]) ? a[i] : null,
+      );
+      return Number.isSafeInteger(id) && id > 0 ? [{ id: `${id}`, o }] : [];
+    });
+    // The theme's form for this product near the block, and the variant with
+    // the size and the other options that form has now: what Add to cart
+    // adds, so it adds what the shopper sees. Null without them, as on a
+    // theme with no such form, beside another product's form, or in a
+    // browser that can't submit a form as its button does.
+    const cart = (size: string) => {
+      for (const form of scope()?.querySelectorAll<HTMLFormElement>(FORM) ??
+        []) {
+        const id = form.querySelector<HTMLInputElement | HTMLSelectElement>(
+          "[name=id]",
+        );
+        const now = variants.find((v) => v.id === id?.value);
+        const next =
+          now &&
+          variants.find((v) =>
+            v.o.some(
+              (x, k) =>
+                x !== null &&
+                norm(x) === size &&
+                v.o.every((y, j) => j === k || y === now.o[j]),
+            ),
+          );
+        const button = [...form.elements].find(
+          (el) => (el as HTMLButtonElement).type === "submit",
+        ) as HTMLButtonElement | undefined;
+        if (
+          id &&
+          next &&
+          button &&
+          "requestSubmit" in form &&
+          (!("options" in id) ||
+            [...id.options].some((o) => o.value === next.id))
+        )
+          return { form, id, button, variant: next.id };
+      }
+      return null;
+    };
+
+    const n = ++ids; // for this guide's element ids
+    const cols = [...new Set(measured.map((q) => q.col))];
+    let last: FitResult | null = null; // the result shown
+    let seen = ""; // the size it shows: the pick, or one beside it
+    const show = (r: FitResult | null, row = r?.row ?? "") => {
+      [last, seen] = [r, row];
       out.hidden = !r;
       const text = isObj(g.raw.text) ? line(g.raw.text.noFit) : "";
       const said = r && why(r);
+      const pick = r?.row ?? "";
       const head =
         r?.row === null
           ? [text || t("no_fit")]
-          : around("recommend", h("span", {}, size(r?.row ?? "")));
-      out.replaceChildren(
-        ...(r ? [h("h3", { class: "fitted-h3" }, ...head)] : []),
-        ...(said ? [h("p", { class: "fitted-note" }, said)] : []),
-      );
-      status.textContent = [...out.children]
-        .map((k) => k.textContent)
+          : around("recommend", h("span", {}, size(pick)));
+      // A size's place on each measured column, 0 tight to 100 loose.
+      const bars = (x: string) => {
+        const b = r?.bars.find((y) => y.row === x)?.cols ?? {};
+        return cols.flatMap((c) =>
+          Object.hasOwn(b, c) ? [{ c, v: b[c] }] : [],
+        );
+      };
+      const gauge = () => {
+        const lines = bars(row).flatMap(({ c, v }) => {
+          const mark = h("span");
+          mark.style.setProperty("--fitted-at", `${v}%`);
+          const fit = t(v < 33 ? "tight" : v > 67 ? "loose" : "just_right");
+          return [
+            h("span", { "aria-hidden": "true" }, label(c)),
+            h(
+              "div",
+              {
+                class: "fitted-gauge",
+                role: "img",
+                "aria-label": fill("bar", { col: label(c), fit: lower(fit) }),
+              },
+              h("span"),
+              h("span"),
+              mark,
+            ),
+          ];
+        });
+        return (
+          lines.length > 0 &&
+          h(
+            "div",
+            { class: "fitted-bars" },
+            ...lines,
+            h("span"),
+            h(
+              "div",
+              { class: "fitted-scale", "aria-hidden": "true" },
+              ...["tight", "just_right", "loose"].map((k) =>
+                h("span", {}, t(k)),
+              ),
+            ),
+          )
+        );
+      };
+      // The pick and the sizes on either side of it that have bars.
+      const scored =
+        r?.bars.flatMap((b) => (bars(b.row).length ? [b.row] : [])) ?? [];
+      const i = scored.indexOf(pick);
+      const near = i < 0 ? [] : scored.slice(Math.max(i - 1, 0), i + 2);
+      const others =
+        on("fitBars") &&
+        on("otherSizes") &&
+        near.length > 1 &&
+        h(
+          "div",
+          {
+            class: "fitted-others",
+            role: "group",
+            "aria-labelledby": `fitted-others-${n}`,
+          },
+          h("span", { id: `fitted-others-${n}` }, t("others")),
+          ...near.map((x) =>
+            h(
+              "button",
+              {
+                type: "button",
+                "data-fitted-peek": x,
+                "aria-pressed": `${x === row}`,
+              },
+              size(x),
+            ),
+          ),
+        );
+      // Add to cart, else Select, for a size the theme's controls offer.
+      const k = norm(size(row));
+      const add =
+        !!k && !!offer(k) && (on("addToCart") && cart(k) ? "add" : "select");
+      const act =
+        add &&
+        h(
+          "button",
+          {
+            type: "button",
+            class: "fitted-btn",
+            [`data-fitted-${add === "add" ? "add" : "take"}`]: row,
+          },
+          around(add, size(row)).join(""),
+        );
+      const notes = on("note") && measured.length > 0;
+      const parts = r
+        ? [
+            h("h3", { class: "fitted-h3" }, ...head),
+            said && h("p", { class: "fitted-note" }, said),
+            row !== pick &&
+              h(
+                "p",
+                { class: "fitted-note" },
+                ...around("showing", h("strong", {}, size(row))),
+              ),
+            on("fitBars") && gauge(),
+            others,
+            (act || notes) &&
+              h(
+                "div",
+                { class: "fitted-act" },
+                act,
+                notes && h("a", { href: `#fitted-note-${n}` }, t("privacy")),
+              ),
+            notes &&
+              h(
+                "p",
+                { class: "fitted-fine", id: `fitted-note-${n}` },
+                t("privacy_note"),
+              ),
+          ]
+        : [];
+      out.replaceChildren(...parts.filter((p): p is HTMLElement => !!p));
+      // What screen readers hear: the pick, why, and the size shown.
+      status.textContent = parts
+        .slice(0, 3)
+        .flatMap((p) => (p ? [p.textContent] : []))
         .join(" ");
     };
+    // Adds the shown size as the theme's own button would: picks it in the
+    // theme's controls as Select does, sets the form's variant to the one
+    // with that size and the form's other options (Dawn sets its own only
+    // after fetching the variant), then submits that form, so the theme adds
+    // exactly that and shows its cart. Fitted hears only the size row (§12).
+    const buy = (row: string) => {
+      const k = norm(size(row));
+      const c = cart(k);
+      if (!c || !offer(k)) return show(last, row); // the theme changed since
+      apply(k);
+      c.id.value = c.variant;
+      c.form.requestSubmit(c.button);
+      track(root, "add_to_cart", row);
+    };
+    out.addEventListener("click", (e) => {
+      const d = (e.target as Element).closest<HTMLElement>(
+        "[data-fitted-peek], [data-fitted-add], [data-fitted-take]",
+      )?.dataset;
+      if (d?.fittedTake) apply(norm(size(d.fittedTake)));
+      else if (d?.fittedAdd) buy(d.fittedAdd);
+      else if (d?.fittedPeek) {
+        // The result redraws for that size, with focus back on its button.
+        show(last, d.fittedPeek);
+        out
+          .querySelector<HTMLElement>(`[data-fitted-peek="${d.fittedPeek}"]`)
+          ?.focus();
+      }
+    });
+    // Each open offers what the theme's form allows then.
+    redo = () => show(last, seen);
     let sent: string | undefined; // the last result Fitted was told
     // tell is false for the answers the guide opens with, which the shopper
     // didn't give on this page.
@@ -789,7 +1008,7 @@ export function render(root: HTMLElement, g: Guide) {
       chart.hidden = opt.dataset.fittedTab === "fit";
       if (finder) finder.hidden = !chart.hidden;
       draw();
-    } else if (hit("[data-fitted-select]")) apply();
+    } else if (hit("[data-fitted-select]")) apply(pick);
     else {
       const tr = hit("tr[data-fitted-size]");
       if (tr?.dataset.fittedSize) choose(tr.dataset.fittedSize);
@@ -806,6 +1025,7 @@ export function render(root: HTMLElement, g: Guide) {
   const sync = () => {
     track(root, "open");
     choose(current() || pick);
+    redo();
   };
   sync();
   return sync;

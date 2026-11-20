@@ -78,7 +78,22 @@ export const tableCss = /* @__PURE__ */ [
   ".fitted-opt input{margin:0;accent-color:var(--fitted-accent)}",
   ".fitted-dialog .fitted-fine{margin:0;font-size:13px;line-height:1.5;color:var(--fitted-muted)}",
   ".fitted-result{display:flex;flex-direction:column;gap:12px;padding-top:14px;border-top:2px solid var(--fitted-text)}",
-  ".fitted-result .fitted-h3 span{color:var(--fitted-accent)}",
+  ".fitted-result .fitted-h3 span,.fitted-result strong{color:var(--fitted-accent);font-weight:600}",
+  // Fit bars: a line from tight to loose, its middle third just right, and
+  // the size's mark, which follows the popup's direction.
+  ".fitted-bars{display:grid;grid-template-columns:fit-content(40%) minmax(0,1fr);gap:10px 12px;align-items:center;font-size:14px}",
+  ".fitted-bars>span{min-width:56px;overflow-wrap:anywhere}",
+  ".fitted-gauge{position:relative;height:18px}",
+  ".fitted-gauge span{position:absolute}",
+  ".fitted-gauge :first-child{inset-inline:0;top:8px;border-top:2px solid}",
+  ".fitted-gauge :nth-child(2){inset-inline-start:33%;top:5px;width:34%;height:10px;border:1px solid var(--fitted-accent);background:var(--fitted-tint)}",
+  ".fitted-gauge :last-child{inset-inline-start:var(--fitted-at);top:1px;height:16px;border-inline-start:3px solid var(--fitted-accent)}",
+  ".fitted-scale{display:flex;justify-content:space-between;font-size:12px;color:var(--fitted-muted)}",
+  ".fitted-others{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px}",
+  ".fitted-dialog .fitted-others button{min-width:52px;min-height:40px;padding:0 14px;border:1px solid var(--fitted-edge);border-radius:2px;background:var(--fitted-bg);color:var(--fitted-text);font-size:15px;font-weight:600}",
+  ".fitted-dialog .fitted-others [aria-pressed=true]{padding:0 13px;border:2px solid var(--fitted-accent);color:var(--fitted-accent)}",
+  ".fitted-act{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px}",
+  ".fitted-dialog .fitted-act a{font-size:13px;color:var(--fitted-accent);text-underline-offset:3px}",
   // Phones: tighter tables and tabs, larger switches, and fields iOS won't
   // zoom into.
   "@media (max-width:600px){",

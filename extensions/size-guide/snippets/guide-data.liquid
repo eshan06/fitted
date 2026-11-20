@@ -2,8 +2,10 @@
   One product's chart for the size guide (ARCHITECTURE §9). Every value goes
   through | json, which escapes < so no word can end the script tag. Only the
   content keys the guide reads are printed, and content.fit, with the handle
-  that names the shopper's stored answers, only on Pro (§10). The settings
-  words are the shopper's language's, else the primary language's (§7).
+  that names the shopper's stored answers, only on Pro (§10), along with the
+  fit finder settings and product p's variant ids and options, which Add to
+  cart reads. The settings words are the shopper's language's, else the
+  primary language's (§7).
 {%- endcomment -%}
 {%- assign c = chart.content.value -%}
 {%- assign s = shop.metafields['$app'].settings.value -%}
@@ -23,6 +25,8 @@
     "country": {{ localization.country.iso_code | json }},
     "locale": {{ request.locale.iso_code | json }},
     "plan": {{ plan | json }}{% if plan == 'pro' %},
-    "handle": {{ chart.system.handle | json }}{% endif %}
+    "handle": {{ chart.system.handle | json }},
+    "fitFinder": {{ s.fitFinder | json }},
+    "variants": { "id": {{ p.variants | map: 'id' | json }}, "o1": {{ p.variants | map: 'option1' | json }}, "o2": {{ p.variants | map: 'option2' | json }}, "o3": {{ p.variants | map: 'option3' | json }} }{% endif %}
   }
 </script>

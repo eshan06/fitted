@@ -85,6 +85,15 @@
         data-t-why_usual="{{ 'size_guide.why_usual' | t }}"
         data-t-why_choice="{{ 'size_guide.why_choice' | t }}"
         data-t-no_fit="{{ 'size_guide.no_fit' | t }}"
+        data-t-showing="{{ 'size_guide.showing' | t }}"
+        data-t-tight="{{ 'size_guide.tight' | t }}"
+        data-t-just_right="{{ 'size_guide.just_right' | t }}"
+        data-t-loose="{{ 'size_guide.loose' | t }}"
+        data-t-bar="{{ 'size_guide.bar' | t }}"
+        data-t-others="{{ 'size_guide.others' | t }}"
+        data-t-add="{{ 'size_guide.add' | t }}"
+        data-t-privacy="{{ 'size_guide.privacy' | t }}"
+        data-t-privacy_note="{{ 'size_guide.privacy_note' | t }}"
         {%- endif %}
       ></div>
     </div>
@@ -110,5 +119,5 @@
       </div>
     </template>
   </dialog>
-  {%- render 'guide-data', chart: chart -%}
+  {%- render 'guide-data', chart: chart, p: p -%}
 </div>
