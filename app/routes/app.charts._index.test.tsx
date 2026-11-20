@@ -238,12 +238,13 @@ describe("deleting a chart", () => {
     expect(m.startResolve).not.toHaveBeenCalled();
   });
 
+  // A failed delete may have landed with its answer lost, so it still resolves.
   it.each([
-    ["the access check", () => m.canReadProducts],
-    ["the delete", () => m.deleteChart],
+    ["the access check", () => m.canReadProducts, 0],
+    ["the delete", () => m.deleteChart, 1],
   ])(
-    "answers 502 when %s fails, logs the detail and resolves nothing",
-    async (_, failing) => {
+    "answers 502 when %s fails and logs the detail",
+    async (_, failing, resolves) => {
       failing().mockRejectedValue(
         new AdminApiError("Shopify request failed", "HTTP 503 raw text"),
       );
@@ -260,7 +261,8 @@ describe("deleting a chart", () => {
         route: "app.charts._index",
         detail: "HTTP 503 raw text",
       });
-      expect(m.startResolve).not.toHaveBeenCalled();
+      expect(m.startResolve).toHaveBeenCalledTimes(resolves);
+      if (resolves) expect(m.startResolve).toHaveBeenCalledWith(SHOP, true);
     },
   );
 
@@ -515,6 +517,31 @@ describe("the screen", () => {
       await act(() => new Promise((r) => setTimeout(r, 10)));
       expect(posted).toHaveLength(2);
       expect(hide).toHaveBeenCalledOnce();
+    });
+
+    it("opens fresh after a failure, for another chart or the same one", async () => {
+      answers = [{ error: { code: "shopify", message: "No answer." } }];
+      const el = await show(Promise.resolve({ rows: ROWS, limit: null }));
+      let modal = await open(el, "Women's tops");
+      await act(async () => button(modal, "Delete").click());
+      await act(() => new Promise((r) => setTimeout(r, 10)));
+      expect(modal.querySelector("s-banner")).not.toBeNull();
+      for (const name of ["Women's tops", "Kids' outerwear"]) {
+        modal = await open(el, name);
+        expect(modal.querySelector("s-banner")).toBeNull();
+        expect(button(modal, "Delete")).toBeDefined();
+      }
+    });
+
+    it("shows Delete loading and Cancel disabled while it deletes", async () => {
+      answers = [new Promise(() => {})];
+      const el = await show(Promise.resolve({ rows: ROWS, limit: null }));
+      const modal = await open(el, "Women's tops");
+      expect(button(modal, "Cancel").hasAttribute("disabled")).toBe(false);
+      await act(async () => button(modal, "Delete").click());
+      await act(() => new Promise((r) => setTimeout(r, 10)));
+      expect(button(modal, "Delete").hasAttribute("loading")).toBe(true);
+      expect(button(modal, "Cancel").hasAttribute("disabled")).toBe(true);
     });
 
     it("shows a refused id's message from the action", async () => {

@@ -109,6 +109,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       },
       { status: 422 },
     );
+  // Every product leaves the deleted chart, `auto: false` charts included (§6).
+  const resolve = () => void startResolve(session.shop, true);
+  let deleting = false;
   try {
     // The resolve job that moves its products runs with the offline token (§13).
     if (!(await canReadProducts(admin)))
@@ -117,12 +120,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         "product_access",
         "Deleting a chart changes which products show a size guide, which needs the Products permission on your staff account. Nothing was deleted. Ask the store owner to give you Products access in Settings › Users, then try again.",
       );
+    deleting = true;
     await deleteChart(admin, id);
   } catch (err) {
     // Already gone (a repeated delete, or someone else's): the delete is done.
     if (!(err instanceof ChartNotFoundError)) {
       if (!(err instanceof AdminApiError)) throw err;
       logShopifyError(session.shop, err);
+      // The delete may have landed with its answer lost: resolving is harmless either way.
+      if (deleting) resolve();
       return fail(
         502,
         "shopify",
@@ -130,8 +136,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       );
     }
   }
-  // Every product leaves the deleted chart, `auto: false` charts included (§6).
-  void startResolve(session.shop, true);
+  resolve();
   return { ok: true as const };
 };
 
@@ -275,9 +280,15 @@ type Deleted =
   | { fieldErrors: { id: string } };
 
 // The "Delete chart" confirmation; Delete becomes Try again after a failure (§15).
-function DeleteChart({ target }: { target: Row | null }) {
-  // One fetcher per chart, so another chart's failure never shows here.
-  const fetcher = useFetcher<Deleted>({ key: `delete-${target?.id}` });
+function DeleteChart({
+  target,
+  opened,
+}: {
+  target: Row | null;
+  opened: number;
+}) {
+  // A fresh fetcher each time the confirmation opens, so no earlier failure shows.
+  const fetcher = useFetcher<Deleted>({ key: `delete-chart-${opened}` });
   const modal = useRef<HTMLElementTagNameMap["s-modal"]>(null);
   const busy = fetcher.state !== "idle";
   const answer = busy ? undefined : fetcher.data;
@@ -318,7 +329,7 @@ function DeleteChart({ target }: { target: Row | null }) {
           target && fetcher.submit({ id: target.id }, { method: "post" })
         }
       >
-        {failed ? "Try again" : "Delete"}
+        {fetcher.data && !("ok" in fetcher.data) ? "Try again" : "Delete"}
       </s-button>
       <s-button
         slot="secondary-actions"
@@ -336,6 +347,7 @@ export function Charts({ rows, limit }: Extract<ChartList, { rows: unknown }>) {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("all");
   const [target, setTarget] = useState<Row | null>(null);
+  const [opened, setOpened] = useState(0);
   if (!rows.length)
     return (
       <s-section accessibilityLabel="No size charts yet">
@@ -458,7 +470,10 @@ export function Charts({ rows, limit }: Extract<ChartList, { rows: unknown }>) {
                           tone="critical"
                           commandFor="delete-chart"
                           command="--show"
-                          onClick={() => setTarget(r)}
+                          onClick={() => {
+                            setTarget(r);
+                            setOpened(opened + 1);
+                          }}
                         >
                           Delete
                         </s-button>
@@ -496,7 +511,7 @@ export function Charts({ rows, limit }: Extract<ChartList, { rows: unknown }>) {
           </s-stack>
         )}
       </s-section>
-      <DeleteChart target={target} />
+      <DeleteChart target={target} opened={opened} />
     </>
   );
 }
