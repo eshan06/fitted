@@ -333,7 +333,7 @@ export function storedDraft(
 
 export type Selected =
   { row: string; col?: undefined } | { col: string; row?: undefined };
-const sizeOf = (d: Draft, ri: number) => {
+export const sizeOf = (d: Draft, ri: number) => {
   const t = table(d);
   const w = d.content.words[`${t.id}.${t.rows[ri].id}.${t.columns[0].id}`];
   return w?.trim() || `Size ${ri + 1}`;
@@ -543,3 +543,104 @@ export function removeErrors(
   }
   return out;
 }
+
+// The Editor board's table tools.
+export const setRoundTo = (d: Draft, roundTo: Content["roundTo"]): Draft => ({
+  ...d,
+  content: { ...d.content, roundTo },
+});
+/** A measurement's typed unit, and whether shoppers see it converted. */
+export const setMeasure = (
+  d: Draft,
+  col: string,
+  patch: { unit?: "in" | "cm" | "lb" | "kg"; convert?: boolean },
+) =>
+  withTable(d, {
+    columns: table(d).columns.map((c) =>
+      c.id === col && c.kind === "measure" ? { ...c, ...patch } : c,
+    ),
+  });
+export const toggleWrap = (d: Draft, col: string) => {
+  const wrap = table(d).wrap ?? [];
+  return withTable(d, {
+    wrap: wrap.includes(col) ? wrap.filter((w) => w !== col) : [...wrap, col],
+  });
+};
+
+/** The first table's merges by position. */
+export function merges(d: Draft) {
+  const t = table(d);
+  return (t.merges ?? []).map((m) => ({
+    ...m,
+    r0: t.rows.findIndex((r) => r.id === m.row),
+    c0: t.columns.findIndex((c) => c.id === m.col),
+  }));
+}
+/** Cells `a` to `b` (size positions, top first) of one column. */
+export type Cells = { col: string; a: number; b: number };
+const spanOf = (d: Draft, s: Cells) => table(d).rows.slice(s.a, s.b + 1);
+/** Two or more cells, none of them merged already. */
+export const canMerge = (d: Draft, s: Cells) => {
+  const ci = table(d).columns.findIndex((c) => c.id === s.col);
+  return (
+    s.a < s.b &&
+    !merges(d).some(
+      (m) =>
+        m.c0 <= ci && ci < m.c0 + m.cols && m.r0 <= s.b && s.a < m.r0 + m.rows,
+    )
+  );
+};
+/**
+ * The merge dialog's words. The merged cell keeps the first value in it;
+ * `text` is null when no other cell holds one, so it merges straight away.
+ */
+export function merging(d: Draft, s: Cells) {
+  const vals = spanOf(d, s).flatMap((r, i) => {
+    const v = valueAt(d, r.id, s.col);
+    return v ? [{ v, size: sizeOf(d, s.a + i) }] : [];
+  });
+  const [kept, ...lost] = vals;
+  return {
+    heading: `Merge ${s.b - s.a + 1} cells in ${colName(d, s.col)}?`,
+    label: "Merge cells",
+    text: lost.length
+      ? `The merged cell keeps ${kept.size}'s value, ${kept.v}. Saving removes the other ${lost.length}: ${and(lost.map((x) => `${x.v} (${x.size})`))}.`
+      : null,
+  };
+}
+/**
+ * Merges the cells: the first value moves to the top cell and the cells it
+ * covers are emptied, so a save keeps no value shoppers can't see.
+ */
+export function merge(d: Draft, s: Cells): Draft {
+  const t = table(d);
+  const rows = spanOf(d, s);
+  const keys = new Set(rows.map((r) => `${r.id}.${s.col}`));
+  const kept = rows.map((r) => valueAt(d, r.id, s.col)).find(Boolean);
+  const next = withTable(d, {
+    rows: t.rows.map((r) =>
+      keys.has(`${r.id}.${s.col}`)
+        ? { ...r, cells: strip(r.cells, (k) => k === s.col) }
+        : r,
+    ),
+    merges: [
+      ...(t.merges ?? []),
+      { row: rows[0].id, col: s.col, rows: rows.length, cols: 1 },
+    ],
+  });
+  const top = `${rows[0].id}.${s.col}`;
+  const cells = strip(d.cells, (k) => keys.has(k));
+  const words = strip(d.content.words, (k) =>
+    keys.has(k.slice(t.id.length + 1)),
+  );
+  if (kept && t.columns.find((c) => c.id === s.col)?.kind === "measure")
+    cells[top] = kept;
+  else if (kept) words[`${t.id}.${top}`] = kept;
+  return { ...next, cells, content: { ...next.content, words } };
+}
+export const unmerge = (d: Draft, row: string, col: string) =>
+  withTable(d, {
+    merges: (table(d).merges ?? []).filter(
+      (m) => m.row !== row || m.col !== col,
+    ),
+  });

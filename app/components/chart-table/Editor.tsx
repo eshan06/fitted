@@ -1,6 +1,6 @@
 // The Editor board (Fitted canvas): name, template, status, the size table,
-// units and the note, saved through App Bridge's save bar. Later steps add the
-// table tools, tabs, live preview and version history around this.
+// table tools, units and the note, saved through App Bridge's save bar. Later
+// steps add the tabs and live preview around this.
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
   Link,

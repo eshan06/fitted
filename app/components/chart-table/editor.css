@@ -157,6 +157,38 @@
   border-radius: 8px;
   font-size: 0.8125rem;
 }
+/* Table tools (Editor board); at large text they wrap onto more lines. */
+.editor .tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  background: #f6f6f7;
+  border-radius: 8px;
+}
+.editor .tools label,
+.editor .selbar label {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.editor .selbar label {
+  font-weight: 400;
+}
+.editor .selbar input[type="checkbox"] {
+  accent-color: #2448a8;
+}
+.editor .btn2:disabled {
+  color: #6d7175;
+  background: #f1f2f4;
+  cursor: not-allowed;
+}
+.editor .btn2[aria-pressed="true"] {
+  border-color: #2448a8;
+  background: #e9eef9;
+}
 .editor .sheet .sel,
 .editor .sheet .sel .cell:not(.bad) {
   background: #e9eef9;
