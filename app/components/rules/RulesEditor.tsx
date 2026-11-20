@@ -190,9 +190,12 @@ export function RulesEditor(props: {
         method: "post",
         encType: "application/json",
       });
-    const [first] = Object.keys(fieldErrors);
-    setSelected(first.split(".")[1]);
-    setTimeout(() => document.getElementById(model.elementId(first))?.focus());
+    focus(Object.keys(fieldErrors)[0]);
+  };
+  // Opens a marked field's chart and moves to the field.
+  const focus = (path: string) => {
+    setSelected(path.split(".")[1]);
+    setTimeout(() => document.getElementById(model.elementId(path))?.focus());
   };
   const dismiss = () => {
     setLocal(null);
@@ -218,16 +221,13 @@ export function RulesEditor(props: {
       {label}
     </s-button>
   );
-  // A banner's link to a marked field, opening its chart first.
+  // A banner's link to a marked field.
   const link = (path: string, text: string) => (
     <a
       href={`#${model.elementId(path)}`}
       onClick={(e) => {
         e.preventDefault();
-        setSelected(path.split(".")[1]);
-        setTimeout(() =>
-          document.getElementById(model.elementId(path))?.focus(),
-        );
+        focus(path);
       }}
     >
       {text}
@@ -441,14 +441,14 @@ export function RulesEditor(props: {
           {loaded.free && (
             <p className="help">
               On Free, new conditions can use Collection or Specific products.
-              The others need{" "}
-              {loaded.plansUrl ? (
-                <a href={loaded.plansUrl} target="_blank" rel="noreferrer">
-                  Standard
-                </a>
-              ) : (
-                "Standard"
-              )}
+              The others need {/* Without its link it reads as plain text. */}
+              <a
+                href={loaded.plansUrl ?? undefined}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Standard
+              </a>
               .
             </p>
           )}
