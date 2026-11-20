@@ -158,6 +158,25 @@ export const addMeasurement = (d: Draft) =>
         ],
       });
 
+// The How to measure steps: step n is line n on the drawing (§5).
+export const MAX_STEPS = 20;
+const withSteps = (d: Draft, steps: string[]): Draft => ({
+  ...d,
+  content: { ...d.content, measure: { steps } },
+});
+export const addStep = (d: Draft) =>
+  d.content.measure.steps.length >= MAX_STEPS
+    ? d
+    : withSteps(d, [...d.content.measure.steps, freshId(d.content, "m")]);
+export const removeStep = (d: Draft, step: string): Draft => {
+  const next = withSteps(
+    d,
+    d.content.measure.steps.filter((s) => s !== step),
+  );
+  const words = strip(d.content.words, (k) => k.startsWith(`m.${step}.`));
+  return { ...next, content: { ...next.content, words } };
+};
+
 export const setWord = (d: Draft, key: string, value: string): Draft => ({
   ...d,
   content: { ...d.content, words: { ...d.content.words, [key]: value } },
@@ -244,6 +263,13 @@ export function problems(d: Draft, errors: FieldErrors): Problem[] {
       };
     }
     if (key === "name") return { id: "name", where: "Chart name", long };
+    // The other tabs' fields (Editor's tabOf opens the one that holds each).
+    if (key === "content.words.tips")
+      return { id: "tips", where: "Fit tips", long };
+    const step = /^content\.words\.m\.([^.]+)\.(name|text)$/.exec(key);
+    const si = d.content.measure.steps.indexOf(step?.[1] ?? "");
+    if (step && si >= 0)
+      return { id: `m-${step[1]}-${step[2]}`, where: `Step ${si + 1}`, long };
     const [a, b, extra] = key.startsWith(wordAt)
       ? key.slice(wordAt.length).split(".")
       : [];

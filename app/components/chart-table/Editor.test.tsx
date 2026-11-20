@@ -653,6 +653,36 @@ describe("chart editor screen", () => {
     expect(byLabel("XS, Bust").value).toBe("32–31");
   });
 
+  it("links a stored step's finding to its field on the How to measure tab", async () => {
+    const b = broken({
+      "content.words.m.m1.name": "Too long",
+      "content.words.tips": "Too long",
+    });
+    b.stored.raw.content.measure.steps = ["m1"];
+    b.stored.raw.content.words["m.m1.name"] = "Bust";
+    await open([b]);
+    expect(text()).toContain("Step 1: Too long");
+    const link = [...document.querySelectorAll("s-banner a")].find(
+      (a) => a.textContent === "Step 1",
+    ) as HTMLAnchorElement;
+    await act(async () => link.click());
+    await settle();
+    expect(document.activeElement).toBe(byLabel("Step 1 name"));
+    expect(byLabel("Step 1 name").value).toBe("Bust");
+    // The tips' finding opens Fit tips, and a cell's goes back to the table.
+    const follow = async (where: string) => {
+      const a = [...document.querySelectorAll("s-banner a")].find(
+        (x) => x.textContent === where,
+      ) as HTMLAnchorElement;
+      await act(async () => a.click());
+      await settle();
+    };
+    await follow("Fit tips");
+    expect(document.activeElement?.id).toBe("tips");
+    await follow("XS, Bust");
+    expect(document.activeElement).toBe(byLabel("XS, Bust"));
+  });
+
   it("shows only the banner when a finding is outside what the editor can change", async () => {
     await open([broken({ "content.roundTo": "Pick 0.25, 0.5 or 1" })]);
     expect(document.querySelector("s-banner")?.getAttribute("heading")).toBe(
@@ -1394,5 +1424,67 @@ describe("Country sizes", () => {
     expect(byLabel("Column 3 name").value).toBe("Bust");
     expect(countries().value).toBe("us");
     expect(text()).not.toContain("Shoppers see one country's sizes");
+  });
+});
+
+describe("How to measure and Fit tips tabs", () => {
+  const saved = (b: Record<string, unknown>) =>
+    validateChart(b.chart as ChartInput);
+  const tab = (label: string) =>
+    [...document.querySelectorAll<HTMLButtonElement>(".tab")].find(
+      (b) => b.textContent === label,
+    )!;
+  const openTab = async (label: string) => {
+    await act(async () => tab(label).click());
+  };
+
+  it("switches tabs, adds and names steps, removes one, and saves them", async () => {
+    const { sent } = await open([stored()]);
+    expect(
+      [...document.querySelectorAll(".tab")].map((b) => b.textContent),
+    ).toEqual(["Size table", "How to measure", "Fit tips"]);
+    expect(tab("Size table").getAttribute("aria-pressed")).toBe("true");
+    await openTab("How to measure");
+    expect(tab("How to measure").getAttribute("aria-pressed")).toBe("true");
+    expect(byLabel("XS, Bust")).toBeNull();
+    expect(text()).toContain("No steps yet");
+    expect(text()).toContain(
+      "Tell shoppers where to hold the tape, one step per measurement.",
+    );
+    await click("Add step");
+    await click("Add step");
+    expect(document.activeElement).toBe(byLabel("Step 2 name"));
+    expect(text()).toContain(
+      "Step 1 is line 1 on the drawing. Up to 20 steps.",
+    );
+    await type(byLabel("Step 1 name"), "Bust");
+    await type(byLabel("Step 1, how to measure"), "Around the fullest part.");
+    await type(byLabel("Step 2 name"), "Waist");
+    await act(async () => byLabel("Remove step 1").click());
+    expect(byLabel("Step 1 name").value).toBe("Waist");
+    await click("Save");
+    const c = saved(sent[0]).content;
+    expect(c.measure.steps).toHaveLength(1);
+    expect(c.words[`m.${c.measure.steps[0]}.name`]).toBe("Waist");
+    expect(Object.keys(c.words).filter((k) => k.startsWith("m."))).toHaveLength(
+      1,
+    );
+  });
+
+  it("counts the fit tips as they're typed and saves them", async () => {
+    const { sent } = await open([stored()]);
+    await openTab("Fit tips");
+    // A textarea; `type` sets its value the same way.
+    const tips = document.getElementById("tips") as HTMLInputElement;
+    expect(tips.placeholder).toBe(
+      "For example, Runs small through the shoulders. Size up if you're between sizes.",
+    );
+    expect(tips.maxLength).toBe(2000);
+    expect(text()).toContain("Shoppers see these under the size table.");
+    expect(text()).toContain("0 of 2,000 characters");
+    await type(tips, "Runs small.\nSize up.");
+    expect(text()).toContain("20 of 2,000 characters");
+    await click("Save");
+    expect(saved(sent[0]).content.words.tips).toBe("Runs small.\nSize up.");
   });
 });

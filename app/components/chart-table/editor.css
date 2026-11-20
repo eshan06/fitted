@@ -486,3 +486,102 @@
   justify-content: flex-start;
   gap: 8px;
 }
+/* The tabs: Size table, How to measure, Fit tips, Media. */
+.editor .tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  border-bottom: 1px solid #e1e3e5;
+}
+.editor .tab {
+  min-height: 2.25rem;
+  padding: 0 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #45484b;
+  cursor: pointer;
+}
+.editor .tab[aria-pressed="true"] {
+  color: #202223;
+  border-bottom-color: #2448a8;
+}
+.editor .col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+/* How to measure's columns stack when large text leaves no room. */
+.editor .measure {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: flex-start;
+}
+.editor .measure > .col.wide {
+  flex: 2 1 300px;
+  gap: 10px;
+}
+.editor .step {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px;
+  border-radius: 10px;
+  background: #f7f7f8;
+}
+.editor .step .col {
+  flex: 1;
+  gap: 0;
+}
+.editor .step .n {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  margin-top: 12px;
+  border-radius: 999px;
+  background: #2448a8;
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+.editor .icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  margin-top: 6px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #45484b;
+  cursor: pointer;
+}
+.editor .icon:hover {
+  background: #ecedee;
+}
+.editor .row.start {
+  justify-content: flex-start;
+}
+.editor .drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 212px;
+  padding: 16px;
+  box-sizing: border-box;
+  border: 1px dashed #b5b8bb;
+  border-radius: 10px;
+  text-align: center;
+}

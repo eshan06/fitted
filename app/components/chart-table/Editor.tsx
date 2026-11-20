@@ -1,6 +1,7 @@
-// The Editor board (Fitted canvas): name, template, status, the size table,
-// table tools, units and the note, saved through App Bridge's save bar. Later
-// steps add the tabs and live preview around this.
+// The Editor board (Fitted canvas): name, template, status, and the tabs: the
+// size table with its tools, units and note, How to measure's steps, and Fit
+// tips, saved through App Bridge's save bar. Later steps add the drawing, the
+// Media tab, a second table and the live preview.
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
   Link,
@@ -13,10 +14,20 @@ import { SaveBar, useAppBridge } from "@shopify/app-bridge-react";
 import type { FieldErrors, Template } from "../../models/chart.server";
 import { ChartTable } from "./ChartTable";
 import { PasteDialog } from "./PasteDialog";
+import { MeasureTab } from "./MeasureTab";
 import * as model from "./model";
 import "./editor.css";
 
 const SAVE_BAR = "chart-save-bar";
+const TABS = {
+  table: "Size table",
+  measure: "How to measure",
+  tips: "Fit tips",
+};
+type Tab = keyof typeof TABS;
+// The tab that holds a field the banner links to (model.problems).
+const tabOf = (id: string): Tab =>
+  id === "tips" ? "tips" : id.startsWith("m-") ? "measure" : "table";
 
 /** What the action answers (ARCHITECTURE §15). */
 type Answer = {
@@ -61,6 +72,7 @@ export function Editor(props: {
   const shopify = useAppBridge();
   const [draft, setDraft] = useState(props.initial);
   const [pasting, setPasting] = useState(false);
+  const [tab, setTab] = useState<Tab>("table");
   // The editor's own check, or the action's answer until it's dismissed. A
   // stored chart that fails the checks opens with them, in the editor's words
   // where it has them. A number in a column that isn't a measurement isn't
@@ -326,7 +338,10 @@ export function Editor(props: {
                       href={`#${p.id}`}
                       onClick={(e) => {
                         e.preventDefault();
-                        document.getElementById(p.id!)?.focus();
+                        setTab(tabOf(p.id!));
+                        setTimeout(() =>
+                          document.getElementById(p.id!)?.focus(),
+                        );
                       }}
                     >
                       {p.where}
@@ -414,97 +429,156 @@ export function Editor(props: {
               </select>
             </label>
           </div>
-          <div className="row">
-            <div role="group" aria-label="Units" className="segs">
-              {(["in", "cm"] as const).map((u) => (
-                <button
-                  key={u}
-                  type="button"
-                  aria-pressed={draft.content.unit === u}
-                  onClick={() => setDraft(model.setUnit(draft, u))}
-                >
-                  {u}
-                </button>
-              ))}
-            </div>
-            <s-stack direction="inline" gap="small-200">
-              <s-button
-                disabled={t.rows.length >= model.MAX_ROWS}
-                onClick={() => setDraft(model.addSize(draft))}
+          <div className="tabs">
+            {Object.entries(TABS).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                className="tab"
+                aria-pressed={tab === id}
+                onClick={() => setTab(id as Tab)}
               >
-                Add size
-              </s-button>
-              <s-button
-                disabled={t.columns.length >= model.MAX_COLUMNS}
-                onClick={() => setDraft(model.addMeasurement(draft))}
-              >
-                Add measurement
-              </s-button>
-            </s-stack>
+                {label}
+              </button>
+            ))}
           </div>
-          {t.rows.length ? (
-            <ChartTable
-              draft={draft}
-              errors={errors}
-              problems={listed}
-              dropped={drops.flatMap((x) => x.cells)}
-              onChange={setDraft}
-              onPaste={() => setPasting(true)}
-              onRemove={(sel) => {
-                setDraft(model.remove(draft, sel));
-                // Cell findings name sizes by position, so they move up too.
-                if (!notice?.fieldErrors) return;
-                const left = model.removeErrors(draft, sel, notice.fieldErrors);
-                // With none left, the banner goes, as after a fix and save.
-                if (Object.keys(left).length)
-                  setLocal({ ...notice, fieldErrors: left });
-                else dismiss();
-              }}
-            />
-          ) : (
-            <div className="blank">
-              <svg
-                width="56"
-                height="56"
-                viewBox="0 0 48 48"
-                fill="none"
-                stroke="#2448A8"
-                strokeLinecap="square"
-                aria-hidden="true"
-              >
-                <path d="M10 40V10h30" strokeWidth="3" strokeDasharray="4 3" />
-                <path d="M17 40V17h23" strokeWidth="6" />
-                <path d="M24 40V24h16" strokeWidth="3" />
-              </svg>
-              <h2>A blank chart, ready for sizes</h2>
-              <p className="help">
-                Paste a whole table from a spreadsheet or supplier sheet and
-                Fitted fills in the sizes and measurements. Or pick a template
-                above.
-              </p>
-              <s-button variant="primary" onClick={() => setPasting(true)}>
-                Paste whole chart
-              </s-button>
+          {tab === "measure" && (
+            <MeasureTab draft={draft} onChange={setDraft} />
+          )}
+          {tab === "tips" && (
+            <div>
+              <label>
+                Fit tips
+                <textarea
+                  id="tips"
+                  className="field"
+                  rows={5}
+                  maxLength={2000}
+                  placeholder="For example, Runs small through the shoulders. Size up if you're between sizes."
+                  value={draft.content.words.tips ?? ""}
+                  onChange={(e) =>
+                    setDraft(model.setWord(draft, "tips", e.target.value))
+                  }
+                />
+              </label>
+              <div className="row">
+                <span className="help">
+                  Shoppers see these under the size table.
+                </span>
+                <span className="help">
+                  {(draft.content.words.tips ?? "").length.toLocaleString(
+                    "en-US",
+                  )}{" "}
+                  of 2,000 characters
+                </span>
+              </div>
             </div>
           )}
-          {pasting && (
-            <PasteDialog onClose={() => setPasting(false)} onFill={fill} />
+          {tab === "table" && (
+            <>
+              <div className="row">
+                <div role="group" aria-label="Units" className="segs">
+                  {(["in", "cm"] as const).map((u) => (
+                    <button
+                      key={u}
+                      type="button"
+                      aria-pressed={draft.content.unit === u}
+                      onClick={() => setDraft(model.setUnit(draft, u))}
+                    >
+                      {u}
+                    </button>
+                  ))}
+                </div>
+                <s-stack direction="inline" gap="small-200">
+                  <s-button
+                    disabled={t.rows.length >= model.MAX_ROWS}
+                    onClick={() => setDraft(model.addSize(draft))}
+                  >
+                    Add size
+                  </s-button>
+                  <s-button
+                    disabled={t.columns.length >= model.MAX_COLUMNS}
+                    onClick={() => setDraft(model.addMeasurement(draft))}
+                  >
+                    Add measurement
+                  </s-button>
+                </s-stack>
+              </div>
+              {t.rows.length ? (
+                <ChartTable
+                  draft={draft}
+                  errors={errors}
+                  problems={listed}
+                  dropped={drops.flatMap((x) => x.cells)}
+                  onChange={setDraft}
+                  onPaste={() => setPasting(true)}
+                  onRemove={(sel) => {
+                    setDraft(model.remove(draft, sel));
+                    // Cell findings name sizes by position, so they move up too.
+                    if (!notice?.fieldErrors) return;
+                    const left = model.removeErrors(
+                      draft,
+                      sel,
+                      notice.fieldErrors,
+                    );
+                    // With none left, the banner goes, as after a fix and save.
+                    if (Object.keys(left).length)
+                      setLocal({ ...notice, fieldErrors: left });
+                    else dismiss();
+                  }}
+                />
+              ) : (
+                <div className="blank">
+                  <svg
+                    width="56"
+                    height="56"
+                    viewBox="0 0 48 48"
+                    fill="none"
+                    stroke="#2448A8"
+                    strokeLinecap="square"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M10 40V10h30"
+                      strokeWidth="3"
+                      strokeDasharray="4 3"
+                    />
+                    <path d="M17 40V17h23" strokeWidth="6" />
+                    <path d="M24 40V24h16" strokeWidth="3" />
+                  </svg>
+                  <h2>A blank chart, ready for sizes</h2>
+                  <p className="help">
+                    Paste a whole table from a spreadsheet or supplier sheet and
+                    Fitted fills in the sizes and measurements. Or pick a
+                    template above.
+                  </p>
+                  <s-button variant="primary" onClick={() => setPasting(true)}>
+                    Paste whole chart
+                  </s-button>
+                </div>
+              )}
+              {pasting && (
+                <PasteDialog onClose={() => setPasting(false)} onFill={fill} />
+              )}
+              <p className="help">
+                Type in inches or centimeters. Fitted converts the other unit
+                for shoppers automatically.
+              </p>
+              <label>
+                Note under the table
+                <textarea
+                  className="field"
+                  rows={2}
+                  value={draft.content.words[`${t.id}.note`] ?? ""}
+                  onChange={(e) =>
+                    setDraft(
+                      model.setWord(draft, `${t.id}.note`, e.target.value),
+                    )
+                  }
+                />
+              </label>
+            </>
           )}
-          <p className="help">
-            Type in inches or centimeters. Fitted converts the other unit for
-            shoppers automatically.
-          </p>
-          <label>
-            Note under the table
-            <textarea
-              className="field"
-              rows={2}
-              value={draft.content.words[`${t.id}.note`] ?? ""}
-              onChange={(e) =>
-                setDraft(model.setWord(draft, `${t.id}.note`, e.target.value))
-              }
-            />
-          </label>
         </section>
       </div>
     </s-page>

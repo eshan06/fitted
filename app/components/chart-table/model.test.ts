@@ -34,6 +34,9 @@ import {
   setRegions,
   canAll,
   canUsOnly,
+  addStep,
+  removeStep,
+  MAX_STEPS,
 } from "./model";
 
 const chart = (): ChartInput =>
@@ -955,5 +958,49 @@ describe("Country sizes", () => {
     // At exactly 20 it still fits.
     expect(canAll(remove(full, { col: "bust" }))).toBe(true);
     expect(canAll(addSize(usOnly()))).toBe(true);
+  });
+});
+
+describe("How to measure steps", () => {
+  it("adds steps with ids unused anywhere in the chart, up to 20", () => {
+    let d = toDraft(chart(), "DRAFT");
+    d = addStep(addStep(d));
+    expect(d.content.measure.steps).toEqual(["c1", "m1", "m2"]);
+    d = setWord(setWord(d, "m.m1.name", "Bust"), "m.m1.text", "Around.");
+    const saved = input(d);
+    expect(validateChart(saved)).toEqual(saved);
+    for (let i = 0; i < 30; i++) d = addStep(d);
+    expect(d.content.measure.steps).toHaveLength(MAX_STEPS);
+    expect(validateChart(input(d)).content.measure.steps).toHaveLength(20);
+  });
+
+  it("removes a step with its words, and keeps the others' numbers in order", () => {
+    let d = addStep(addStep(toDraft(chart(), "DRAFT")));
+    d = setWord(setWord(d, "m.m1.name", "Bust"), "m.m2.name", "Waist");
+    d = removeStep(d, "m1");
+    expect(d.content.measure.steps).toEqual(["c1", "m2"]);
+    expect(d.content.words["m.m1.name"]).toBeUndefined();
+    expect(d.content.words["m.m2.name"]).toBe("Waist");
+  });
+
+  it("points a step's or the tips' finding at its field", () => {
+    const d = addStep(toDraft(chart(), "DRAFT"));
+    expect(
+      problems(d, {
+        "content.words.m.m1.text": "Must be text of at most 500 characters",
+        "content.words.tips": "Must be text of at most 2000 characters",
+      }),
+    ).toEqual([
+      {
+        id: "m-m1-text",
+        where: "Step 2",
+        long: "Must be text of at most 500 characters",
+      },
+      {
+        id: "tips",
+        where: "Fit tips",
+        long: "Must be text of at most 2000 characters",
+      },
+    ]);
   });
 });
