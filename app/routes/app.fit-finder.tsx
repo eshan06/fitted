@@ -62,6 +62,11 @@ const COPY: Record<string, string[]> = {
     "Your fit finder settings didn't load",
     "Fitted couldn't reach your store just now. Nothing has changed for shoppers.",
   ],
+  // Not drawn yet (#128's drawing pass): settings or a chart saved before a later write failed.
+  partial: [
+    "Only some of your fit finder changes were saved",
+    "Shopify didn't respond in time, so some are live and some aren't. Your edits are still here: try saving again to finish.",
+  ],
   conflict: [
     "Fit finder settings changed since you opened them",
     "Your edits weren't saved, so nothing was overwritten.",
@@ -134,6 +139,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const body = await request.json().catch(() => null);
+  let wrote = false; // a failure after this point is a partial save
   try {
     // Only the digest and the edits come from the browser (§3).
     const loaded = await getSettings(admin);
@@ -147,7 +153,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // Every chart is checked before anything is written.
     const writes: (() => Promise<unknown>)[] = [];
     const sent = Array.isArray(body?.charts) ? body.charts.slice(0, 200) : [];
+    const seen = new Set();
     for (const { id, updatedAt, ease, stretch } of sent.map(Object)) {
+      if (seen.has(id)) continue;
+      seen.add(id);
       const { chart, updatedAt: now } = await getChart(admin, id);
       const fit = chart?.content.fit;
       if (!fit) throw new ChartConflictError("The chart lost its questions");
@@ -163,11 +172,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       writes.push(() => updateChart(admin, id, next, updatedAt));
     }
     const digest = typeof body?.digest === "string" ? body.digest : null;
-    if (JSON.stringify(input) !== JSON.stringify(s))
+    if (JSON.stringify(input) !== JSON.stringify(s)) {
       await saveSettings(admin, { ...loaded, digest }, input);
-    for (const write of writes) await write();
+      wrote = true;
+    }
+    for (const write of writes) {
+      await write();
+      wrote = true;
+    }
     return { ok: true as const };
   } catch (err) {
+    if (wrote && err instanceof Error) {
+      log(session.shop, err);
+      return data(refusal("partial"), { status: 502 });
+    }
     if (
       err instanceof SettingsValidationError ||
       err instanceof ChartValidationError
@@ -434,7 +452,7 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
         </Banner>
       ) : (
         code && (
-          <Banner copy={COPY.shopify}>
+          <Banner copy={code === "partial" ? COPY.partial : COPY.shopify}>
             {button("Try saving again", save)}
           </Banner>
         )

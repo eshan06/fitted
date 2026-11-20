@@ -640,6 +640,27 @@ describe("a chart's ease and stretch", () => {
     expect(store.writes).toBe(1); // the settings, once
   });
 
+  it("answers 502 in the plain words when nothing landed", async () => {
+    store.chartWritesDown = true;
+    const r = await post({
+      digest: "d0",
+      edits: { fitFinder: saved().fitFinder, noFit: saved().text.en.noFit },
+      charts: [{ id: TOPS, updatedAt: AT, ease: {}, stretch: "none" }],
+    });
+    expect(r).toMatchObject({
+      status: 502,
+      body: { error: { code: "shopify" } },
+    });
+    none();
+  });
+
+  it("writes a chart sent twice once", async () => {
+    const one = { id: TOPS, updatedAt: AT, ease: { bust: 1 }, stretch: "high" };
+    expect((await send([one, { ...one, ease: { bust: 3 } }])).status).toBe(200);
+    expect(store.chartWrites).toBe(1);
+    expect(tops()).toMatchObject({ ease: { bust: 1 } });
+  });
+
   it("refuses a chart changed since it loaded, writing nothing", async () => {
     const stale = "2026-10-01T00:00:00Z";
     const r = await send([
@@ -674,13 +695,18 @@ describe("a chart's ease and stretch", () => {
     none();
   });
 
-  it("answers 502 when the chart write fails, logging why; the retry finishes it", async () => {
+  it("answers 502 when only the settings landed, saying so; the retry finishes it", async () => {
     store.chartWritesDown = true;
     const body = [{ id: TOPS, updatedAt: AT, ease: {}, stretch: "none" }];
     const r = await send(body);
-    expect(r).toMatchObject({
+    expect(r).toEqual({
       status: 502,
-      body: { error: { code: "shopify" } },
+      body: {
+        error: {
+          code: "partial",
+          message: expect.stringContaining("some are live and some aren't"),
+        },
+      },
     });
     expect(JSON.stringify(r.body)).not.toContain("socket");
     expect(JSON.parse(logs[0])).toMatchObject({
@@ -768,6 +794,26 @@ describe("a chart's ease and stretch", () => {
     )!;
     await act(async () => link.click());
     expect(document.activeElement).toBe(ease());
+  });
+
+  it("says when only some changes saved, and Try saving again finishes them", async () => {
+    await open();
+    await type(noFit(), "Message us.");
+    await type(ease(), "+1 in at bust");
+    store.chartWritesDown = true;
+    await click("Save");
+    expect(banners()).toEqual([
+      "Only some of your fit finder changes were saved",
+      UPGRADE,
+    ]);
+    expect(text()).toContain("some are live and some aren't");
+    expect(store.value!.text.en.noFit).toBe("Message us.");
+
+    store.chartWritesDown = false;
+    await click("Try saving again");
+    expect(tops()).toMatchObject({ ease: { bust: 1 } });
+    expect(store.writes).toBe(1);
+    expect(banners()).toEqual([UPGRADE]);
   });
 
   it("leaves the chart parts out when no chart has questions", async () => {
