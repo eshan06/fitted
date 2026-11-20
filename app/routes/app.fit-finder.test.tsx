@@ -878,11 +878,30 @@ describe("a chart's ease and stretch", () => {
     expect(ease().value).toBe("+1 in at bust");
     expect(store.value!.text.en.noFit).toBe("Message us.");
 
-    store.chartWritesDown = false;
+    // A retry that fails before it reads anything still counts what saved.
+    store.down = true;
+    await click("Try saving again");
+    expect(banners()).toEqual([PARTIAL, UPGRADE]);
+    expect(lines()[0]).toBe("Saved: your fit finder settings.");
+
+    store.down = store.chartWritesDown = false;
     await click("Try saving again");
     expect(tops()).toMatchObject({ ease: { bust: 1 } });
     expect(store.writes).toBe(1);
     expect(banners()).toEqual([UPGRADE]);
+  });
+
+  it("names only the charts when the settings didn't change", async () => {
+    await open();
+    await type(ease(), "+1 in at bust");
+    await type(picked(), BOTTOMS);
+    await type(labelled("Stretch"), "high");
+    store.chartWritesMax = 1;
+    await click("Save");
+    expect(lines()).toEqual([
+      "Saved: the ease and stretch for Women's tops.",
+      "Not saved: the ease and stretch for Women's bottoms. Your edits are still here.",
+    ]);
   });
 
   it("names what saved and what didn't, as the canvas draws it, until the retry finishes", async () => {

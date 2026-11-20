@@ -418,14 +418,15 @@ const MARKS: Record<string, [string, string]> = {
 };
 // The half-saved banner's words for some parts, as the canvas puts them.
 const LIST = new Intl.ListFormat("en", { type: "conjunction" });
-const partWords = (p: Parts, charts: FitChart[]) =>
-  [
-    p.settings && "your fit finder settings",
-    p.charts.length > 0 &&
-      `the ease and stretch for ${LIST.format(p.charts.map((id) => charts.find((c) => c.id === id)!.name))}`,
+const partWords = (parts: string[], charts: FitChart[]) => {
+  const names = charts.filter((c) => parts.includes(c.id)).map((c) => c.name);
+  return [
+    parts.includes("settings") && "your fit finder settings",
+    names.length > 0 && `the ease and stretch for ${LIST.format(names)}`,
   ]
     .filter(Boolean)
     .join(", and ");
+};
 const errorLine = (id: string, words: string) => (
   <p id={`${id}-err`} className="help err">
     <s-icon type="alert-circle" tone="critical" size="small" />
@@ -459,23 +460,23 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
   const [draft, setDraft] = useState(initial);
   const [local, setLocal] = useState<Answer | null>(null);
   const [dismissed, setDismissed] = useState<Answer>();
-  const [sent, setSent] = useState<Parts>();
+  // The parts the last save sent ("settings" or a chart id) with what was
+  // sent, and those an earlier try saved, so a retry that fails sooner still
+  // counts them.
+  const [sent, setSent] = useState<Record<string, string>>({});
+  const [landed, setLanded] = useState<Record<string, string>>({});
   const saving = fetcher.state !== "idle";
   const answer = saving ? undefined : fetcher.data;
   const notice = local ?? (answer === dismissed ? undefined : answer);
   const errors = notice?.fieldErrors ?? {};
   const marked = Object.keys(errors);
   const code = notice?.error?.code;
-  // Of the parts the last save sent, those that hold now (keep) or don't.
   const held = notice?.saved;
-  const split = (keep: boolean): Parts | undefined =>
-    sent &&
-    held && {
-      settings: sent.settings && held.settings === keep,
-      charts: sent.charts.filter((id) => held.charts.includes(id) === keep),
-    };
-  const done = split(true);
-  const left = split(false);
+  const holds = (k: string) =>
+    (held && (k === "settings" ? held.settings : held.charts.includes(k))) ||
+    landed[k] === sent[k];
+  const done = Object.keys(sent).filter(holds);
+  const left = Object.keys(sent).filter((k) => !holds(k));
 
   const save = () => {
     const fieldErrors: FieldErrors = {};
@@ -498,10 +499,14 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
     setLocal(null);
     const edits = { fitFinder: draft.fitFinder, noFit: draft.noFit };
     const was = { fitFinder: initial.fitFinder, noFit: initial.noFit };
-    setSent({
-      settings: JSON.stringify(edits) !== JSON.stringify(was),
-      charts: charts.map((c) => c.id),
-    });
+    const key = JSON.stringify;
+    const parts = Object.fromEntries(charts.map((c) => [c.id, key(c)]));
+    if (key(edits) !== key(was)) parts.settings = key(edits);
+    setLanded((l) => ({
+      ...l,
+      ...Object.fromEntries(done.map((k) => [k, sent[k]])),
+    }));
+    setSent(parts);
     fetcher.submit({ digest: loaded.digest, edits, charts } as never, {
       method: "post",
       encType: "application/json",
@@ -572,13 +577,13 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
           {button("Reload latest", () => revalidator.revalidate())}
           {button("Cancel", dismiss)}
         </Banner>
-      ) : code && done && (done.settings || done.charts.length > 0) ? (
+      ) : code && held && done.length > 0 && left.length > 0 ? (
         <Banner copy={["Some of your changes weren't saved"]}>
           <s-paragraph>
             <strong>Saved:</strong> {partWords(done, loaded.charts)}.
           </s-paragraph>
           <s-paragraph>
-            <strong>Not saved:</strong> {partWords(left!, loaded.charts)}. Your
+            <strong>Not saved:</strong> {partWords(left, loaded.charts)}. Your
             edits are still here.
           </s-paragraph>
           {button("Try saving again", save)}
