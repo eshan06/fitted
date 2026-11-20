@@ -1,5 +1,5 @@
 // Home (ARCHITECTURE §2, §6, §8): plan banner, your charts and products
-// without a chart. The setup guide comes with #SETUP, opens stats with #45.
+// without a chart. The setup guide comes with #110, opens stats with #45.
 import { Suspense } from "react";
 import type { LoaderFunctionArgs } from "react-router";
 import { Await, useLoaderData, useRevalidator } from "react-router";
@@ -188,8 +188,12 @@ function LoadError() {
 
 export function Dashboard(h: Extract<HomeData, { plan: unknown }>) {
   const first = h.charts === 0;
-  const { all, covered } = h.products;
-  const missing = { count: all.count - covered.count, atLeast: all.atLeast };
+  const { all, covered, missing: titles } = h.products;
+  // Over 10,000 products Shopify's counts are floors, so the titles decide.
+  const missing = {
+    count: Math.max(all.count - covered.count, titles.length),
+    atLeast: all.atLeast,
+  };
   return (
     <>
       <PlanBanner {...h} />
@@ -201,7 +205,7 @@ export function Dashboard(h: Extract<HomeData, { plan: unknown }>) {
         >
           <YourCharts rows={h.rows} />
           {all.count > 0 &&
-            (missing.count > 0 ? (
+            (titles.length ? (
               <s-section
                 heading={`${num(missing)} ${missing.count === 1 && !missing.atLeast ? "product has" : "products have"} no size guide`}
               >
@@ -210,7 +214,7 @@ export function Dashboard(h: Extract<HomeData, { plan: unknown }>) {
                     {"Shoppers on these pages can't check sizing."}
                   </s-paragraph>
                   <s-unordered-list>
-                    {h.products.missing.map((t, i) => (
+                    {titles.map((t, i) => (
                       <s-list-item key={i}>{t}</s-list-item>
                     ))}
                   </s-unordered-list>

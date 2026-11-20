@@ -284,6 +284,22 @@ describe("the screen", () => {
     ).not.toBeNull();
   });
 
+  it("counts products without a chart as a floor past Shopify's 10,000 cap", async () => {
+    const el = await show(
+      Promise.resolve({
+        ...OK,
+        products: {
+          all: N(10000, true),
+          covered: N(10000, true),
+          missing: ["Socks", "Tote", "Hat"],
+        },
+      }),
+    );
+    expect(
+      el.querySelector('s-section[heading="3+ products have no size guide"]'),
+    ).not.toBeNull();
+  });
+
   it("shows the Free plan's banner on a first install, with no charts table", async () => {
     const el = await show(
       Promise.resolve({
