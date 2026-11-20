@@ -107,6 +107,11 @@ describe("size guide Liquid", () => {
     "request.locale.iso_code | json": "fr",
     "plan | json": "pro",
     "chart.system.handle | json": "c-abc0000001",
+    "s.fitFinder | json": { fitBars: true, addToCart: false },
+    "p.variants | map: 'id' | json": [44001, 44002],
+    "p.variants | map: 'option1' | json": ["M", "M"],
+    "p.variants | map: 'option2' | json": ["Black", "White"],
+    "p.variants | map: 'option3' | json": [null, null],
   };
   // The data the snippet prints on a store with that plan.
   const printed = (plan: string) =>
@@ -136,18 +141,28 @@ describe("size guide Liquid", () => {
     expect(snippet.match(/metafields/g)).toHaveLength(2);
   });
 
-  it("prints the fit finder and the handle that keeps its answers only on Pro (§10)", () => {
+  it("prints the fit finder, the handle that keeps its answers and what Add to cart reads only on Pro (§10)", () => {
     expect(printed("pro")).toMatchObject({
       plan: "pro",
       handle: "c-abc0000001",
       chart: { fit: values["c.fit | json"] },
+      fitFinder: { fitBars: true, addToCart: false },
+      variants: {
+        id: [44001, 44002],
+        o1: ["M", "M"],
+        o2: ["Black", "White"],
+        o3: [null, null],
+      },
     });
     for (const plan of ["free", "standard"]) {
       const d = printed(plan);
       expect(d.plan).toBe(plan);
-      expect(d).not.toHaveProperty("handle");
+      for (const key of ["handle", "fitFinder", "variants"])
+        expect(d).not.toHaveProperty(key);
       expect(d.chart).not.toHaveProperty("fit");
     }
+    // The product whose variants it prints is the guide's own.
+    expect(guide).toContain("{%- render 'guide-data', chart: chart, p: p -%}");
   });
 
   it("prints data that parseGuide reads", () => {

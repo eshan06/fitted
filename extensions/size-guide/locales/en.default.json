@@ -37,6 +37,15 @@
     "why_small": "{m} is below {size}, the smallest size on this chart.",
     "why_usual": "You usually wear {size}{fit}{so}.",
     "why_choice": "Your answers leave only {size} on this chart.",
-    "no_fit": "We couldn't find a good match. Check the size chart or message us."
+    "no_fit": "We couldn't find a good match. Check the size chart or message us.",
+    "showing": "Showing how {size} would fit",
+    "tight": "Tight",
+    "just_right": "Just right",
+    "loose": "Loose",
+    "bar": "{col}: {fit}",
+    "others": "See other sizes:",
+    "add": "Add {size} to cart",
+    "privacy": "How we use your measurements",
+    "privacy_note": "We use these measurements to suggest a size for this product."
   }
 }
