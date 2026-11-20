@@ -330,6 +330,30 @@ describe("Find my size", () => {
     expect(said(bare)).toBeNull();
     type(bare, "q1", "35.5");
     expect(said(bare)?.[0]).toBe("We recommend M");
+    // A finder that asks only the fit answers it, with no size to give.
+    const only = open(data({ questions: [fit.questions[2]] }));
+    pick(only, "q3", "regular");
+    expect(said(only)).toEqual([
+      "We couldn't find a good match. Check the size chart or message us.",
+    ]);
+  });
+
+  it("settles a measurement on Enter, which submits nothing", () => {
+    const root = open(data({ questions: [fit.questions[0]] }));
+    const [bust] = fields(root, "q1");
+    bust.value = "35.5";
+    const enter = new KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+      cancelable: true,
+    });
+    const submitted = vi.fn();
+    root.querySelector(".fitted-fit")!.addEventListener("submit", submitted);
+    bust.dispatchEvent(enter);
+    expect(enter.defaultPrevented).toBe(true);
+    expect(bust.value).toBe("35.5 in");
+    expect(said(root)?.[0]).toBe("We recommend M");
+    expect(submitted).not.toHaveBeenCalled();
   });
 
   it("recommends the Storefront board's size, saying why", () => {
@@ -713,5 +737,25 @@ describe("Find my size's events (§12)", () => {
     const beacon = vi.spyOn(navigator, "sendBeacon").mockReturnValue(true);
     answer(open(data()), { q1: "35.5", q2: "m", q3: "regular" });
     expect(beacon).not.toHaveBeenCalled();
+  });
+
+  it("tells nothing for answers another product left, until the shopper changes one", () => {
+    sessionStorage.setItem(
+      "fitted:answers:c-tops000001",
+      JSON.stringify({
+        q1: { value: 35.5, unit: "in" },
+        q2: "m",
+        q3: "regular",
+      }),
+    );
+    const beacon = vi.spyOn(navigator, "sendBeacon").mockReturnValue(true);
+    const root = block();
+    expect(said(root)?.[0]).toBe("We recommend M");
+    expect(sent(beacon).map((e) => e.type)).toEqual(["open"]);
+    pick(root, "q3", "relaxed");
+    expect(sent(beacon).at(-1)).toMatchObject({
+      type: "fit_result",
+      size: "l",
+    });
   });
 });

@@ -718,16 +718,20 @@ export function render(root: HTMLElement, g: Guide) {
         .join(" ");
     };
     let sent: string | undefined; // the last result Fitted was told
-    const update = () => {
+    // tell is false for the answers the guide opens with, which the shopper
+    // didn't give on this page.
+    const update = (tell = true) => {
       const a = read();
       try {
         if (key) sessionStorage.setItem(key, JSON.stringify(a));
       } catch {
         // No storage: the answers last until the page goes.
       }
-      // Every answer a shopper can't skip, and one besides a fit to go on.
+      // Every answer a shopper can't skip, and one besides a fit to go on
+      // when the finder asks one.
+      const other = qs.filter((q) => q.kind !== "fit");
       const ready =
-        qs.some((q) => q.kind !== "fit" && a[q.id] !== undefined) &&
+        (!other.length || other.some((q) => a[q.id] !== undefined)) &&
         qs.every(
           (q) => (q.kind === "measure" && q.optional) || a[q.id] !== undefined,
         );
@@ -735,16 +739,17 @@ export function render(root: HTMLElement, g: Guide) {
         ? findSize({ unit: g.unit, tables: g.tables, fit }, a)
         : null;
       // A result unlike the last one told.
-      if (r && (r.row ?? "") !== sent) {
+      if (tell && r && (r.row ?? "") !== sent) {
         sent = r.row ?? "";
         track(root, "fit_result", r.row ?? undefined);
       }
       show(r);
     };
-    // The result follows a field the shopper leaves, a pick, or Enter, and
-    // none of the form's events reach a theme's form around the guide.
+    // The result follows a field the shopper leaves, a pick, or Enter, which
+    // never submits. No submit, input or change reaches a theme's form around
+    // the guide.
     const settle = (el: HTMLInputElement) => {
-      const q = measured.find((x) => x.id === el.dataset?.q);
+      const q = measured.find((x) => x.id === el.dataset.q);
       const m = q && typed(el.value, col(q.col));
       if (m) el.value = written(m);
       update();
@@ -753,14 +758,15 @@ export function render(root: HTMLElement, g: Guide) {
       form.addEventListener(type, (e) => {
         e.stopPropagation();
         if (type === "submit") e.preventDefault();
-        if (type !== "input")
-          settle(
-            (type === "change"
-              ? e.target
-              : document.activeElement) as HTMLInputElement,
-          );
+        if (type === "change") settle(e.target as HTMLInputElement);
       });
-    update();
+    form.addEventListener("keydown", (e) => {
+      const el = e.target as HTMLInputElement;
+      if (e.key !== "Enter" || el.type !== "text") return;
+      e.preventDefault();
+      settle(el);
+    });
+    update(false);
     form.hidden = true;
     return form;
   }
