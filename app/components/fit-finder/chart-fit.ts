@@ -179,8 +179,15 @@ export function reasonText(c: FitChart, { reason }: FitResult) {
   const unit = measures(c).find((m) => m.id === col)?.unit;
   const m = `Your ${v.value} ${v.unit} ${label(c, col).toLowerCase()}${ease ? ` with ${round2(ease)} ${unit} of ease` : ""}`;
   const fit = v.fit ? `, and you like a ${v.fit} fit` : "";
+  // Past the size's own top value, only the stretch held it (§10).
+  const cell = c.table.rows.find((r) => r.id === v.size)?.cells[col];
+  const at = unit && convert(Number(v.value), v.unit as Unit, unit);
+  const stretched =
+    cell && at != null && at + (ease || 0) > (cell[1] ?? cell[0])
+      ? ", counting the fabric's stretch"
+      : "";
   const text: Record<string, () => string> = {
-    in: () => `${m} falls in ${s("size")} on this chart${fit}.`,
+    in: () => `${m} falls in ${s("size")} on this chart${stretched}${fit}.`,
     between: () =>
       `${m} falls between ${s("below")} and ${s("above")} on this chart${fit}, so ${s("size")}.`,
     large: () => `${m} is past ${s("size")}, the largest size on this chart.`,

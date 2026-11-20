@@ -270,9 +270,13 @@ group("what shoppers see", () => {
     expect(reason(named({ bust: 1.25 }))).toBe(
       "Your 37.5 in bust with 1.25 in of ease falls between M and L on this chart, and you like a regular fit, so L.",
     );
-    // Some stretch lets M reach 38.75 in.
+    // Some stretch lets M reach 38.75 in, past its own 38, and says so.
     expect(reason(named({ bust: 1.25 }), undefined, "some")).toBe(
-      "Your 37.5 in bust with 1.25 in of ease falls in M on this chart, and you like a regular fit.",
+      "Your 37.5 in bust with 1.25 in of ease falls in M on this chart, counting the fabric's stretch, and you like a regular fit.",
+    );
+    // Within M's own range, stretch goes unmentioned.
+    expect(reason(named({ bust: 0.5 }), undefined, "high")).toBe(
+      "Your 37.5 in bust with 0.5 in of ease falls in M on this chart, and you like a regular fit.",
     );
   });
 

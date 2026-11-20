@@ -934,8 +934,8 @@ describe("a chart's ease and stretch", () => {
     await open();
     await type(ease(), "+5 in at bust"); // 42.5 in: past XL's 42
     expect(preview()).toContain(
-      "Your 37.5 in bust with 5 in of ease falls in XL on this chart",
-    ); // some stretch
+      "Your 37.5 in bust with 5 in of ease falls in XL on this chart, counting the fabric's stretch",
+    );
     await type(labelled("Stretch"), "none");
     expect(preview()).toContain(
       `${saved().text.en.noFit}Your 37.5 in bust with 5 in of ease is past XL, the largest size on this chart.`,
