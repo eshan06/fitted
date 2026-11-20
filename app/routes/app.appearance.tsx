@@ -532,7 +532,10 @@ function Editor(props: { loaded: Loaded; themeUrl: string }) {
     <>
       <SaveBar
         id="appearance-save-bar"
-        open={saving || JSON.stringify(draft) !== JSON.stringify(initial)}
+        open={
+          saving ||
+          JSON.stringify(toEdits(draft)) !== JSON.stringify(toEdits(initial))
+        }
       >
         <button
           variant="primary"

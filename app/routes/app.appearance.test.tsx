@@ -513,6 +513,19 @@ describe("colors, font and preview", () => {
     expect(byId("colors.accent").getAttribute("aria-describedby")).toBe(
       "colors.accent-err",
     );
+
+    // Back to the theme: the unused hex is no change, and nothing is marked.
+    await click(labelled("Match my theme"));
+    expect(saveBar()).toBeNull();
+  });
+
+  it("shows the preview's card while loading", async () => {
+    store.admin.graphql.mockImplementation(() => new Promise(() => {}));
+    await open();
+    expect(text()).toContain("Loading appearance settings");
+    expect(document.querySelectorAll('[role="status"] > .card')).toHaveLength(
+      1,
+    );
   });
 
   it("offers no font upload yet, and keeps a stored one until Match my theme replaces it", async () => {
