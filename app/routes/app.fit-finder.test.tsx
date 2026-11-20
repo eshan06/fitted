@@ -42,6 +42,7 @@ function fakeStore(initial: Settings | null = null) {
     digest: initial ? "d0" : null,
     writes: 0,
     down: false,
+    chartsDown: false, // only the chart list fails
     charts: [chart],
   };
   const graphql = vi.fn(
@@ -49,12 +50,15 @@ function fakeStore(initial: Settings | null = null) {
       if (store.down) throw new Error("socket hang up");
       if (query.includes("query ChartList"))
         return json({
-          data: {
-            metaobjects: {
-              nodes: store.charts,
-              pageInfo: { hasNextPage: false, endCursor: null },
-            },
-          },
+          errors: store.chartsDown ? [{ message: "Throttled" }] : undefined,
+          data: store.chartsDown
+            ? undefined
+            : {
+                metaobjects: {
+                  nodes: store.charts,
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
+              },
         });
       if (query.includes("query FittedAppHandle"))
         return json({
@@ -170,6 +174,18 @@ const edits = (patch: Record<string, unknown> = {}) => ({
 });
 
 describe("loading and saving the fit finder", () => {
+  it("says the settings didn't load, logging why, when only the chart list fails", async () => {
+    store.chartsDown = true; // after its retries
+    expect((await load()).fitFinder).toEqual({
+      error: { code: "load", message: expect.any(String) },
+    });
+    expect(JSON.parse(logs[0])).toMatchObject({
+      level: "error",
+      shop: SHOP,
+      route: "app.fit-finder",
+    });
+  });
+
   it("loads the settings, the plan, the plans page and whether there are charts", async () => {
     const got = await load();
     expect(got.fitFinder).toMatchObject({
@@ -412,6 +428,11 @@ describe("fit finder screen", () => {
       "Enter a message for shoppers, up to 200 characters.",
     );
     expect(noFit().getAttribute("aria-invalid")).toBe("true");
+    const link = [...document.querySelectorAll("a")].find(
+      (a) => a.textContent === "When no size fits",
+    )!;
+    await act(async () => link.click());
+    expect(document.activeElement).toBe(noFit());
 
     await click("Discard");
     expect(noFit().value).toBe(saved().text.en.noFit);
