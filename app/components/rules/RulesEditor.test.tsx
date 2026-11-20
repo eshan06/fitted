@@ -366,6 +366,28 @@ describe("display rules screen", () => {
     );
   });
 
+  // Review round 1: "Was" named the saved condition at the same position.
+  it("on Free, says what a refused condition was only when it was edited in place", async () => {
+    const tagged = ranked();
+    tagged.charts[A].match = [
+      { field: "tag", op: "is", value: "a" },
+      { field: "tag", op: "is", value: "b" },
+    ];
+    const refuse = {
+      status: 403,
+      body: {
+        error: { code: "plan", message: "x" },
+        fieldErrors: { [`charts.${A}.match.0`]: "On Standard and Pro" },
+      },
+    };
+    await open([edit(tagged, "d1", null, { free: true })], [refuse]);
+    await click(byLabel("Remove condition"));
+    await type(byLabel("Value"), "c");
+    await click(buttons("Save")[0]);
+    expect(text()).toContain("On Free, change it back or remove it.");
+    expect(text()).not.toContain("Was ");
+  });
+
   it("lists each problem in the Fix banner, linking it to its field, another chart's by name", async () => {
     await open([edit(ranked())]);
     await click(buttons("Add condition")[1]);
@@ -376,7 +398,8 @@ describe("display rules screen", () => {
     await type(byLabel("Metafield key"), "app--4821.fit");
     await type(byLabel("Value", 0), "x".repeat(256));
     await click(buttons("Save")[0]);
-    expect(headings()).toEqual(["Fix 3 conditions to save"]);
+    // Two of the problems are one condition's.
+    expect(headings()).toEqual(["Fix 2 conditions to save"]);
     const items = [...document.querySelectorAll("s-banner li")].map(
       (li) => li.textContent,
     );
@@ -521,7 +544,10 @@ describe("display rules screen", () => {
           job: job("failed", 5, "Shopify refused the chart for 3 products"),
         }),
       ],
-      [{ status: 403, body: { error: { code: "product_access" } } }],
+      [
+        { status: 403, body: { error: { code: "product_access" } } },
+        { status: 502, body: { error: { code: "shopify" } } },
+      ],
     );
     expect(text()).toContain(
       "They're saved, but Shopify refused the chart for 3 products, so",
@@ -532,6 +558,11 @@ describe("display rules screen", () => {
       { isError: true },
     );
     expect(headings()).toEqual(["Your rules didn't finish applying"]);
+    await click(buttons("Try again")[0]);
+    expect(bridge.toast.show).toHaveBeenLastCalledWith(
+      "Shopify didn't respond, so the rules weren't applied. Try again.",
+      { isError: true },
+    );
   });
 
   it("points a store with no charts at making one", async () => {

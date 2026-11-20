@@ -1040,12 +1040,15 @@ export async function latestResolve(shop: string) {
 
 /** How many products the store has, for the applying banner. */
 export async function countProducts(admin: Admin) {
-  const data = await adminGraphql<{ productsCount: { count: number } }>(
+  const data = await adminGraphql<{
+    productsCount: { count: number } | null;
+  }>(
     admin,
     `#graphql
     query FittedProductCount { productsCount(limit: null) { count } }`,
     {},
     { retry: true },
   );
-  return data.productsCount.count;
+  // The field is nullable; the banner then says "your products".
+  return data.productsCount?.count ?? null;
 }

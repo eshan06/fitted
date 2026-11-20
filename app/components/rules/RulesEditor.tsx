@@ -239,6 +239,11 @@ export function RulesEditor(props: {
   const listed = plan
     ? []
     : model.problems(draft, errors, loaded.charts, current);
+  // Conditions, not problems: one can have several. At least 1 for a message about the whole document.
+  const rows =
+    new Set(
+      listed.flatMap((l) => l.path?.split(".").slice(0, 4).join(".") ?? []),
+    ).size || 1;
 
   const conditions = (list: List) =>
     rule[list].map((c, i) => {
@@ -249,9 +254,16 @@ export function RulesEditor(props: {
           rule[list].map((x, j) => (j === i ? next : x)),
         );
       // Free's refusal of a saved paid condition that was edited.
+      // Only with nothing added or removed, and the saved one gone from the
+      // list, is this row the saved one edited.
       const was = model.at(initial, p);
+      const saved = initial.charts[current]?.[list] ?? [];
+      const same = (x: Condition) => JSON.stringify(x) === JSON.stringify(was);
       const old =
-        was && "value" in was && "value" in c && was.value !== c.value
+        was &&
+        "value" in was &&
+        saved.length === rule[list].length &&
+        !rule[list].some(same)
           ? `Was ${was.value}. `
           : "";
       return (
@@ -346,7 +358,7 @@ export function RulesEditor(props: {
         {listed.length > 0 && (
           <Banner
             copy={[
-              `Fix ${listed.length} condition${listed.length > 1 ? "s" : ""} to save`,
+              `Fix ${rows} condition${rows > 1 ? "s" : ""} to save`,
               "Nothing was saved, so products still show the same charts.",
             ]}
           >
