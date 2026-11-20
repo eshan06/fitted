@@ -597,6 +597,44 @@ describe("chart editor screen", () => {
     expect(byLabel("XS, Bust").value).toBe("31–32");
   });
 
+  it("keeps a marked value on its own size when a size above it is removed", async () => {
+    await open([stored()]);
+    await act(async () => button("Add size").click());
+    await type(byLabel("Size 2, Bust"), "33-");
+    await click("Save");
+    expect(byLabel("Size 2, Bust").getAttribute("aria-invalid")).toBe("true");
+    await act(async () => byLabel("Size 1").focus());
+    await click("Remove size");
+    await act(async () =>
+      document.querySelector<HTMLElement>("dialog s-button[tone]")!.click(),
+    );
+    await settle();
+    expect(byLabel("Size 1, Bust").value).toBe("33-");
+    expect(byLabel("Size 1, Bust").getAttribute("aria-invalid")).toBe("true");
+    expect(text()).toContain("Size 1, Bust:");
+    // Focus moves to the size that took its place, not the page.
+    expect(document.activeElement).toBe(byLabel("Size 1"));
+  });
+
+  it("closes the dialog with its X or Escape and keeps the size", async () => {
+    await open([stored()]);
+    await act(async () => byLabel("Size 1").focus());
+    await click("Remove size");
+    await act(async () =>
+      document
+        .querySelector<HTMLElement>('dialog [aria-label="Close"]')!
+        .click(),
+    );
+    expect(document.querySelector("dialog")).toBeNull();
+    await click("Remove size");
+    // Escape closes a modal dialog, which fires its close event.
+    await act(async () =>
+      document.querySelector("dialog")!.dispatchEvent(new Event("close")),
+    );
+    expect(document.querySelector("dialog")).toBeNull();
+    expect(byLabel("XS, Bust").value).toBe("31–32");
+  });
+
   it("removes a measurement after the dialog names the sizes it leaves", async () => {
     const { sent } = await open([stored()]);
     await act(async () => byLabel("Column 2 name").focus());

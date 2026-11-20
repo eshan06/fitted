@@ -441,3 +441,36 @@ export function remove(d: Draft, sel: Selected): Draft {
     }),
   };
 }
+
+/**
+ * The findings left once remove() takes out a size or a column: its own go,
+ * and the sizes below it keep theirs, since a cell finding names its size by
+ * position.
+ */
+export function removeErrors(
+  d: Draft,
+  sel: Selected,
+  errors: FieldErrors,
+): FieldErrors {
+  const t = table(d);
+  const ri = t.rows.findIndex((r) => r.id === sel.row);
+  const wordAt = `content.words.${t.id}.`;
+  const out: FieldErrors = {};
+  for (const [k, v] of Object.entries(errors)) {
+    const cell = /^content\.tables\.0\.rows\.(\d+)\.cells\.(.+)$/.exec(k);
+    const [a, b] = k.startsWith(wordAt)
+      ? k.slice(wordAt.length).split(".")
+      : [];
+    if (cell) {
+      const i = Number(cell[1]);
+      if (i === ri || cell[2] === sel.col) continue;
+      const at = ri >= 0 && i > ri ? i - 1 : i;
+      out[`content.tables.0.rows.${at}.cells.${cell[2]}`] = v;
+    } else {
+      const own =
+        a === (sel.row ?? sel.col) || (sel.col !== undefined && b === sel.col);
+      if (a === undefined || !own) out[k] = v;
+    }
+  }
+  return out;
+}

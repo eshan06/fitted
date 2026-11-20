@@ -10,6 +10,7 @@ import {
   problems,
   removal,
   remove,
+  removeErrors,
   setCell,
   storedDraft,
   setUnit,
@@ -377,6 +378,7 @@ describe("removing a size or a measurement", () => {
     t.merges = [
       { row: "xs", col: "us", rows: 2, cols: 1 },
       { row: "m", col: "waist", rows: 1, cols: 1 },
+      { row: "m", col: "us", rows: 1, cols: 2 },
     ];
     t.wrap = ["bust", "waist"];
     Object.assign(c.content.words, {
@@ -408,7 +410,8 @@ describe("removing a size or a measurement", () => {
     const t1 = saved.content.tables[0];
     expect(t1.columns.map((x) => x.id)).toEqual(["size", "us", "bust"]);
     expect(t1.rows.map((r) => r.id)).toEqual(["xs", "m"]);
-    expect(t1.merges).toEqual([]);
+    // Only the merges that span a removed size or column go.
+    expect(t1.merges).toEqual([{ row: "m", col: "us", rows: 1, cols: 2 }]);
     expect(t1.wrap).toEqual(["bust"]);
     expect(saved.content.fit).toMatchObject({
       ease: { bust: 1 },
@@ -420,5 +423,28 @@ describe("removing a size or a measurement", () => {
     expect(out.cells).not.toHaveProperty(["m.waist"]);
     // The other table rides along untouched.
     expect(saved.content.tables[1]).toEqual(chart().content.tables[1]);
+  });
+
+  it("drops the removed size's or column's findings and moves the later sizes' up", () => {
+    const d = toDraft(chart(), "DRAFT");
+    const errors = {
+      "content.tables.0.rows.0.cells.bust": "a",
+      "content.tables.0.rows.1.cells.bust": "b",
+      "content.tables.0.rows.1.cells.us": "c",
+      "content.words.t1.xs.us": "d",
+      "content.words.t1.bust": "e",
+      name: "f",
+    };
+    expect(removeErrors(d, { row: "xs" }, errors)).toEqual({
+      "content.tables.0.rows.0.cells.bust": "b",
+      "content.tables.0.rows.0.cells.us": "c",
+      "content.words.t1.bust": "e",
+      name: "f",
+    });
+    expect(removeErrors(d, { col: "bust" }, errors)).toEqual({
+      "content.tables.0.rows.1.cells.us": "c",
+      "content.words.t1.xs.us": "d",
+      name: "f",
+    });
   });
 });

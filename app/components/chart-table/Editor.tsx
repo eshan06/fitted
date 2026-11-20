@@ -317,6 +317,19 @@ export function Editor(props: {
               errors={errors}
               problems={listed}
               onChange={setDraft}
+              onRemove={(sel) => {
+                setDraft(model.remove(draft, sel));
+                // Cell findings name sizes by position, so they move up too.
+                if (notice?.fieldErrors)
+                  setLocal({
+                    ...notice,
+                    fieldErrors: model.removeErrors(
+                      draft,
+                      sel,
+                      notice.fieldErrors,
+                    ),
+                  });
+              }}
             />
           ) : (
             <h2 className="blank">A blank chart, ready for sizes</h2>

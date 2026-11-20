@@ -11,6 +11,7 @@ export function ChartTable(props: {
   errors: FieldErrors;
   problems: model.Problem[];
   onChange: (d: model.Draft) => void;
+  onRemove: (sel: model.Selected) => void;
 }) {
   const { draft, errors, onChange } = props;
   const [sel, setSel] = useState<model.Selected>();
@@ -47,8 +48,23 @@ export function ChartTable(props: {
     />
   );
   const removeNow = () => {
-    onChange(model.remove(draft, picked!));
+    const sel = picked!;
+    // Focus goes to the size or column that takes its place, not the page.
+    const list = sel.row !== undefined ? t.rows : t.columns;
+    const i = list.findIndex((x) => x.id === (sel.row ?? sel.col));
+    const next = list[i + 1] ?? list[i - 1];
+    props.onRemove(sel);
     setConfirm(undefined);
+    if (next)
+      setTimeout(() =>
+        document
+          .getElementById(
+            sel.row !== undefined
+              ? `cell-${next.id}-${t.columns[0].id}`
+              : `cell-h-${next.id}`,
+          )
+          ?.focus(),
+      );
   };
   const ask = () => {
     const r = model.removal(draft, picked!);
