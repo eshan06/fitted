@@ -66,7 +66,7 @@ export const tableCss = /* @__PURE__ */ [
   ".fitted-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}",
   // The tabs, then Find my size (§10): its questions and the result.
   ".fitted-tabs{display:flex;flex-wrap:wrap;border-bottom:1px solid var(--fitted-line)}",
-  ".fitted-dialog .fitted-tabs button{min-height:44px;margin-right:20px;padding:0 2px;border:0;border-bottom:2px solid transparent;border-radius:0;background:none;color:var(--fitted-muted);font-size:15px;font-weight:500}",
+  ".fitted-dialog .fitted-tabs button{min-height:44px;margin-inline-end:20px;padding:0 2px;border:0;border-bottom:2px solid transparent;border-radius:0;background:none;color:var(--fitted-muted);font-size:15px;font-weight:500}",
   ".fitted-dialog .fitted-tabs [aria-pressed=true]{border-bottom-color:var(--fitted-text);color:var(--fitted-text);font-weight:600}",
   ".fitted-fit{--fitted-edge:color-mix(in srgb,var(--fitted-text) 62%,var(--fitted-bg));display:flex;flex-wrap:wrap;gap:14px 12px;margin:0}",
   ".fitted-fit>*{flex:1 1 100%}",
@@ -79,9 +79,11 @@ export const tableCss = /* @__PURE__ */ [
   ".fitted-dialog .fitted-fine{margin:0;font-size:13px;line-height:1.5;color:var(--fitted-muted)}",
   ".fitted-result{display:flex;flex-direction:column;gap:12px;padding-top:14px;border-top:2px solid var(--fitted-text)}",
   ".fitted-result .fitted-h3 span{color:var(--fitted-accent)}",
-  // Phones: tighter tables and tabs, and larger switches.
+  // Phones: tighter tables and tabs, larger switches, and fields iOS won't
+  // zoom into.
   "@media (max-width:600px){",
-  ".fitted-dialog .fitted-tabs button{margin-right:14px;font-size:14px}",
+  ".fitted-dialog .fitted-tabs button{margin-inline-end:14px;font-size:14px}",
+  ".fitted-fit input[type=text],.fitted-fit select{font-size:16px}",
   ".fitted-table{min-width:0;font-size:14px}",
   ".fitted-table th,.fitted-table td{padding-left:8px;padding-right:8px}",
   ".fitted-bar{justify-content:flex-start}",

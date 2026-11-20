@@ -330,7 +330,7 @@ describe("Find my size", () => {
   });
 
   // The engine's tests' shoppers, in the words the shopper reads.
-  it.each([
+  it.each<[Record<string, string>, Partial<Fit>, string, string]>([
     [
       { q1: "35.5", q2: "m", q3: "regular" },
       { ease: { bust: 2 } },
@@ -452,7 +452,8 @@ describe("Find my size", () => {
     for (const [bust, usual, f] of cases) {
       sessionStorage.clear();
       const root = open(data(f));
-      const typed = bust === null ? {} : { q1: `${bust}` };
+      const typed: Record<string, string> =
+        bust === null ? {} : { q1: `${bust}` };
       const shown = answer(root, { ...typed, q2: usual, q3: "regular" });
       const full = { ...fit, ...f };
       const a: Answers = { q2: usual, q3: "regular" };
@@ -581,7 +582,7 @@ describe("Find my size's events (§12)", () => {
     el.dataset.product = "gid://shopify/Product/8812";
     return open(data(), el.appendChild(document.createElement("div")));
   };
-  const sent = (beacon: ReturnType<typeof vi.spyOn>) =>
+  const sent = (beacon: { mock: { calls: unknown[][] } }) =>
     beacon.mock.calls.map(([, body]) => JSON.parse(body as string));
 
   it("tells Fitted each new result as the shopper settles on it, naming only its size row", () => {
