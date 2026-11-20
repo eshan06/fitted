@@ -91,7 +91,8 @@ export function Editor(props: {
   const set = (patch: Partial<model.Draft>) => setDraft({ ...draft, ...patch });
   const dirty = saving || JSON.stringify(draft) !== JSON.stringify(initial);
   // The save bar holds the admin's links but not the app's own (App Bridge's
-  // Save Bar API), so a link out of the editor asks the admin first. A save's
+  // Save Bar API), so a link out of the editor asks the admin first: on the
+  // dev store it shakes the save bar and stays until Save or Discard. A save's
   // redirect isn't a link, so it isn't held.
   const blocker = useBlocker(
     ({ currentLocation, nextLocation }) =>
