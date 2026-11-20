@@ -12,7 +12,6 @@ import {
   redirect,
   useFetcher,
   useLoaderData,
-  useLocation,
   useRouteError,
 } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
@@ -138,9 +137,17 @@ function PlanCheckBanner({ plan, checkFailed, confirmed }: PlanCheck) {
   const fetcher = useFetcher();
   // The screen's own s-page, whose supplemental-start slot puts a banner above
   // its content, as drawn. undefined until looked for; null if it has none.
-  const { key } = useLocation();
+  // Looked for again on every change while shown: a new screen, or one like
+  // Fit finder that swaps its loading page for its own.
   const [page, setPage] = useState<Element | null>();
-  useEffect(() => setPage(document.querySelector("s-page")), [key]);
+  useEffect(() => {
+    if (!checkFailed) return;
+    const find = () => setPage(document.querySelector("s-page"));
+    find();
+    const changes = new MutationObserver(find);
+    changes.observe(document.body, { childList: true, subtree: true });
+    return () => changes.disconnect();
+  }, [checkFailed]);
   if (!checkFailed || page === undefined) return null;
   // A plan never confirmed has no date to give.
   const since = confirmed ? ` (last confirmed ${confirmed})` : "";

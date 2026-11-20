@@ -7,17 +7,31 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { STRETCH } from "../lib/fit-finder";
 import { defaultSettings, type Settings } from "../models/settings.server";
 
-const m = vi.hoisted(() => ({ authenticate: vi.fn(), getPlan: vi.fn() }));
+const m = vi.hoisted(() => ({
+  authenticate: vi.fn(),
+  getPlan: vi.fn(),
+  findUnique: vi.fn(),
+}));
 vi.mock("../shopify.server", () => ({
   authenticate: { admin: m.authenticate },
 }));
-vi.mock("../models/billing.server", () => ({ getPlan: m.getPlan }));
+vi.mock("../db.server", () => ({
+  default: { shop: { findUnique: m.findUnique } },
+}));
+vi.mock("../models/billing.server", async (orig) => ({
+  ...(await orig<typeof import("../models/billing.server")>()),
+  getPlan: m.getPlan,
+}));
 // The save bar is App Bridge's; here it renders its buttons in place.
 vi.mock("@shopify/app-bridge-react", () => ({
   SaveBar: ({ open, children }: { open: boolean; children: ReactNode }) =>
     open ? <div data-testid="save-bar">{children}</div> : null,
 }));
+vi.mock("@shopify/shopify-app-react-router/react", () => ({
+  AppProvider: ({ children }: { children: ReactNode }) => children,
+}));
 const { default: FitFinder, action, loader } = await import("./app.fit-finder");
+const shell = await import("./app");
 
 (
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -617,6 +631,72 @@ describe("fit finder screen", () => {
   });
 });
 
+// Regression (#171): a plan the database couldn't give failed the load, so
+// the screen showed its load error and lost its edits. The real plan read.
+const databaseDown = async () => {
+  const billing = await vi.importActual<
+    typeof import("../models/billing.server")
+  >("../models/billing.server");
+  m.getPlan.mockImplementation(billing.getPlan);
+  m.findUnique.mockRejectedValue(new Error("Can't reach database server"));
+  return billing;
+};
+
+describe("when the database can't give the plan", () => {
+  // The admin shell around the screen, as the embedded admin loads it.
+  async function openInShell() {
+    const Stub = createRoutesStub([
+      {
+        path: "/app",
+        Component: shell.default,
+        HydrateFallback: () => null,
+        loader: (args) => shell.loader(args as LoaderFunctionArgs),
+        action: (args) => shell.action(args as ActionFunctionArgs),
+        shouldRevalidate: shell.shouldRevalidate,
+        children: [
+          {
+            path: "fit-finder",
+            Component: FitFinder,
+            loader: (args) => loader(args as LoaderFunctionArgs),
+            action: (args) => action(args as ActionFunctionArgs),
+          },
+        ],
+      },
+    ]);
+    const div = document.body.appendChild(document.createElement("div"));
+    root = createRoot(div);
+    await act(async () =>
+      root!.render(<Stub initialEntries={["/app/fit-finder"]} />),
+    );
+    await settle();
+  }
+  const planBanner = () =>
+    document.querySelector('s-banner[heading="Couldn\'t check your plan"]');
+
+  it("keeps the screen and its edits on Free, under the plan banner, through Try again", async () => {
+    await databaseDown();
+    // Shopify answers after the failed read, as in the admin.
+    const answer = store.admin.graphql.getMockImplementation()!;
+    store.admin.graphql.mockImplementation(async (...call) => {
+      await new Promise((r) => setTimeout(r, 20));
+      return answer(...call);
+    });
+    await openInShell();
+    await settle();
+    expect(planBanner()?.textContent).toContain(
+      "Shopify didn't answer. Until it does, you keep Free and nothing is switched off.",
+    );
+    expect(banners()).toContain(UPGRADE.replace("Standard", "Free"));
+    await type(noFit(), "Mine");
+
+    await click(planBanner()!.querySelector("s-button") as HTMLElement);
+    expect(planBanner()).not.toBeNull();
+    expect(text()).not.toContain("didn't load");
+    expect(noFit().value).toBe("Mine");
+    expect(saveBar()).not.toBeNull();
+  });
+});
+
 describe("a chart's ease and stretch", () => {
   const TOPS = "gid://shopify/Metaobject/2";
   const BOTTOMS = "gid://shopify/Metaobject/3";
@@ -1185,6 +1265,29 @@ describe("a chart's ease and stretch", () => {
     }
     vi.useRealTimers();
     expect(logs).toHaveLength(2);
+  });
+
+  // Regression (#171): Try again's recount threw on the plan the database
+  // couldn't give, and the error page took the screen's edits.
+  it("counts once more on Pro when the database fails after the load", async () => {
+    const billing = await databaseDown();
+    m.findUnique.mockResolvedValueOnce({
+      shop: SHOP,
+      plan: "pro",
+      planYearly: false,
+      planCheckedAt: new Date(),
+      planOnStore: "pro",
+      resolvedAt: null,
+    });
+    await billing.getPlan(SHOP); // the load's read
+    store.products = { [TOPS]: 148 };
+
+    expect(await recount()).toEqual({
+      counts: {
+        [TOPS]: { count: 148, atLeast: false },
+        [BOTTOMS]: { count: 0, atLeast: false },
+      },
+    });
   });
 });
 

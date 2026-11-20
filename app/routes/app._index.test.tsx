@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
-import { act } from "react";
+import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import type { LoaderFunctionArgs } from "react-router";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { createRoutesStub } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AdminApiError } from "../models/admin.server";
@@ -16,9 +16,16 @@ const m = vi.hoisted(() => ({
   pricingPlansUrl: vi.fn(),
   resolveIfStale: vi.fn(),
   extensions: vi.fn(),
+  findUnique: vi.fn(),
 }));
 vi.mock("../shopify.server", () => ({
   authenticate: { admin: m.authenticate },
+}));
+vi.mock("../db.server", () => ({
+  default: { shop: { findUnique: m.findUnique } },
+}));
+vi.mock("@shopify/shopify-app-react-router/react", () => ({
+  AppProvider: ({ children }: { children: ReactNode }) => children,
 }));
 vi.mock("../models/chart.server", async (orig) => ({
   ...(await orig<typeof import("../models/chart.server")>()),
@@ -40,6 +47,7 @@ vi.mock("../models/billing.server", async (orig) => ({
 const bridge = { app: { extensions: m.extensions } };
 vi.mock("@shopify/app-bridge-react", () => ({ useAppBridge: () => bridge }));
 const { default: Home, loader } = await import("./app._index");
+const shell = await import("./app");
 type Data = Awaited<Awaited<ReturnType<typeof loader>>["home"]>;
 type Ok = Extract<Data, { plan: unknown }>;
 
@@ -503,9 +511,9 @@ describe("the screen", () => {
     );
   });
 
-  it("shows the error state when the load fails outright, as a database outage would", async () => {
+  it("shows the error state when the load fails outright", async () => {
     m.chartPages.mockReturnValue(pages([]));
-    m.getPlan.mockRejectedValue(new Error("db down"));
+    m.productCoverage.mockRejectedValue(new Error("unexpected"));
     const { home } = await load();
     home.catch(() => {});
     const el = await show(home);
@@ -712,5 +720,65 @@ describe("the screen", () => {
     await act(async () => button(el, "Try again")?.click());
     await act(() => new Promise((r) => setTimeout(r, 10)));
     expect(text(el)).toContain("Women's tops");
+  });
+});
+
+// Regression (#171): a plan the database couldn't give failed Home's load, so
+// it showed its error state. The shell and Home on their real loaders and the
+// real plan read.
+describe("when the database can't give the plan", () => {
+  let root: ReturnType<typeof createRoot> | undefined;
+  afterEach(() => act(() => root?.unmount()));
+
+  it("shows Home on Free under the plan banner, through Try again", async () => {
+    const billing = await vi.importActual<
+      typeof import("../models/billing.server")
+    >("../models/billing.server");
+    m.getPlan.mockImplementation(billing.getPlan);
+    m.findUnique.mockRejectedValue(new Error("Can't reach database server"));
+    m.chartPages.mockImplementation(() => pages([stored(1, "ACTIVE")]));
+    const Stub = createRoutesStub([
+      {
+        path: "/app",
+        Component: shell.default,
+        HydrateFallback: () => null,
+        loader: (args) => shell.loader(args as LoaderFunctionArgs),
+        action: (args) => shell.action(args as ActionFunctionArgs),
+        shouldRevalidate: shell.shouldRevalidate,
+        children: [
+          {
+            index: true,
+            Component: Home,
+            loader: (args) => loader(args as LoaderFunctionArgs),
+          },
+        ],
+      },
+    ]);
+    const el = document.createElement("div");
+    document.body.replaceChildren(el);
+    root = createRoot(el);
+    await act(async () => root!.render(<Stub initialEntries={["/app"]} />));
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+    const headings = () =>
+      [...el.querySelectorAll("s-banner")]
+        .map((b) => b.getAttribute("heading"))
+        .sort();
+    const shown = [
+      "Couldn't check your plan",
+      "Free plan: 1 of 3 published charts",
+    ];
+    expect(headings()).toEqual(shown);
+    expect(el.textContent).toContain(
+      "Shopify didn't answer. Until it does, you keep Free and nothing is switched off.",
+    );
+    expect(el.textContent).toContain("Chart 1");
+
+    const retry = el.querySelector(
+      's-banner[heading="Couldn\'t check your plan"] s-button',
+    ) as HTMLElement;
+    await act(async () => retry.click());
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+    expect(headings()).toEqual(shown);
+    expect(el.textContent).toContain("Chart 1");
   });
 });

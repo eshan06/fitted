@@ -50,17 +50,27 @@ type Check = {
 // ponytail: one entry per shop that ever opened Fitted; prune old entries if that reaches the millions.
 const lastCheck = new Map<string, Check>();
 let backoffUntil = 0;
+// Each shop's last confirmed plan as last read or checked, for when the
+// database can't be read. ponytail: one entry per shop, as lastCheck.
+const known = new Map<string, Omit<PlanState, "checkFailed">>();
 
 /**
  * The shop's plan for gating. `shop` must come from an authenticated session.
  * `recheck` (the welcome link's `plan_handle`) skips the cache; inside the gap
  * after the shop's last check it waits for the gap, never skipping the check.
+ * Never rejects: a plan it can't read or check comes back with `checkFailed`.
  */
 export async function getPlan(
   shop: string,
   { recheck = false } = {},
 ): Promise<PlanState> {
-  const row = recheck ? null : await db.shop.findUnique({ where: { shop } });
+  let row: Shop | null = null;
+  try {
+    if (!recheck) row = await readRow(shop);
+  } catch (error) {
+    // A failed read is a failed check, so no screen errors over it.
+    return unconfirmed(shop, error);
+  }
   // No await from here on, so two calls can't both start a check.
   const last = lastCheck.get(shop);
   // Join a check in flight. A re-check joins only one that hasn't started, so its read comes after the request.
@@ -112,6 +122,7 @@ export async function lastConfirmedPlan(
  * as Free, not the plan from before the uninstall, if that check fails.
  */
 export async function resetCachedPlan(shop: string) {
+  known.delete(shop);
   await db.shop.updateMany({
     where: { shop },
     data: {
@@ -123,10 +134,32 @@ export async function resetCachedPlan(shop: string) {
   });
 }
 
+// The cached plan, also kept in `known`.
+async function readRow(shop: string) {
+  const row = await db.shop.findUnique({ where: { shop } });
+  if (row) known.set(shop, { plan: toPlan(row.plan), yearly: row.planYearly });
+  else known.delete(shop);
+  return row;
+}
+
+// The last confirmed plan stands, Free if none. The store only ever gets a
+// confirmed plan, and the next check repeats a write this one didn't record.
+function unconfirmed(shop: string, error: unknown): PlanState {
+  console.log(
+    JSON.stringify({
+      level: "error",
+      msg: "Plan check failed",
+      shop,
+      route: "billing",
+      error: String(error),
+    }),
+  );
+  return { plan: "free", yearly: null, ...known.get(shop), checkFailed: true };
+}
+
 async function check(shop: string): Promise<PlanState> {
-  let row: Shop | null = null;
   try {
-    row = await db.shop.findUnique({ where: { shop } });
+    const row = await readRow(shop);
     // The offline session: a staff member's own access may not allow the metafield write.
     const { admin } = await unauthenticated.admin(shop);
     const shopId = await readShopId(admin);
@@ -152,24 +185,10 @@ async function check(shop: string): Promise<PlanState> {
       create: { shop, ...data },
       update: data,
     });
+    known.set(shop, { plan, yearly });
     return { plan, yearly, checkFailed: false };
   } catch (error) {
-    // The last confirmed plan stands. The store only ever gets a confirmed plan,
-    // and the next check repeats a write this one didn't record.
-    console.log(
-      JSON.stringify({
-        level: "error",
-        msg: "Plan check failed",
-        shop,
-        route: "billing",
-        error: String(error),
-      }),
-    );
-    return {
-      plan: toPlan(row?.plan),
-      yearly: row?.planYearly ?? null,
-      checkFailed: true,
-    };
+    return unconfirmed(shop, error);
   }
 }
 

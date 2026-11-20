@@ -1,10 +1,10 @@
 // @vitest-environment happy-dom
 import type { ReactElement, ReactNode } from "react";
-import { act } from "react";
+import { Suspense, act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
-import { Link, createRoutesStub } from "react-router";
+import { Await, Link, createRoutesStub, useLoaderData } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App, { action, loader, shouldRevalidate } from "./app";
 import Import from "./app.import";
@@ -181,8 +181,11 @@ describe("admin shell", () => {
 });
 
 describe("the shell's screen", () => {
+  let root: ReturnType<typeof createRoot> | undefined;
+  afterEach(() => act(() => root?.unmount()));
+  let streamIn: (screen: string) => void = () => {};
   // The real loader and action, behind the mocked session and billing module.
-  const show = async () => {
+  const show = async (path = "/app") => {
     const Stub = createRoutesStub([
       {
         path: "/app",
@@ -205,14 +208,28 @@ describe("the shell's screen", () => {
               <s-page heading="Size charts">Charts screen</s-page>
             ),
           },
+          {
+            // Like Fit finder: a loading page of its own, swapped for the
+            // screen's page once its data streams in after the plan's.
+            path: "fit-finder",
+            loader: () => ({
+              data: new Promise((r) => (streamIn = r)),
+            }),
+            Component: () => (
+              <Suspense fallback={<s-page heading="Loading">Loading</s-page>}>
+                <Await resolve={useLoaderData().data}>
+                  {(d) => <s-page heading="Fit finder">{d}</s-page>}
+                </Await>
+              </Suspense>
+            ),
+          },
         ],
       },
     ]);
     const el = document.createElement("div");
     document.body.replaceChildren(el);
-    await act(async () =>
-      createRoot(el).render(<Stub initialEntries={["/app"]} />),
-    );
+    root = createRoot(el);
+    await act(async () => root!.render(<Stub initialEntries={[path]} />));
     await act(() => new Promise((r) => setTimeout(r, 10)));
     return el;
   };
@@ -285,6 +302,20 @@ describe("the shell's screen", () => {
     expect(m.getPlan).toHaveBeenCalledTimes(2);
     expect(banner(el)?.parentElement?.getAttribute("heading")).toBe(
       "Size charts",
+    );
+  });
+
+  // Regression (#171): the banner stayed on the loading page, so it went with it.
+  it("moves the banner to a screen's page when it replaces its loading page", async () => {
+    m.getPlan.mockResolvedValue({ plan: "standard", checkFailed: true });
+    m.lastConfirmedPlan.mockResolvedValue({ plan: "standard", at: null });
+    const el = await show("/app/fit-finder");
+    expect(banner(el)?.parentElement?.getAttribute("heading")).toBe("Loading");
+
+    await act(async () => streamIn("Fit screen"));
+    expect(el.textContent).toContain("Fit screen");
+    expect(banner(el)?.parentElement?.getAttribute("heading")).toBe(
+      "Fit finder",
     );
   });
 
