@@ -1,71 +1,17 @@
 {%- comment -%}
-  The Size guide link and popup for the product page (ARCHITECTURE §9). No
-  Active chart, no output. loader.js shows the link once the chart validates;
-  until then an inline style hides it from theme button rules. Liquid escapes every word.
-  The error state links the store's Contact page when it has one. The merchant's
-  label, header, icon, colors, font, direction and CSS (§7) reach the page only
-  through guide-data's | json, and loader.js applies them as text and CSS values.
+  The size guide app block (ARCHITECTURE §9): next to the size picker on its
+  product page, which a theme's quick view of the product brings along too, or
+  in a featured product section, whose product the setting autofills. No
+  Active chart, no output; loader.js applies the placement settings (§7).
 {%- endcomment -%}
 {%- assign p = block.settings.product -%}
 {%- assign chart = p.metafields['$app'].chart.value -%}
 {%- if chart -%}
-  {%- assign title_id = 'fitted-title-' | append: block.id -%}
-  <div class="fitted-guide" data-url="{{ 'guide.js' | asset_url }}">
-    <button type="button" class="fitted-link" aria-haspopup="dialog" style="display:none !important">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M3 15.5 15.5 3l5.5 5.5L8.5 21z"/><path d="m7 12 2 2M10 9l2 2M13 6l2 2"/>
-      </svg>
-      {{- 'size_guide.title' | t -}}
-    </button>
-    <dialog class="fitted-dialog" aria-labelledby="{{ title_id }}">
-      <div class="fitted-panel">
-        <div class="fitted-head">
-          <div>
-            <h2 id="{{ title_id }}" class="fitted-title">{{ 'size_guide.title' | t }}</h2>
-            <p class="fitted-sub">{{ p.title | escape }}</p>
-          </div>
-          <button type="button" class="fitted-x" aria-label="{{ 'size_guide.close' | t }}" data-fitted-close>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
-          </button>
-        </div>
-        <div
-          class="fitted-body"
-          data-t-chart="{{ 'size_guide.chart' | t }}"
-          data-t-system="{{ 'size_guide.system' | t }}"
-          data-t-units="{{ 'size_guide.units' | t }}"
-          data-t-in="{{ 'size_guide.in' | t }}"
-          data-t-cm="{{ 'size_guide.cm' | t }}"
-          data-t-lb="{{ 'size_guide.lb' | t }}"
-          data-t-kg="{{ 'size_guide.kg' | t }}"
-          data-t-choose="{{ 'size_guide.choose' | t }}"
-          data-t-selected="{{ 'size_guide.selected' | t }}"
-          data-t-select="{{ 'size_guide.select' | t }}"
-        ></div>
-      </div>
-      <template data-state="loading">
-        <p role="status" class="fitted-note">{{ 'size_guide.loading' | t }}</p>
-        <div aria-hidden="true">
-          {%- for row in (1..6) -%}
-            <div class="fitted-skrow">{% for cell in (1..5) %}<span class="fitted-sk"></span>{% endfor %}</div>
-          {%- endfor -%}
-        </div>
-      </template>
-      <template data-state="error">
-        <div role="alert" class="fitted-alert">
-          <h3 class="fitted-h3">{{ 'size_guide.error' | t }}</h3>
-          <p>{{ 'size_guide.error_text' | t }}</p>
-          <div class="fitted-actions">
-            <button type="button" class="fitted-btn" data-fitted-retry>{{ 'size_guide.retry' | t }}</button>
-            <button type="button" class="fitted-btn fitted-ghost" data-fitted-close>{{ 'size_guide.dismiss' | t }}</button>
-          </div>
-          {%- if pages.contact.url -%}
-            <p class="fitted-help">{{ 'size_guide.help' | t }} <a href="{{ pages.contact.url | escape }}">{{ pages.contact.title | escape }}</a>.</p>
-          {%- endif -%}
-        </div>
-      </template>
-    </dialog>
-    {%- render 'guide-data', chart: chart -%}
-  </div>
+  {%- assign place = 'featured' -%}
+  {%- if template.name == 'product' and p.id == product.id -%}
+    {%- assign place = 'main' -%}
+  {%- endif -%}
+  {%- render 'guide', p: p, chart: chart, id: block.id, place: place -%}
 {%- endif -%}
 
 {% schema %}

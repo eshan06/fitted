@@ -200,6 +200,34 @@ describe("parseGuide", () => {
     });
   });
 
+  it("reads where the guide shows, with the placement defaults (§7) for what's missing or invalid", () => {
+    const where = (placement: unknown, link: unknown = {}) => {
+      const g = parseGuide(data({ placement, link }))!;
+      return [g.page, g.quick, g.featured, g.selector];
+    };
+    expect(where(undefined)).toEqual([true, false, false, ""]);
+    expect(
+      where({ productBlock: "no", quickView: 1, featured: "yes" }),
+    ).toEqual([true, false, false, ""]);
+    expect(where({ quickView: true, featured: true })).toEqual([
+      true,
+      true,
+      true,
+      "",
+    ]);
+    expect(where({ productBlock: false })).toEqual([false, false, false, ""]);
+    // The floating tab link style and a selector each take the block's place.
+    expect(where({}, { style: "tab" })).toEqual([false, false, false, ""]);
+    expect(where({ selector: ".size" })).toEqual([
+      false,
+      false,
+      false,
+      ".size",
+    ]);
+    expect(where({ selector: "  " })[0]).toBe(true);
+    expect(where({ selector: ".a\n.b" })).toEqual([true, false, false, ""]);
+  });
+
   it.each([
     ["text that isn't JSON", "{"],
     ["no data", ""],

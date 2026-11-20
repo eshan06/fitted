@@ -30,6 +30,12 @@ export type Guide = {
   font: string; // an uploaded font's URL
   colors: { text: string; accent: string; bg: string } | null;
   css: string; // custom CSS
+  // Where it shows (§7 placement). The app block's link on its product page
+  // steps aside for the floating tab link style and for a CSS selector.
+  page: boolean; // the app block's link on its product page
+  quick: boolean; // in a theme's quick view
+  featured: boolean; // in a featured product section
+  selector: string; // the element the app embed's link goes after
 };
 
 const isObj = (v: unknown): v is Record<string, unknown> =>
@@ -135,12 +141,18 @@ export function parseGuide(json: string | null | undefined): Guide | null {
     return null;
   const at = (k: string) =>
     (isObj(d[k]) ? d[k] : {}) as Record<string, unknown>;
-  const [units, popup, colors, text] = ["units", "popup", "colors", "text"].map(
-    at,
-  );
+  const [units, popup, colors, text, link, place] = [
+    "units",
+    "popup",
+    "colors",
+    "text",
+    "link",
+    "placement",
+  ].map(at);
   const font = isObj(popup.font) ? popup.font.fileUrl : "";
   const hex = [colors.text, colors.accent, colors.background];
   const country = isStr(d.country) ? d.country : "";
+  const selector = line(place.selector);
   return {
     unit,
     roundTo,
@@ -157,7 +169,7 @@ export function parseGuide(json: string | null | undefined): Guide | null {
     locale: canonical(d.locale),
     label: line(text.label),
     header: line(text.header),
-    icon: at("link").icon === "none" ? "none" : "ruler",
+    icon: link.icon === "none" ? "none" : "ruler",
     rtl: popup.rtl === true,
     font: isStr(font) && FONT_URL.test(font) ? font : "",
     colors:
@@ -165,6 +177,10 @@ export function parseGuide(json: string | null | undefined): Guide | null {
         ? { text: hex[0], accent: hex[1], bg: hex[2] }
         : null,
     css: cssProblem(d.css) ? "" : (d.css as string),
+    page: place.productBlock !== false && link.style !== "tab" && !selector,
+    quick: place.quickView === true,
+    featured: place.featured === true,
+    selector,
   };
 }
 
@@ -187,13 +203,14 @@ const shown = (u: Unit, conv: boolean, sys: Sys): Unit =>
   !conv ? u : u === "in" || u === "cm" ? sys : sys === "in" ? "lb" : "kg";
 const norm = (s: string) => s.trim().toLowerCase();
 const SYSTEMS = ["US", "UK", "EU", "AU"];
-// The size system most shoppers in a country wear, beyond US and AU.
-const WEARS = new Map(
-  "GB:UK IE:UK MT:UK CY:UK GG:UK JE:UK IM:UK GI:UK ZA:UK NZ:AU CA:US CH:EU NO:EU IS:EU LI:EU AT:EU BE:EU BG:EU CZ:EU DE:EU DK:EU EE:EU ES:EU FI:EU FR:EU GR:EU HR:EU HU:EU IT:EU LT:EU LU:EU LV:EU NL:EU PL:EU PT:EU RO:EU SE:EU SI:EU SK:EU"
-    .split(" ")
-    .map((p) => p.split(":") as [string, string]),
-);
-const systemOf = (country: string) => WEARS.get(country) ?? country;
+// The size system most shoppers in a country wear, beyond US and AU. Built on
+// use, so loader.js, which bundles this module for parseGuide, drops it.
+const systemOf = (country: string) =>
+  new Map(
+    "GB:UK IE:UK MT:UK CY:UK GG:UK JE:UK IM:UK GI:UK ZA:UK NZ:AU CA:US CH:EU NO:EU IS:EU LI:EU AT:EU BE:EU BG:EU CZ:EU DE:EU DK:EU EE:EU ES:EU FI:EU FR:EU GR:EU HR:EU HU:EU IT:EU LT:EU LU:EU LV:EU NL:EU PL:EU PT:EU RO:EU SE:EU SI:EU SK:EU"
+      .split(" ")
+      .map((p) => p.split(":") as [string, string]),
+  ).get(country) ?? country;
 const FORM = 'form[action*="/cart/add"]';
 
 /**

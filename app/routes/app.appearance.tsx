@@ -713,7 +713,7 @@ function Editor(props: { loaded: Loaded; themeUrl: string }) {
               {text(
                 "css",
                 "Custom CSS",
-                "Added to your product pages as written. Start each rule with .fitted-guide to style only the size guide.",
+                "Added as written to every page that shows the size guide: product pages, quick views and featured products. Start each rule with .fitted-guide to style only the size guide.",
               )}
             </section>
           </>

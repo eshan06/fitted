@@ -13,9 +13,10 @@ const en = JSON.parse(read("locales/en.default.json")).size_guide;
 const escape = (s: string) =>
   s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
-// The block's Liquid with Shopify's part played by plain substitutions, so
-// the loader runs against the markup that ships. `t` escapes, as Shopify's
-// does. contact is the store's Contact page, or null when it has none.
+// The guide snippet's Liquid with Shopify's part played by plain
+// substitutions, so the loader runs against the markup that ships. `t`
+// escapes, as Shopify's does. contact is the store's Contact page, or null
+// when it has none; place is where the block or embed put it.
 function block(
   json: string,
   product = "Linen Wrap Top",
@@ -23,14 +24,18 @@ function block(
     url: "/pages/contact",
     title: "Contact",
   },
+  place: "main" | "featured" | "tab" | "after" = "main",
 ) {
-  let html = read("blocks/size-guide.liquid")
+  let html = read("snippets/guide.liquid")
     .replace(/\{%-? comment -?%\}[\s\S]*?\{%-? endcomment -?%\}/g, "")
     .replace(
       /\{%-? if pages\.contact\.url -?%\}([\s\S]*?)\{%-? endif -?%\}/,
       (_, inner: string) => (contact ? inner : ""),
     )
-    .replace(/\{% schema %\}[\s\S]*?\{% endschema %\}/, "")
+    .replace(
+      /\{%-? if place == 'tab' -?%\}([\s\S]*?)\{%-? endif -?%\}/g,
+      (_, inner: string) => (place === "tab" ? inner : ""),
+    )
     .replace(
       /\{%-? render 'guide-data'.*?%\}/,
       () => `<script type="application/json" data-fitted>${json}</script>`,
@@ -51,6 +56,7 @@ function block(
       if (expr === "pages.contact.title | escape")
         return escape(contact!.title);
       if (expr === "title_id") return "fitted-title-1";
+      if (expr === "place") return place;
       throw new Error(`No test value for {{ ${expr} }}`);
     });
 }
@@ -365,7 +371,7 @@ describe("loader", () => {
         link: { style: "text", icon: "none" },
       }),
     );
-    expect(link.textContent).toBe("Fit <b>guide</b>");
+    expect(link.textContent?.trim()).toBe("Fit <b>guide</b>");
     expect(link.querySelector("svg, b")).toBeNull();
     expect(dialog.querySelector(".fitted-title")?.textContent).toBe(
       "Find your fit",
@@ -375,7 +381,7 @@ describe("loader", () => {
 
   it("keeps the extension's word, the ruler and the reading direction without settings", async () => {
     const { link, dialog } = await mount();
-    expect(link.lastChild?.textContent).toBe(en.title);
+    expect(link.querySelector("span")?.textContent).toBe(en.title);
     expect(link.querySelectorAll("svg")).toHaveLength(1);
     expect(dialog.querySelector(".fitted-title")?.textContent).toBe(en.title);
     expect(dialog.hasAttribute("dir")).toBe(false);
@@ -504,5 +510,202 @@ describe("loader", () => {
     expect(shown(section.querySelector<HTMLElement>(".fitted-link")!)).toBe(
       true,
     );
+  });
+});
+
+// ARCHITECTURE §7 placement: where each block's link may show.
+describe("placement", () => {
+  const contact = { url: "/pages/contact", title: "Contact" };
+  const placed = (placement: object, link = {}) =>
+    withSettings({
+      placement,
+      link: { style: "text", icon: "ruler", ...link },
+    });
+  // A size control and product form for the guide's Select, as a theme's.
+  const form = (size: string, cls = "size") =>
+    `<fieldset class="${cls}"><input type="radio" name="Size" value="${size}" checked></fieldset><form action="/cart/add"></form>`;
+  const rows = [
+    { id: "m", cells: {} },
+    { id: "l", cells: {} },
+  ];
+  const sized = (settings: Record<string, unknown>) =>
+    JSON.stringify({
+      ...JSON.parse(withSettings(settings)),
+      chart: {
+        ...chart,
+        tables: [{ ...chart.tables[0], rows }],
+        words: { "t1.m.size": "M", "t1.l.size": "L" },
+      },
+    });
+  const open = async (link: HTMLElement) => {
+    link.click();
+    await tick();
+    return link.closest(".fitted-guide")!.querySelector(".fitted-foot strong")
+      ?.textContent;
+  };
+
+  it.each([
+    ["by default", {}, {}, true],
+    ["but not with that placement off", { productBlock: false }, {}, false],
+    ["but not when the link is the floating tab", {}, { style: "tab" }, false],
+    ["but not when it goes after a selector", { selector: ".size" }, {}, false],
+  ])(
+    "shows the app block's link on its product page %s",
+    async (_, placement, link, on) => {
+      const { link: el } = await mount(placed(placement, link));
+      expect(shown(el)).toBe(on);
+    },
+  );
+
+  it.each([
+    ['<div role="dialog" aria-modal="true">', "</div>"],
+    ["<dialog open>", "</dialog>"],
+  ])(
+    "shows it in a theme's quick view (%s) only with that placement on",
+    async (start, end) => {
+      document.body.innerHTML = `${start}${block(placed({}))}${end}`;
+      await tick();
+      expect(shown(document.querySelector<HTMLElement>(".fitted-link")!)).toBe(
+        false,
+      );
+      // The product page's own choices don't apply there.
+      const settings = placed(
+        { quickView: true, selector: ".x" },
+        { style: "tab" },
+      );
+      document.body.innerHTML = `${start}${block(settings)}${end}`;
+      await tick();
+      expect(shown(document.querySelector<HTMLElement>(".fitted-link")!)).toBe(
+        true,
+      );
+    },
+  );
+
+  it("has Select pick the size in the quick view's own product form", async () => {
+    const json = sized({ placement: { quickView: true } });
+    document.body.innerHTML = `<div class="shopify-section">${form("L")}</div><div role="dialog">${form("M")}${block(json)}</div>`;
+    await tick();
+    expect(
+      await open(document.querySelector<HTMLElement>(".fitted-link")!),
+    ).toBe("Selected: M");
+  });
+
+  it.each([
+    [{}, false],
+    [{ featured: true }, true],
+  ])(
+    "shows a featured product section's link with %o",
+    async (placement, on) => {
+      document.body.innerHTML = block(
+        placed(placement),
+        "Rain Jacket",
+        contact,
+        "featured",
+      );
+      await tick();
+      expect(shown(document.querySelector<HTMLElement>(".fitted-link")!)).toBe(
+        on,
+      );
+    },
+  );
+
+  it("shows the embed's floating tab with the link's words and icon setting", async () => {
+    document.body.innerHTML = block(
+      withSettings({
+        placement: { floatingTab: true },
+        link: { style: "text", icon: "none" },
+        text: { label: "Fit guide" },
+      }),
+      "Linen Wrap Top",
+      contact,
+      "tab",
+    );
+    await tick();
+    const tab = document.querySelector<HTMLElement>(".fitted-link")!;
+    expect(shown(tab)).toBe(true);
+    expect(tab.classList).toContain("fitted-tab");
+    expect(tab.querySelector("span")?.textContent).toBe("Fit guide");
+    expect(tab.querySelector("svg")).toBeNull();
+    expect(
+      document.querySelector(".fitted-guide style")?.textContent,
+    ).toContain(".fitted-tab{position:fixed;");
+  });
+
+  it("has the tab's Select pick the size in the page's product form", async () => {
+    const json = sized({ placement: { floatingTab: true } });
+    document.body.innerHTML = `<div class="shopify-section">${form("M")}</div><div>${block(json, "Linen Wrap Top", contact, "tab")}</div>`;
+    await tick();
+    expect(
+      await open(document.querySelector<HTMLElement>(".fitted-link")!),
+    ).toBe("Selected: M");
+  });
+
+  // Its own class, as the loader keeps putting this link back after .picker.
+  it("puts the embed's link after the selector's element, and back after the theme redraws it", async () => {
+    const json = sized({ placement: { selector: ".picker" } });
+    document.body.innerHTML = `<div class="shopify-section">${form("M", "picker")}</div>${block(json, "Linen Wrap Top", contact, "after")}`;
+    await tick();
+    const guide = document.querySelector<HTMLElement>(".fitted-guide")!;
+    expect(guide.previousElementSibling).toBe(
+      document.querySelector(".picker"),
+    );
+    expect(shown(guide.querySelector(".fitted-link")!)).toBe(true);
+    expect(await open(guide.querySelector<HTMLElement>(".fitted-link")!)).toBe(
+      "Selected: M",
+    );
+    guide.querySelector("dialog")!.close();
+    // The theme redraws its size picker, taking the link with it.
+    document.querySelector(".shopify-section")!.innerHTML = form("L", "picker");
+    await tick();
+    expect(guide.isConnected).toBe(true);
+    expect(guide.previousElementSibling).toBe(
+      document.querySelector(".picker"),
+    );
+  });
+
+  it.each([
+    ["matches nothing", ".nothing"],
+    ["this browser can't read", "a["],
+  ])(
+    "leaves the embed's link hidden when its selector %s",
+    async (_, selector) => {
+      document.body.innerHTML = `<div class="size"></div>${block(placed({ selector }), "Linen Wrap Top", contact, "after")}`;
+      await tick();
+      const guide = document.querySelector<HTMLElement>(".fitted-guide")!;
+      expect(shown(guide.querySelector(".fitted-link")!)).toBe(false);
+      expect(guide.parentElement).toBe(document.body);
+    },
+  );
+
+  it("closes on Escape without the key reaching a theme's quick view underneath", async () => {
+    document.body.innerHTML = `<div role="dialog">${block(placed({ quickView: true }))}</div>`;
+    await tick();
+    const theme = vi.fn();
+    const quick = document.querySelector('[role="dialog"]')!;
+    for (const type of ["keydown", "keyup"])
+      quick.addEventListener(type, theme);
+    const link = document.querySelector<HTMLElement>(".fitted-link")!;
+    const dialog = document.querySelector("dialog")!;
+    link.click();
+    await tick();
+    const x = dialog.querySelector(".fitted-x")!;
+    const key = (type: string, k = "Escape") => {
+      const e = new KeyboardEvent(type, {
+        key: k,
+        bubbles: true,
+        cancelable: true,
+      });
+      x.dispatchEvent(e);
+      return e;
+    };
+    x.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Tab", bubbles: true }),
+    );
+    expect(theme).toHaveBeenCalledTimes(1); // other keys go on as usual
+    expect(key("keydown").defaultPrevented).toBe(true);
+    expect(dialog.open).toBe(true);
+    key("keyup");
+    expect(dialog.open).toBe(false);
+    expect(theme).toHaveBeenCalledTimes(1);
   });
 });

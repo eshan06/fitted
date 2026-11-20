@@ -1,10 +1,11 @@
 // The size guide's first script, assets/loader.js (ARCHITECTURE §9): shows a
-// block's Size guide link once its chart validates, and on open shows the
-// loading state while assets/guide.js loads, or the error state with Try again.
-// Each later open has the guide pick the size the product form shows. It
-// applies the Appearance settings (§7) to the link and the popup.
+// block's Size guide link once its chart validates and the placement settings
+// (§7) want it where it sits, and on open shows the loading state while
+// assets/guide.js loads, or the error state with Try again. Each later open
+// has the guide pick the size the product form shows. It applies the
+// Appearance settings (§7) to the link and the popup.
 import { css } from "./guide-css";
-import { h, parseGuide, type Guide, type render } from "./guide";
+import { parseGuide, type Guide, type render } from "./guide";
 
 export type Load = (url: string) => Promise<{ render: typeof render }>;
 
@@ -49,14 +50,29 @@ function themeColors(block: HTMLElement) {
 // Fitted's styles, the uploaded font, then the merchant's CSS as written, so
 // it wins ties with Fitted's rules.
 const styles = (g: Guide) =>
-  h(
-    "style",
-    { id: "fitted-css" },
-    css,
-    g.font &&
-      `@font-face{font-family:fitted-font;src:url("${g.font}");font-display:swap}`,
-    g.css,
-  );
+  Object.assign(document.createElement("style"), {
+    id: "fitted-css",
+    textContent:
+      css +
+      (g.font
+        ? `@font-face{font-family:fitted-font;src:url("${g.font}");font-display:swap}`
+        : "") +
+      g.css,
+  });
+
+// Puts the app embed's links back after the theme redraws what they follow.
+const placed: (() => unknown)[] = [];
+// Puts the app embed's link after the first element the merchant's selector
+// matches; false when none does, or this browser can't read the selector.
+const putAfter = (block: HTMLElement, selector: string) => {
+  try {
+    const el = document.querySelector(selector);
+    el?.after(block);
+    return !!el;
+  } catch {
+    return false;
+  }
+};
 
 function setup(block: HTMLElement, load: Load) {
   block.dataset.ready = "";
@@ -65,11 +81,27 @@ function setup(block: HTMLElement, load: Load) {
   const dialog = block.querySelector("dialog");
   const body = dialog?.querySelector<HTMLElement>(".fitted-body");
   if (!g || !link || !dialog?.showModal || !body?.replaceChildren) return;
+  // Where the block sits (the snippet's place): its product page, or a theme's
+  // quick view of it (a popup around it); a featured product section; the
+  // embed's link after a selector. The embed prints the tab only when it's on.
+  const place = block.dataset.place;
+  const popup = block.parentElement?.closest("dialog,[role=dialog]");
+  const shown =
+    place === "main"
+      ? popup
+        ? g.quick
+        : g.page
+      : place === "featured"
+        ? g.featured
+        : place !== "after" || putAfter(block, g.selector);
+  if (!shown) return;
+  if (place === "after")
+    placed.push(() => block.isConnected || putAfter(block, g.selector));
   if (!document.getElementById("fitted-css")) document.head.append(styles(g));
   // The merchant's words and icon, else the extension's word and the ruler.
-  const word = link.textContent?.trim() ?? "";
-  const icons = g.icon === "ruler" ? link.querySelectorAll("svg") : [];
-  link.replaceChildren(...icons, g.label || word);
+  const words = link.querySelector("span");
+  if (words && g.label) words.textContent = g.label;
+  if (g.icon === "none") link.querySelector("svg")?.remove();
   const heading = dialog.querySelector(".fitted-title");
   if (heading && g.header) heading.textContent = g.header;
   if (g.rtl) dialog.dir = "rtl";
@@ -129,6 +161,17 @@ function setup(block: HTMLElement, load: Load) {
     if (backdrop || el.closest("[data-fitted-close]")) dialog.close();
     else if (el.closest("[data-fitted-retry]")) attempt();
   });
+  // Escape closes the guide on its key up, and neither key goes further, so a
+  // theme's quick view under the guide stays open whichever key it closes on.
+  // An Escape that ends typing in an input method is left to that.
+  for (const type of ["keydown", "keyup"])
+    dialog.addEventListener(type, (e) => {
+      const key = e as KeyboardEvent;
+      if (key.key !== "Escape" || key.isComposing) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (type === "keyup") dialog.close();
+    });
   link.addEventListener("click", () => {
     paint();
     if (state === "idle") attempt();
@@ -138,12 +181,17 @@ function setup(block: HTMLElement, load: Load) {
   link.style.display = "";
 }
 
-/** Sets up every block on the page now, and any the theme or its editor adds later. */
+/**
+ * Sets up every block on the page now, and any the theme or its editor adds
+ * later, and puts the embed's links back after a theme redraws their place.
+ */
 export function start(load: Load) {
-  const scan = () =>
+  const scan = () => {
+    placed.forEach((put) => put());
     document
       .querySelectorAll<HTMLElement>(".fitted-guide:not([data-ready])")
       .forEach((block) => setup(block, load));
+  };
   const go = () => {
     scan();
     const changes = { childList: true, subtree: true };

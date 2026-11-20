@@ -1,0 +1,81 @@
+{%- comment -%}
+  One product's Size guide link and popup (ARCHITECTURE §9), for the app block
+  and the app embed. p is the product, chart its chart, id makes the title's
+  id unique on the page, and place says where it sits, for loader.js's
+  placement checks (§7): main (its product page, or a theme's quick view of
+  it), featured, tab (the floating tab) or after (after the merchant's CSS
+  selector). loader.js shows the link once the chart validates; until then an
+  inline style hides it from theme button rules. Liquid escapes every word.
+  The error state links the store's Contact page when it has one. The
+  merchant's label, header, icon, colors, font, direction and CSS (§7) reach
+  the page only through guide-data's | json, and loader.js applies them as
+  text and CSS values. The tab's styles come with it, after loader.js's, so
+  they win over the link's and lose to custom CSS that starts .fitted-guide.
+{%- endcomment -%}
+{%- assign title_id = 'fitted-title-' | append: id -%}
+<div class="fitted-guide" data-url="{{ 'guide.js' | asset_url }}" data-place="{{ place }}">
+  {%- if place == 'tab' -%}
+    <style>
+      .fitted-tab{position:fixed;top:40%;right:0;z-index:2;flex-direction:column;gap:10px;min-width:44px;padding:16px 12px;border-radius:2px 0 0 2px;background:#161616;color:#fff;font-size:15px;letter-spacing:.04em;text-decoration:none;box-shadow:0 6px 18px rgba(22,22,22,.18);transform:translateY(-50%)}
+      .fitted-tab:hover{background:#2448a8}
+      .fitted-tab:focus-visible{outline:3px solid #2448a8;outline-offset:3px}
+      .fitted-tab span{writing-mode:vertical-rl;transform:rotate(180deg)}
+      .fitted-tab svg{width:22px;height:22px}
+      @media (max-width:600px){.fitted-tab{width:44px;gap:8px;padding:14px 0;font-size:14px;box-shadow:0 6px 18px rgba(22,22,22,.2)}.fitted-tab svg{width:20px;height:20px}}
+    </style>
+  {%- endif -%}
+  <button type="button" class="fitted-link{% if place == 'tab' %} fitted-tab{% endif %}" aria-haspopup="dialog" style="display:none !important">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M3 15.5 15.5 3l5.5 5.5L8.5 21z"/><path d="m7 12 2 2M10 9l2 2M13 6l2 2"/>
+    </svg>
+    <span>{{- 'size_guide.title' | t -}}</span>
+  </button>
+  <dialog class="fitted-dialog" aria-labelledby="{{ title_id }}">
+    <div class="fitted-panel">
+      <div class="fitted-head">
+        <div>
+          <h2 id="{{ title_id }}" class="fitted-title">{{ 'size_guide.title' | t }}</h2>
+          <p class="fitted-sub">{{ p.title | escape }}</p>
+        </div>
+        <button type="button" class="fitted-x" aria-label="{{ 'size_guide.close' | t }}" data-fitted-close>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <div
+        class="fitted-body"
+        data-t-chart="{{ 'size_guide.chart' | t }}"
+        data-t-system="{{ 'size_guide.system' | t }}"
+        data-t-units="{{ 'size_guide.units' | t }}"
+        data-t-in="{{ 'size_guide.in' | t }}"
+        data-t-cm="{{ 'size_guide.cm' | t }}"
+        data-t-lb="{{ 'size_guide.lb' | t }}"
+        data-t-kg="{{ 'size_guide.kg' | t }}"
+        data-t-choose="{{ 'size_guide.choose' | t }}"
+        data-t-selected="{{ 'size_guide.selected' | t }}"
+        data-t-select="{{ 'size_guide.select' | t }}"
+      ></div>
+    </div>
+    <template data-state="loading">
+      <p role="status" class="fitted-note">{{ 'size_guide.loading' | t }}</p>
+      <div aria-hidden="true">
+        {%- for row in (1..6) -%}
+          <div class="fitted-skrow">{% for cell in (1..5) %}<span class="fitted-sk"></span>{% endfor %}</div>
+        {%- endfor -%}
+      </div>
+    </template>
+    <template data-state="error">
+      <div role="alert" class="fitted-alert">
+        <h3 class="fitted-h3">{{ 'size_guide.error' | t }}</h3>
+        <p>{{ 'size_guide.error_text' | t }}</p>
+        <div class="fitted-actions">
+          <button type="button" class="fitted-btn" data-fitted-retry>{{ 'size_guide.retry' | t }}</button>
+          <button type="button" class="fitted-btn fitted-ghost" data-fitted-close>{{ 'size_guide.dismiss' | t }}</button>
+        </div>
+        {%- if pages.contact.url -%}
+          <p class="fitted-help">{{ 'size_guide.help' | t }} <a href="{{ pages.contact.url | escape }}">{{ pages.contact.title | escape }}</a>.</p>
+        {%- endif -%}
+      </div>
+    </template>
+  </dialog>
+  {%- render 'guide-data', chart: chart -%}
+</div>

@@ -1,0 +1,32 @@
+{%- comment -%}
+  The size guide app embed (ARCHITECTURE §9), which works in every theme: on
+  a product page with a chart, the floating tab and the link after the
+  merchant's CSS selector, as the placement settings (§7) ask; and loader.js
+  where they show, or on every page while "Collection pages and quick view"
+  is on, since a theme's quick view brings the product page's app block along
+  but not its script. A page with the app block gets loader.js for that too;
+  running it twice is harmless, as each block is set up once.
+{%- endcomment -%}
+{%- assign s = shop.metafields['$app'].settings.value -%}
+{%- assign chart = product.metafields['$app'].chart.value -%}
+{%- assign load = s.placement.quickView -%}
+{%- if template.name == 'product' and chart -%}
+  {%- if s.placement.floatingTab or s.link.style == 'tab' -%}
+    {%- render 'guide', p: product, chart: chart, id: 'tab', place: 'tab' -%}
+    {%- assign load = true -%}
+  {%- endif -%}
+  {%- if s.placement.selector != blank -%}
+    {%- render 'guide', p: product, chart: chart, id: 'after', place: 'after' -%}
+    {%- assign load = true -%}
+  {%- endif -%}
+{%- endif -%}
+{%- if load -%}
+  <script src="{{ 'loader.js' | asset_url }}" defer></script>
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "Size guide",
+  "target": "body"
+}
+{% endschema %}
