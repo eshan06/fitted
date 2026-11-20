@@ -633,18 +633,24 @@ describe("the screen", () => {
       let finish: (r: Response) => void = () => {};
       answer = () => new Promise((r) => (finish = r));
       const el = await show(Promise.resolve({ rows: ROWS, limit: null }));
-      await exportCsv(el);
+      const status = el.querySelector('[role="status"]');
+      expect(status?.textContent).toBe("");
+      // Two clicks before React renders again start one export.
+      await act(async () => {
+        button(el, "Export CSV").click();
+        button(el, "Export CSV").click();
+      });
+      await act(() => new Promise((r) => setTimeout(r, 10)));
       const busy = button(el, "Exporting");
       expect(busy.hasAttribute("loading")).toBe(true);
-      expect(el.querySelector('[role="status"]')?.textContent).toBe(
-        "Exporting 3 charts to CSV",
-      );
+      expect(status?.textContent).toBe("Exporting 3 charts to CSV");
       await exportCsv(el, "Exporting");
       expect(fetched).toHaveLength(1);
       await act(async () => finish(csv()));
       await act(() => new Promise((r) => setTimeout(r, 10)));
       expect(saved).toHaveLength(1);
-      expect(el.querySelector('[role="status"]')).toBeNull();
+      expect(el.querySelector('[role="status"]')).toBe(status);
+      expect(status?.textContent).toBe("");
     });
 
     it.each([

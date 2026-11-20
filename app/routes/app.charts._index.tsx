@@ -210,10 +210,14 @@ export default function SizeCharts() {
   const { list } = useLoaderData<typeof loader>();
   const [exp, setExp] = useState<Export>({ state: "idle", count: 0 });
   const busy = exp.state === "busy";
+  // A ref, so two clicks before the next render still start one export.
+  const running = useRef(false);
   const run = async (count: number) => {
-    if (busy) return;
+    if (running.current) return;
+    running.current = true;
     setExp({ state: "busy", count });
     const file = await downloadExport();
+    running.current = false;
     setExp(file ? { state: "done", count, file } : { state: "failed", count });
   };
   return (
@@ -245,11 +249,10 @@ export default function SizeCharts() {
         <s-paragraph color="subdued">
           Saved in your store. Shoppers see the Active ones.
         </s-paragraph>
-        {busy && (
-          <span role="status" style={SR_ONLY}>
-            Exporting {plural(exp.count, "chart")} to CSV
-          </span>
-        )}
+        {/* Always mounted, so screen readers announce the text when it arrives. */}
+        <span role="status" style={SR_ONLY}>
+          {busy && `Exporting ${plural(exp.count, "chart")} to CSV`}
+        </span>
         {exp.state === "done" && (
           <s-banner
             tone="info"
