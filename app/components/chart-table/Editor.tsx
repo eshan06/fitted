@@ -12,6 +12,7 @@ import {
 import { SaveBar, useAppBridge } from "@shopify/app-bridge-react";
 import type { FieldErrors, Template } from "../../models/chart.server";
 import { ChartTable } from "./ChartTable";
+import { PasteDialog } from "./PasteDialog";
 import * as model from "./model";
 import "./editor.css";
 
@@ -59,6 +60,7 @@ export function Editor(props: {
   const navigate = useNavigate();
   const shopify = useAppBridge();
   const [draft, setDraft] = useState(props.initial);
+  const [pasting, setPasting] = useState(false);
   // The editor's own check, or the action's answer until it's dismissed. A
   // stored chart that fails the checks opens with them, in the editor's words
   // where it has them. A number in a column that isn't a measurement isn't
@@ -166,6 +168,28 @@ export function Editor(props: {
   const dismiss = () => {
     setLocal(null);
     setDismissed(answer);
+  };
+  // A filled table comes in with the cells Fitted can't read marked, as after
+  // a save (the Editor board's "Fix the marked fields").
+  const fill = (p: model.Pasted) => {
+    const next = model.replaceTable(draft, p);
+    setDraft(next);
+    setPasting(false);
+    dismiss();
+    const r = model.toInput(next);
+    const marked =
+      "fieldErrors" in r
+        ? Object.fromEntries(
+            Object.entries(r.fieldErrors).filter(([k]) => k !== "name"),
+          )
+        : {};
+    if (Object.keys(marked).length) setLocal({ fieldErrors: marked });
+    const t0 = next.content.tables[0];
+    setTimeout(() =>
+      document
+        .getElementById(`cell-${t0.rows[0].id}-${t0.columns[0].id}`)
+        ?.focus(),
+    );
   };
   const err = notice?.error;
   const action = (label: string, onClick: () => void) => (
@@ -425,6 +449,7 @@ export function Editor(props: {
               problems={listed}
               dropped={drops.flatMap((x) => x.cells)}
               onChange={setDraft}
+              onPaste={() => setPasting(true)}
               onRemove={(sel) => {
                 setDraft(model.remove(draft, sel));
                 // Cell findings name sizes by position, so they move up too.
@@ -437,7 +462,33 @@ export function Editor(props: {
               }}
             />
           ) : (
-            <h2 className="blank">A blank chart, ready for sizes</h2>
+            <div className="blank">
+              <svg
+                width="56"
+                height="56"
+                viewBox="0 0 48 48"
+                fill="none"
+                stroke="#2448A8"
+                strokeLinecap="square"
+                aria-hidden="true"
+              >
+                <path d="M10 40V10h30" strokeWidth="3" strokeDasharray="4 3" />
+                <path d="M17 40V17h23" strokeWidth="6" />
+                <path d="M24 40V24h16" strokeWidth="3" />
+              </svg>
+              <h2>A blank chart, ready for sizes</h2>
+              <p className="help">
+                Paste a whole table from a spreadsheet or supplier sheet and
+                Fitted fills in the sizes and measurements. Or pick a template
+                above.
+              </p>
+              <s-button variant="primary" onClick={() => setPasting(true)}>
+                Paste whole chart
+              </s-button>
+            </div>
+          )}
+          {pasting && (
+            <PasteDialog onClose={() => setPasting(false)} onFill={fill} />
           )}
           <p className="help">
             Type in inches or centimeters. Fitted converts the other unit for

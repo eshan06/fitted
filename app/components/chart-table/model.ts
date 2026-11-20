@@ -120,8 +120,9 @@ const withTable = (d: Draft, patch: Partial<Content["tables"][0]>): Draft => ({
   },
 });
 
-// Ids are unique across the chart and never "title", "sub" or "note".
-function freshId(c: Content, prefix: string) {
+// Ids are unique across the chart and never "title", "sub" or "note". One
+// maker hands out many, each past the last, so a long paste stays linear.
+function idMaker(c: Content) {
   const used = new Set<string>(c.measure.steps);
   for (const t of c.tables) {
     used.add(t.id);
@@ -129,8 +130,15 @@ function freshId(c: Content, prefix: string) {
     t.rows.forEach((r) => used.add(r.id));
   }
   c.fit?.questions.forEach((q) => used.add(q.id));
-  for (let n = 1; ; n++) if (!used.has(prefix + n)) return prefix + n;
+  const next: Record<string, number> = {};
+  return (prefix: string) => {
+    let n = next[prefix] ?? 1;
+    while (used.has(prefix + n)) n++;
+    next[prefix] = n + 1;
+    return prefix + n;
+  };
 }
+const freshId = (c: Content, prefix: string) => idMaker(c)(prefix);
 
 export const MAX_ROWS = 60;
 export const MAX_COLUMNS = 20;
@@ -645,3 +653,168 @@ export const unmerge = (d: Draft, row: string, col: string) =>
       (m) => m.row !== row || m.col !== col,
     ),
   });
+
+type Column = Content["tables"][0]["columns"][number];
+type Country = Extract<Column, { kind: "country" }>["country"];
+// A label read as CSV import's infer() reads it (docs/arch/import.md), whose
+// .server module the editor can't import, so these mirror its patterns: a
+// size system or an age, a unit at its end, or a country it starts or ends
+// with. Each matches one way only, on at most a label's last 32 characters.
+const WORDS = String.raw`inch(?:es)?|ins?|cms?|centimet(?:er|re)s?|lbs?|pounds?|kgs?|kilo(?:gram)?s?`;
+const SYS = "IT|FR|DE|ES|JP|CN|KR|BR|MX|RU";
+const SYSTEM = new RegExp(
+  String.raw`^(?:${SYS}|Ages?|Months?|Years?)(?![\p{L}\p{N}])|(?<![\p{L}\p{N}])(?:${SYS})[)\]]?$`,
+  "iu",
+);
+const OTHER = String.raw`mm|millimet(?:er|re)s?|met(?:er|re)s?|ft|oz|ounces?|grams?`;
+const LABEL_UNIT = new RegExp(
+  String.raw`(?:[\s,([-]*(?<![\p{L}\p{N}])(?:(${WORDS})|${OTHER})\.?\s*(?:[)\]]\s*)?|\s*\(\s*[gm]\s*\)\s*)$`,
+  "iu",
+);
+const COUNTRY =
+  /^(US|UK|EU|AU)[RAS]?(?![\p{L}\p{N}])|(?<![\p{L}\p{N}])(US|UK|EU|AU)[RAS]?[)\]]?$/iu;
+const UNITS = { i: "in", c: "cm", l: "lb", p: "lb", k: "kg" } as const;
+/** A table pasted from a spreadsheet or a web page, as text cells; a row may be short. */
+export type Pasted = { head: string[]; rows: string[][]; columns: Column[] };
+/**
+ * The table in pasted text, or null when it holds none: a header row and at
+ * least one size, two columns or more, cells split at tabs. Linear in the
+ * text, and nothing in it is ever read as HTML.
+ */
+export function readPaste(text: string): Pasted | null {
+  const lines = text
+    .split(/\r\n|\r|\n/)
+    // A lone dash is no value, as in CSV import.
+    .map((l) => l.split("\t").map((c) => c.trim().replace(/^[-–—]$/, "")))
+    .filter((l) => l.some(Boolean));
+  if (lines.length < 2) return null;
+  // Columns with nothing in them, as a spreadsheet's padding, are left out.
+  const used: boolean[] = [];
+  for (const l of lines) l.forEach((c, j) => c && (used[j] = true));
+  const keep = used.flatMap((u, j) => (u ? [j] : []));
+  if (keep.length < 2) return null;
+  // How many kept columns start before index i, so a short row costs its length.
+  const before = [0];
+  for (let i = 0; i < used.length; i++) before.push(before[i] + +!!used[i]);
+  const [first, ...rows] = lines.map((l) =>
+    keep.slice(0, before[Math.min(l.length, used.length)]).map((j) => l[j]),
+  );
+  const head = keep.map((_, j) => first[j] ?? "");
+  // Filled cells and numbers per column, counted in one pass.
+  const filled = keep.map(() => 0);
+  const nums = keep.map(() => 0);
+  for (const r of rows)
+    r.forEach((c, j) => {
+      if (!c) return;
+      filled[j]++;
+      if (Array.isArray(parseCell(c))) nums[j]++;
+    });
+  const columns = head.map((label, j): Column => {
+    if (j === 0) return { id: "", kind: "size" };
+    if (SYSTEM.test(label)) return { id: "", kind: "text" };
+    const tail = label.slice(-32);
+    const u = LABEL_UNIT.exec(tail);
+    // A unit Fitted can't hold stays as typed, never guessed at.
+    if (u && !u[1]) return { id: "", kind: "text" };
+    if (u) {
+      head[j] = label.slice(0, label.length - tail.length + u.index);
+      const unit = UNITS[u[1][0].toLowerCase() as keyof typeof UNITS];
+      return { id: "", kind: "measure", unit, convert: true };
+    }
+    const country = COUNTRY.exec(label);
+    if (country)
+      return {
+        id: "",
+        kind: "country",
+        country: (country[1] ?? country[2]).toUpperCase() as Country,
+      };
+    // Mostly words is text. The rest are measurements, an empty column too,
+    // and a cell that isn't a number comes in marked: unlike CSV import, a
+    // tie goes to the measurement, so one typo in two sizes isn't lost.
+    return nums[j] * 2 < filled[j]
+      ? { id: "", kind: "text" }
+      : { id: "", kind: "measure", convert: true };
+  });
+  return { head, rows, columns };
+}
+
+/** The paste dialog's "Found 6 sizes and 3 measurements: Bust, Waist and Hips". */
+export function found(p: Pasted) {
+  const n = p.rows.length;
+  const names = p.head.filter((_, j) => p.columns[j].kind === "measure");
+  const m = names.length;
+  return `Found ${n} ${n === 1 ? "size" : "sizes"} and ${m} ${m === 1 ? "measurement" : "measurements"}${m ? `: ${and(names.map((x) => x || "Measurement"))}` : ""}`;
+}
+
+/**
+ * The first table filled from a paste. It keeps its id, title, sub and note;
+ * a column or size named as before keeps its id, so the fit finder still asks
+ * it, and the fit finder's only measurement stays, at the end, when the paste
+ * has none named like it (the #109 guard).
+ */
+export function replaceTable(d: Draft, p: Pasted): Draft {
+  const t = table(d);
+  const key = (kind: string, name = "") =>
+    `${kind}:${name.trim().toLowerCase()}`;
+  const byName = new Map<string, string>();
+  for (const c of t.columns.slice(1)) {
+    const k = key(c.kind, d.content.words[`${t.id}.${c.id}`]);
+    if (!byName.has(k)) byName.set(k, c.id);
+  }
+  t.rows.forEach((r, ri) => {
+    const k = key("size", sizeOf(d, ri));
+    if (!byName.has(k)) byName.set(k, r.id);
+  });
+  const take = (k: string) => {
+    const id = byName.get(k);
+    byName.delete(k);
+    return id;
+  };
+  const colIds = p.columns.map((c, j) =>
+    j ? take(key(c.kind, p.head[j])) : t.columns[0].id,
+  );
+  const rowIds = p.rows.map((r) => take(key("size", r[0])));
+  // What isn't kept goes as remove() takes it, out of the fit finder too.
+  let next = d;
+  for (const r of t.rows)
+    if (!rowIds.includes(r.id)) next = remove(next, { row: r.id });
+  const kept: Column[] = [];
+  for (const c of t.columns.slice(1))
+    if (colIds.includes(c.id)) continue;
+    else if (fitOnly(next, c.id)) kept.push(c);
+    else next = remove(next, { col: c.id });
+  const fresh = idMaker(next.content);
+  const cols = colIds.map((id) => id ?? fresh("c"));
+  const rows = rowIds.map((id) => id ?? fresh("r"));
+  const isKept = (col?: string) => kept.some((c) => c.id === col);
+  const words = strip(next.content.words, (k) => {
+    const [a, b] = k.split(".");
+    return a === t.id && !["title", "sub", "note"].includes(b) && !isKept(b);
+  });
+  const cells = strip(next.cells, (k) => !isKept(k.split(".")[1]));
+  const old = new Map(t.columns.map((c) => [c.id, c]));
+  const columns = p.columns.map((c, j): Column => {
+    const was = old.get(cols[j]);
+    words[`${t.id}.${cols[j]}`] = p.head[j];
+    // A measurement named as before keeps its unit unless the paste names one.
+    return was?.kind === "measure" && c.kind === "measure" && !c.unit
+      ? was
+      : { ...c, id: cols[j] };
+  });
+  p.rows.forEach((r, ri) =>
+    columns.forEach((c, j) => {
+      const at = `${rows[ri]}.${c.id}`;
+      if (c.kind === "measure") cells[at] = r[j] ?? "";
+      else if (r[j]) words[`${t.id}.${at}`] = r[j];
+    }),
+  );
+  const all = [...columns, ...kept];
+  const wrap = table(next).wrap?.filter((w) => all.some((c) => c.id === w));
+  const filled = withTable(next, {
+    columns: all,
+    rows: rows.map((id) => ({ id, cells: {} })),
+    merges: undefined,
+    wrap: wrap?.length ? wrap : undefined,
+  });
+  return { ...filled, cells, content: { ...filled.content, words } };
+}
