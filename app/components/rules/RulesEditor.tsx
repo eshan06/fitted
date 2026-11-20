@@ -160,43 +160,6 @@ export function RulesEditor(props: {
     </s-button>
   );
 
-  const banners = (
-    <>
-      {/* A valid save with the loaded digest replaces them (§6). */}
-      {loaded.damaged && (
-        <Banner
-          copy={[
-            ...COPY.damaged,
-            "**Set up your rules again and save to replace them.",
-          ]}
-        />
-      )}
-      {marked.length > 0 && (
-        <Banner
-          copy={[
-            `Fix ${marked.length} condition${marked.length === 1 ? "" : "s"} to save`,
-            "Nothing was saved, so products still show the same charts.",
-            // Messages about the whole document, such as a limit (§6).
-            ...marked
-              .filter(([p]) => !p.startsWith("charts."))
-              .map(([, m]) => m),
-          ]}
-        />
-      )}
-      {err?.code === "conflict" && (
-        <Banner copy={COPY.conflict}>
-          {button("Reload latest", () => revalidator.revalidate())}
-          {button("Cancel", dismiss)}
-        </Banner>
-      )}
-      {(err?.code === "product_access" || err?.code === "shopify") && (
-        <Banner copy={COPY[err.code]}>
-          {button("Try saving again", save)}
-        </Banner>
-      )}
-    </>
-  );
-
   const conditions = (list: List) =>
     rule[list].map((c, i) => {
       const p = `charts.${current}.${list}.${i}`;
@@ -261,7 +224,38 @@ export function RulesEditor(props: {
         </button>
       </SaveBar>
       <div className="editor">
-        {banners}
+        {/* A valid save with the loaded digest replaces them (§6). */}
+        {loaded.damaged && (
+          <Banner
+            copy={[
+              ...COPY.damaged,
+              "**Set up your rules again and save to replace them.",
+            ]}
+          />
+        )}
+        {marked.length > 0 && (
+          <Banner
+            copy={[
+              `Fix ${marked.length} condition${marked.length === 1 ? "" : "s"} to save`,
+              "Nothing was saved, so products still show the same charts.",
+              // Messages about the whole document, such as a limit (§6).
+              ...marked
+                .filter(([p]) => !p.startsWith("charts."))
+                .map(([, m]) => m),
+            ]}
+          />
+        )}
+        {err?.code === "conflict" && (
+          <Banner copy={COPY.conflict}>
+            {button("Reload latest", () => revalidator.revalidate())}
+            {button("Cancel", dismiss)}
+          </Banner>
+        )}
+        {(err?.code === "product_access" || err?.code === "shopify") && (
+          <Banner copy={COPY[err.code]}>
+            {button("Try saving again", save)}
+          </Banner>
+        )}
         {props.heading}
         <section className="card" aria-labelledby="rule">
           <div className="row">

@@ -7,13 +7,17 @@
   margin: 6px 0 0;
   font-weight: 600;
 }
-.editor .cond {
+.editor .cond,
+.editor .ranks li,
+.editor .check {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
   padding: 10px;
   border-radius: 10px;
+}
+.editor .cond {
   background: #f7f7f8;
 }
 .editor .cond .field {
@@ -38,33 +42,23 @@
   background: #fff;
   color: #202223;
   padding: 2px 10px;
-  cursor: pointer;
 }
 .editor .ranks {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
 }
 .editor .ranks li {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  padding: 8px 10px;
+  margin-top: 8px;
   border: 1px solid #e1e3e5;
-  border-radius: 10px;
 }
 .editor .ranks .name {
   flex: 1;
   text-align: start;
   border: 0;
-  padding: 0;
 }
 .editor .ranks [aria-pressed="true"] {
   text-decoration: underline;
-  text-underline-offset: 3px;
 }
 .editor .empty {
   align-items: center;
@@ -76,12 +70,6 @@
   color: #fff;
   padding: 8px 14px;
 }
-.editor .check {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-}
 .editor .check .help {
   display: block;
-  font-weight: 400;
 }
