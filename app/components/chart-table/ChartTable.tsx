@@ -17,6 +17,8 @@ export function ChartTable(props: {
   dropped: string[];
   onChange: (d: model.Draft) => void;
   onRemove: (sel: model.Selected) => void;
+  /** Opens Paste a whole chart. */
+  onPaste: () => void;
 }) {
   const { draft, errors, onChange } = props;
   const [sel, setSel] = useState<model.Selected>();
@@ -168,6 +170,7 @@ export function ChartTable(props: {
   const mergeable = !!cells && model.canMerge(draft, cells);
   const ri = t.rows.findIndex((r) => r.id === picked?.row);
   const listed = props.problems.filter((p) => p.id?.startsWith("cell-"));
+  const regions = model.regions(draft);
   return (
     <>
       <div role="toolbar" aria-label="Table tools" className="tools">
@@ -188,6 +191,9 @@ export function ChartTable(props: {
         >
           Wrap text
         </button>
+        <button type="button" className="btn2" onClick={props.onPaste}>
+          Paste whole chart
+        </button>
         <label>
           Round to
           <select
@@ -205,6 +211,23 @@ export function ChartTable(props: {
             <option value="0.5">0.5</option>
             <option value="0.25">0.25</option>
             <option value="1">Whole numbers</option>
+          </select>
+        </label>
+        <label>
+          Country sizes
+          <select
+            className="field auto"
+            value={regions}
+            onChange={(e) =>
+              onChange(model.setRegions(draft, e.target.value as "all"))
+            }
+          >
+            <option value="all" disabled={!model.canAll(draft)}>
+              US, UK, EU, AU
+            </option>
+            <option value="us" disabled={!model.canUsOnly(draft)}>
+              US only
+            </option>
           </select>
         </label>
       </div>
@@ -379,6 +402,12 @@ export function ChartTable(props: {
           </tbody>
         </table>
       </div>
+      {regions === "all" && (
+        <p className="help">
+          Shoppers see one country&apos;s sizes at a time, with a US, UK, EU, AU
+          switch.
+        </p>
+      )}
       {listed.length > 0 && (
         <ul className="list err">
           {listed.map((p) => (

@@ -1241,3 +1241,146 @@ describe("table tools", () => {
     expect(status()).toContain("Size M selected");
   });
 });
+
+describe("Paste whole chart and Country sizes", () => {
+  const dialog = () => document.querySelector("dialog");
+  const area = () =>
+    dialog()!.querySelector("textarea") as unknown as HTMLInputElement;
+  const tool = (label: string) =>
+    [
+      ...document.querySelectorAll<HTMLButtonElement>(
+        '[role="toolbar"] button',
+      ),
+    ].find((b) => b.textContent === label)!;
+  const countries = () =>
+    [
+      ...document.querySelectorAll<HTMLSelectElement>(
+        '[role="toolbar"] select',
+      ),
+    ].find((s) =>
+      s.closest("label")!.textContent!.startsWith("Country sizes"),
+    )!;
+  const option = (label: string) =>
+    [...countries().options].find((o) => o.textContent === label)!;
+  const chartSent = (b: Record<string, unknown>) =>
+    validateChart(b.chart).content;
+
+  it("opens from the toolbar, says what it found, and fills the table with the unreadable cells marked", async () => {
+    const s = stored();
+    s.stored.chart.content.words["t1.note"] = "Between sizes? Size up.";
+    const { sent } = await open([s]);
+    await act(async () => tool("Paste whole chart").click());
+    expect(dialog()!.textContent).toContain("Paste a whole chart");
+    expect(dialog()!.textContent).toContain(
+      "Sizes go in the first column and measurements in the rest.",
+    );
+    expect(button("Fill the table").hasAttribute("disabled")).toBe(true);
+    expect(document.activeElement).toBe(area());
+    // No table: the box is marked, and Fill stays greyed out.
+    await type(area(), "Our autumn tops run a little small.\nSize up.");
+    expect(dialog()!.querySelector('[role="alert"]')!.textContent).toBe(
+      "Fitted couldn't find a table in this. Copy whole rows and columns from a spreadsheet, with sizes in the first column.",
+    );
+    expect(area().getAttribute("aria-invalid")).toBe("true");
+    expect(button("Fill the table").hasAttribute("disabled")).toBe(true);
+    // Text that looks like markup stays text.
+    const markup = "<img src=x onerror=alert(1)>";
+    await type(
+      area(),
+      `Size\tBust\tWaist\n${markup}\t31–32\t24\nM\tabout 35\t28`,
+    );
+    expect(dialog()!.querySelector('[role="status"]')!.textContent).toBe(
+      "Found 2 sizes and 2 measurements: Bust and WaistFilling replaces what's in the table now. Until you save, Discard brings it back.",
+    );
+    await click("Replace the table");
+    expect(dialog()).toBeNull();
+    expect(document.querySelector("img")).toBeNull();
+    expect(byLabel("Size 1").value).toBe(markup);
+    expect(document.activeElement).toBe(byLabel("Size 1"));
+    expect(
+      document
+        .querySelector('s-banner[tone="critical"]')!
+        .getAttribute("heading"),
+    ).toBe("Fix 1 cell to save");
+    expect(byLabel("M, Bust").getAttribute("aria-invalid")).toBe("true");
+    await type(byLabel("M, Bust"), "35");
+    await click("Save");
+    const c = chartSent(sent[0]);
+    expect(c.tables[0].rows.map((r) => r.cells)).toEqual([
+      { bust: [31, 32], c1: [24] },
+      { bust: [35], c1: [28] },
+    ]);
+    expect(c.words["t1.note"]).toBe("Between sizes? Size up.");
+  });
+
+  it("closes without changing the table, and Discard brings the old one back", async () => {
+    await open([stored()]);
+    await act(async () => tool("Paste whole chart").click());
+    await type(area(), "Size\tHips\nL\t40");
+    await click("Cancel");
+    expect(dialog()).toBeNull();
+    expect(byLabel("Size 1").value).toBe("XS");
+    await act(async () => tool("Paste whole chart").click());
+    expect(area().value).toBe("");
+    await type(area(), "Size\tHips\nL\t40");
+    await click("Replace the table");
+    expect(byLabel("Size 1").value).toBe("L");
+    expect(byLabel("L, Hips").value).toBe("40");
+    await click("Discard");
+    expect(byLabel("XS, Bust").value).toBe("31–32");
+  });
+
+  it("fills a blank chart from its own button", async () => {
+    const { sent } = await open(
+      [{ mode: "new", handle: "c-abc" }],
+      [],
+      "/app/charts/new",
+    );
+    expect(text()).toContain(
+      "Paste a whole table from a spreadsheet or supplier sheet and Fitted fills in the sizes and measurements.",
+    );
+    await click("Paste whole chart");
+    await type(area(), "Size\tUS\tUK\tWaist (cm)\nS\t4\t8\t66");
+    await click("Replace the table");
+    // The chart's name isn't the paste's to mark.
+    expect(document.querySelector('s-banner[tone="critical"]')).toBeNull();
+    await type(document.querySelector<HTMLInputElement>("#name")!, "Jeans");
+    await click("Save");
+    const c = chartSent(sent[0]);
+    expect(c.tables[0].columns.slice(1)).toEqual([
+      { id: "c1", kind: "country", country: "US" },
+      { id: "c2", kind: "country", country: "UK" },
+      { id: "c3", kind: "measure", unit: "cm", convert: true },
+    ]);
+    expect(c.words["t1.c3"]).toBe("Waist");
+  });
+
+  it("adds UK, EU and AU columns, and takes them out for US only once they're empty", async () => {
+    const s = stored();
+    const t = s.stored.chart.content.tables[0];
+    t.columns.splice(1, 0, { id: "us", kind: "country", country: "US" });
+    s.stored.chart.content.words["t1.us"] = "US size";
+    const { sent } = await open([s]);
+    expect(countries().value).toBe("us");
+    expect(text()).not.toContain("Shoppers see one country's sizes");
+    await type(countries(), "all");
+    expect(
+      [2, 3, 4, 5, 6].map((n) => byLabel(`Column ${n} name`).value),
+    ).toEqual(["US size", "UK size", "EU size", "AU size", "Bust"]);
+    expect(text()).toContain(
+      "Shoppers see one country's sizes at a time, with a US, UK, EU, AU switch.",
+    );
+    expect(countries().value).toBe("all");
+    // A UK size would be lost, so US only is greyed out until it's cleared.
+    await type(byLabel("XS, UK size"), "4–6");
+    expect(option("US only").disabled).toBe(true);
+    await click("Save");
+    expect(chartSent(sent[0]).words["t1.xs.c1"]).toBe("4–6");
+    await type(byLabel("XS, UK size"), "");
+    expect(option("US only").disabled).toBe(false);
+    await type(countries(), "us");
+    expect(byLabel("Column 2 name").value).toBe("US size");
+    expect(byLabel("Column 3 name").value).toBe("Bust");
+    expect(countries().value).toBe("us");
+  });
+});
