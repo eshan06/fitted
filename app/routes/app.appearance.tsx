@@ -1,7 +1,7 @@
 // Appearance & languages (ARCHITECTURE §7, §15): the Appearance board's link,
 // popup, placement, units and custom CSS, saved to `$app.settings` through
 // App Bridge's save bar, with colors, the popup font and the product page
-// preview. The font upload is #130's; Languages is #43's.
+// preview, and the popup font's upload to Shopify Files. Languages is #43's.
 import { Suspense, useState, type ReactNode } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import {
@@ -13,10 +13,21 @@ import {
 } from "react-router";
 import { SaveBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
-import { themeEditorUrl } from "../models/admin.server";
+import {
+  type Admin,
+  AdminApiError,
+  themeEditorUrl,
+} from "../models/admin.server";
+import { uploadFont } from "../models/font.server";
+import { FONT_MAX, FONT_WORDS, fontType } from "../lib/appearance";
+import {
+  FONT_FAILED,
+  useFontUpload,
+} from "../components/appearance/FontUpload";
 import {
   type FieldErrors,
   type Loaded,
+  type Settings,
   SettingsConflictError,
   SettingsReadWriteError,
   SettingsValidationError,
@@ -77,8 +88,49 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 const SECTIONS = ["link", "popup", "placement", "units"] as const;
 const EDITED = [...SECTIONS, "colors", "css"] as const;
 
+// The font upload: at most the file and its form's fields are read, the file
+// is checked by its name and bytes, and it goes on to Shopify Files.
+const FONT_BODY = FONT_MAX + 64 * 1024;
+async function upload(request: Request, admin: Admin, shop: string) {
+  let seen = 0;
+  const cap = new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, c) {
+      seen += chunk.byteLength;
+      if (seen > FONT_BODY) c.error(new Error("Too large"));
+      else c.enqueue(chunk);
+    },
+  });
+  const headers = { "content-type": request.headers.get("content-type")! };
+  const form = await new Response(request.body?.pipeThrough(cap), { headers })
+    .formData()
+    .catch(() => null);
+  const file = form?.get("file");
+  const refuse = (k: keyof typeof FONT_WORDS) =>
+    data({ fieldErrors: { "popup.font": FONT_WORDS[k] } }, { status: 422 });
+  if (seen > FONT_BODY) return refuse("size");
+  if (!(file instanceof File)) return refuse("type");
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const mime = fontType(file.name, bytes);
+  if (!mime) return refuse("type");
+  if (bytes.length > FONT_MAX) return refuse("size");
+  try {
+    return {
+      fileUrl: await uploadFont(admin, { name: file.name, mime, bytes }),
+    };
+  } catch (err) {
+    if (!(err instanceof AdminApiError)) throw err;
+    log(shop, err);
+    return data(
+      { error: { code: "upload", message: FONT_FAILED } },
+      { status: 502 },
+    );
+  }
+}
+
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
+  if (request.headers.get("content-type")?.startsWith("multipart/form-data"))
+    return upload(request, admin, session.shop);
   const body = await request.json().catch(() => null);
   try {
     // Only the digest and the edits come from the browser (§3).
@@ -420,7 +472,10 @@ function Editor(props: { loaded: Loaded; themeUrl: string }) {
       </div>
     );
   };
-  const font = draft["popup.font"];
+  const fontUpload = useFontUpload(
+    draft["popup.font"] as Settings["popup"]["font"],
+    (v) => put("popup.font", v),
+  );
   const custom = draft["colors.mode"] === "custom";
   // The canvas's product, showing the label and custom colors.
   const preview = (
@@ -548,6 +603,7 @@ function Editor(props: { loaded: Loaded; themeUrl: string }) {
           disabled={saving}
           onClick={() => {
             setDraft(initial);
+            fontUpload.reset();
             dismiss();
           }}
         >
@@ -590,31 +646,9 @@ function Editor(props: { loaded: Loaded; themeUrl: string }) {
                   ["fade", "Fade in"],
                 ])}
                 {text("header", "Header text", "", true)}
-                {/* Uploading is #130's: until then, only a stored upload shows. */}
-                <label>
-                  Font
-                  <select
-                    className="field"
-                    value={font === "theme" ? "theme" : "upload"}
-                    onChange={(e) =>
-                      put(
-                        "popup.font",
-                        e.target.value === "theme"
-                          ? "theme"
-                          : initial["popup.font"],
-                      )
-                    }
-                  >
-                    <option value="theme">Match my theme</option>
-                    <option
-                      value="upload"
-                      disabled={initial["popup.font"] === "theme"}
-                    >
-                      Upload a font
-                    </option>
-                  </select>
-                </label>
+                {fontUpload.select}
               </div>
+              {fontUpload.box}
               {box("popup.logo", "Show my logo in the popup")}
               {box(
                 "popup.sticky",

@@ -5,6 +5,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { createRoutesStub } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultSettings, type Settings } from "../models/settings.server";
+import { fileSize, fontType } from "../lib/appearance";
 
 const m = vi.hoisted(() => ({ authenticate: vi.fn() }));
 vi.mock("../shopify.server", () => ({
@@ -532,24 +533,244 @@ describe("colors, font and preview", () => {
     );
   });
 
-  it("offers no font upload yet, and keeps a stored one until Match my theme replaces it", async () => {
-    await open();
-    const option = labelled("Font").querySelector<HTMLOptionElement>(
-      'option[value="upload"]',
-    )!;
-    expect(option.disabled).toBe(true);
-
+  it("keeps a stored font until Remove goes back to Match my theme", async () => {
     const s = saved();
     s.popup.font = { fileUrl: "https://cdn.shopify.com/s/files/1/a.woff2" };
     store = fakeStore(s);
-    await reopen();
+    await open();
     expect(labelled("Font").value).toBe("upload");
+    expect(text()).toContain("a.woff2Saved in your Shopify Files");
     await type(byId("label"), "Fit guide");
     await click("Save");
     expect(store.value!.popup.font).toEqual(s.popup.font);
 
-    await type(labelled("Font"), "theme");
+    await click("Remove");
+    expect(labelled("Font").value).toBe("theme");
     await click("Save");
     expect(store.value!.popup.font).toBe("theme");
+  });
+});
+
+// Shopify Files behind the fake store: the staged upload, fileCreate and the
+// file's status, with the staged target's POST on `fetch`.
+const FILE_URL = "https://cdn.shopify.com/s/files/1/1/files/Sora.woff2?v=1";
+function fakeFiles({ status = "READY", target = 204 } = {}) {
+  const calls: { query: string; variables?: Record<string, unknown> }[] = [];
+  const base = store.admin.graphql.getMockImplementation()!;
+  const answer = (q: string) =>
+    q.includes("FittedFontStage")
+      ? {
+          stagedUploadsCreate: {
+            stagedTargets: [
+              {
+                url: "https://storage.test/upload",
+                resourceUrl: "https://storage.test/tmp/Sora.woff2",
+                parameters: [{ name: "key", value: "tmp/Sora.woff2" }],
+              },
+            ],
+            userErrors: [],
+          },
+        }
+      : q.includes("FittedFontCreate")
+        ? {
+            fileCreate: {
+              files: [{ id: "gid://shopify/GenericFile/1" }],
+              userErrors: [],
+            },
+          }
+        : { node: { fileStatus: status, url: status === "READY" && FILE_URL } };
+  store.admin.graphql.mockImplementation(async (query, opts) => {
+    if (!query.includes("FittedFont")) return base(query, opts);
+    calls.push({ query, variables: opts?.variables });
+    return json({ data: answer(query) });
+  });
+  const sent = vi
+    .spyOn(globalThis, "fetch")
+    .mockImplementation(async () => new Response(null, { status: target }));
+  return { calls, sent };
+}
+const WOFF2 = [0x77, 0x4f, 0x46, 0x32, 0, 1, 0, 0];
+const font = (name = "Sora.woff2", bytes = WOFF2, size = bytes.length) => {
+  const b = new Uint8Array(size);
+  b.set(bytes);
+  return new File([b], name);
+};
+const postFont = async (file: File) => {
+  const body = new FormData();
+  body.append("file", file);
+  const r = (await action({
+    request: new Request("https://fitted.test/app/appearance", {
+      method: "POST",
+      body,
+    }),
+  } as ActionFunctionArgs)) as {
+    type?: string;
+    data?: unknown;
+    init?: ResponseInit;
+  };
+  return r?.type === "DataWithResponseInit"
+    ? { status: r.init?.status, body: r.data }
+    : { status: 200, body: r };
+};
+const refused = (words: string) => ({
+  status: 422,
+  body: { fieldErrors: { "popup.font": words } },
+});
+
+describe("uploading a font", () => {
+  it("sends a font to Shopify Files and answers its address", async () => {
+    const { calls, sent } = fakeFiles();
+    expect(await postFont(font("My Sora (1).woff2"))).toEqual({
+      status: 200,
+      body: { fileUrl: FILE_URL },
+    });
+    expect(calls[0].variables).toEqual({
+      input: [
+        {
+          resource: "FILE",
+          filename: "My-Sora-1-.woff2",
+          mimeType: "font/woff2",
+          httpMethod: "POST",
+          fileSize: "8",
+        },
+      ],
+    });
+    const form = sent.mock.calls[0][1]!.body as FormData;
+    expect(sent.mock.calls[0][0]).toBe("https://storage.test/upload");
+    expect([...form.keys()]).toEqual(["key", "file"]);
+    expect(calls[1].variables).toEqual({
+      files: [
+        {
+          originalSource: "https://storage.test/tmp/Sora.woff2",
+          contentType: "FILE",
+        },
+      ],
+    });
+    expect(calls[2].variables).toEqual({ id: "gid://shopify/GenericFile/1" });
+  });
+
+  it("refuses an upload without a session before reading it", async () => {
+    const { calls, sent } = fakeFiles();
+    m.authenticate.mockRejectedValue(new Response(null, { status: 401 }));
+    await expect(postFont(font())).rejects.toBeInstanceOf(Response);
+    expect(calls).toEqual([]);
+    expect(sent).not.toHaveBeenCalled();
+  });
+
+  it("checks the bytes as well as the name, and the 2 MB limit", async () => {
+    const { calls } = fakeFiles();
+    const zip = [0x50, 0x4b, 3, 4];
+    expect(await postFont(font("Sora.woff2", zip))).toEqual(
+      refused("Use a WOFF2, WOFF, TTF or OTF file."),
+    );
+    expect(await postFont(font("Sora.zip"))).toEqual(
+      refused("Use a WOFF2, WOFF, TTF or OTF file."),
+    );
+    const size = refused("Use a font file up to 2 MB, like a WOFF2.");
+    expect(
+      await postFont(font("Big.woff2", WOFF2, 2 * 1024 * 1024 + 1)),
+    ).toEqual(size);
+    expect(await postFont(font("Big.woff2", WOFF2, 3 * 1024 * 1024))).toEqual(
+      size,
+    );
+    expect(calls).toEqual([]);
+  });
+
+  it("answers 502 when Shopify doesn't take the file, logging the cause", async () => {
+    fakeFiles({ target: 500 });
+    const failed = {
+      status: 502,
+      body: {
+        error: {
+          code: "upload",
+          message:
+            "Shopify didn't answer, so the popup still uses your theme's font.",
+        },
+      },
+    };
+    expect(await postFont(font())).toEqual(failed);
+    expect(JSON.parse(logs[0])).toEqual({
+      level: "error",
+      msg: "The font didn't reach Shopify",
+      shop: SHOP,
+      route: "app.appearance",
+    });
+    fakeFiles({ status: "FAILED" });
+    expect(await postFont(font())).toEqual(failed);
+  });
+
+  it("knows each kind of font by its first bytes", () => {
+    const head = (...b: number[]) => new Uint8Array(b);
+    expect(fontType("a.WOFF", head(0x77, 0x4f, 0x46, 0x46))).toBe("font/woff");
+    expect(fontType("a.ttf", head(0, 1, 0, 0))).toBe("font/ttf");
+    expect(fontType("a.otf", head(0x4f, 0x54, 0x54, 0x4f))).toBe("font/otf");
+    expect(fontType("a.ttf", head(0x77, 0x4f, 0x46))).toBeUndefined();
+    expect(fontType("constructor", head(0, 1, 0, 0))).toBeUndefined();
+    expect(fileSize(48 * 1024)).toBe("48 KB");
+    expect(fileSize(6.35 * 1024 * 1024)).toBe("6.4 MB");
+  });
+});
+
+describe("font upload screen", () => {
+  const choose = async (file: File) => {
+    const input = document.querySelector<HTMLInputElement>('[type="file"]')!;
+    Object.defineProperty(input, "files", {
+      value: [file],
+      configurable: true,
+    });
+    await act(async () =>
+      input.dispatchEvent(new Event("change", { bubbles: true })),
+    );
+    await settle();
+  };
+
+  it("chooses a file, uploads it, and saves it as the popup's font", async () => {
+    const { calls } = fakeFiles();
+    await open();
+    await type(labelled("Font"), "upload");
+    expect(text()).toContain(
+      "Add font fileor drop it here. WOFF2, WOFF, TTF or OTF, up to 2 MB.",
+    );
+    expect(saveBar()).toBeNull();
+    await choose(font("Sora-Regular.woff2", WOFF2, 48 * 1024));
+    expect(calls).toHaveLength(3);
+    expect(text()).toContain(
+      "Sora-Regular.woff248 KB, saved in your Shopify Files",
+    );
+    await click("Save");
+    expect(store.value!.popup.font).toEqual({ fileUrl: FILE_URL });
+    expect(text()).toContain("48 KB, saved in your Shopify Files");
+  });
+
+  it("says when a file isn't a font or is too large, and sends nothing", async () => {
+    const { calls } = fakeFiles();
+    await open();
+    await type(labelled("Font"), "upload");
+    await choose(font("Sora.zip"));
+    expect(document.querySelector('[role="alert"]')!.textContent).toBe(
+      "Sora.zip isn't a font fileUse a WOFF2, WOFF, TTF or OTF file.Add font file",
+    );
+    await choose(font("Sora-Variable.ttf", [0, 1, 0, 0], 6.4 * 1024 * 1024));
+    expect(document.querySelector('[role="alert"]')!.textContent).toBe(
+      "Sora-Variable.ttf is 6.4 MBUse a font file up to 2 MB, like a WOFF2.Add font file",
+    );
+    expect(calls).toEqual([]);
+  });
+
+  it("says when the upload failed, and Try again sends the same file", async () => {
+    fakeFiles({ target: 503 });
+    await open();
+    await type(labelled("Font"), "upload");
+    await choose(font("Sora-Regular.woff2"));
+    expect(document.querySelector('[role="alert"]')!.textContent).toBe(
+      "Sora-Regular.woff2 didn't uploadShopify didn't answer, so the popup still uses your theme's font.Try again",
+    );
+    const { sent } = fakeFiles();
+    await click("Try again");
+    expect(sent).toHaveBeenCalledTimes(1);
+    expect((sent.mock.calls[0][1]!.body as FormData).get("file")).toBeTruthy();
+    expect(text()).toContain("Sora-Regular.woff2");
+    expect(text()).toContain("saved in your Shopify Files");
+    expect(labelled("Font").value).toBe("upload");
   });
 });

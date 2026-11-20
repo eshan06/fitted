@@ -183,3 +183,94 @@
   background: #202223;
   color: #fff;
 }
+/* The popup font's upload box, and the uploaded file. */
+.appearance .font-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 132px;
+  padding: 16px;
+  box-sizing: border-box;
+  border: 1px dashed #b5b8bb;
+  border-radius: 10px;
+  text-align: center;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+.appearance .font-drop strong {
+  font-size: 0.875rem;
+}
+.appearance .font-drop.bad {
+  border-color: #8e1f0b;
+  background: #fee9e8;
+  color: #8e1f0b;
+}
+/* How long Shopify takes isn't known, so the bar moves without a value. */
+.appearance .font-drop .bar {
+  width: 60%;
+  height: 6px;
+  border-radius: 999px;
+  background: #e4e5e7;
+  overflow: hidden;
+}
+.appearance .font-drop .bar span {
+  display: block;
+  width: 60%;
+  height: 100%;
+  background: #2448a8;
+  animation: font-bar 1.4s ease-in-out infinite alternate;
+}
+@keyframes font-bar {
+  from {
+    transform: translateX(-40%);
+  }
+  to {
+    transform: translateX(110%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .appearance .font-drop .bar span {
+    animation: none;
+  }
+}
+.appearance .font-file {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid #e1e3e5;
+  border-radius: 10px;
+}
+.appearance .font-file > div:first-of-type {
+  flex: 1 1 180px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.appearance .font-file strong,
+.appearance .font-file .help {
+  display: block;
+  font-size: 0.875rem;
+}
+.appearance .font-file .help {
+  font-size: 0.8125rem;
+}
+.appearance .font-file .row {
+  display: flex;
+  gap: 8px;
+}
+.appearance .aa {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  border: 1px solid #e1e3e5;
+  background: #f7f7f8;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.0625rem;
+  font-weight: 700;
+}
