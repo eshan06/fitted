@@ -1562,15 +1562,21 @@ describe("How to measure and Fit tips tabs", () => {
     expect(picker).toHaveBeenCalledOnce();
   });
 
-  it("shows the upload's progress until Shopify answers", async () => {
+  it("shows the upload's progress until Shopify answers, one upload at a time", async () => {
     let answer!: (v?: unknown) => void;
     hold = new Promise((r) => (answer = r));
-    await open([stored()]);
+    const { sent } = await open([stored()]);
+    await type(byLabel("XS, Bust"), "30–32");
     await openTab("How to measure");
     await pick("measure-tops.png", PNG);
     expect(document.querySelector('[role="status"]')?.textContent).toContain(
       "Uploading measure-tops.png",
     );
+    // A save would remount the editor and lose the upload.
+    expect(button("Save").hasAttribute("disabled")).toBe(true);
+    // The box under the size table can't start a second one.
+    await pick("other.png", PNG);
+    expect(sent).toEqual([{ upload: "measure-tops.png" }]);
     await act(async () => answer());
     await settle();
     expect(text()).not.toContain("Uploading");

@@ -24,8 +24,6 @@ export function useMeasureImage(
   storedUrl: string | undefined,
   put: (id: string | undefined) => void,
 ) {
-  if (image && storedUrl && !shown.has(image))
-    shown.set(image, { url: storedUrl, name: nameOf(storedUrl) });
   const uploader = useFetcher<Answer>();
   const submit = useSubmit();
   // This route's, even when the discard is sent on the way out of it.
@@ -83,7 +81,8 @@ export function useMeasureImage(
 
   // ponytail: an image over 20 MB shows "didn't upload" until its own state is drawn.
   const pick = async (f?: File) => {
-    if (!f) return;
+    // One upload at a time: a second would leave the first in Files.
+    if (!f || sending) return;
     setFile(f);
     setView(null);
     const head = new Uint8Array(
@@ -109,7 +108,10 @@ export function useMeasureImage(
       {action}
     </div>
   );
-  const at = image ? shown.get(image) : undefined;
+  const at = !image
+    ? undefined
+    : (shown.get(image) ??
+      (storedUrl ? { url: storedUrl, name: nameOf(storedUrl) } : undefined));
   let box: ReactNode;
   if (sending)
     box = (

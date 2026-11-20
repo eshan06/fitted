@@ -146,7 +146,7 @@ function sign(shop: string, id: string) {
   const secret = process.env.SHOPIFY_API_SECRET;
   if (!secret) throw new Error("SHOPIFY_API_SECRET is not set");
   return createHmac("sha256", secret)
-    .update(`${shop} ${id}`)
+    .update(`fitted-discard ${shop} ${id}`)
     .digest("base64url");
 }
 
