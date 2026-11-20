@@ -44,6 +44,8 @@ const edit = (
   damaged,
   job: null,
   products: 340,
+  counts: null,
+  names: {},
   free: false,
   plansUrl: null,
   ...more,
@@ -79,22 +81,25 @@ afterEach(() => {
 });
 
 // Renders the route with a loader and an action that answer in turn.
-// The screen's polls get `polls` in turn, then the last one again.
+// The screen's polls get `polls` in turn, then the last one again; its
+// matches card gets each chart's entry in `previews`, else none.
 async function open(
   loaded: unknown[],
   answers: { status: number; body: unknown }[] = [],
   polls: unknown[] = [],
+  previews: Record<string, unknown> = {},
 ) {
   const sent: Record<string, unknown>[] = [];
   let n = 0;
   const poll = vi.fn(() => ({
     job: polls.length > 1 ? polls.shift() : polls[0],
   }));
-  const loader = vi.fn(({ request }: { request: Request }) =>
-    new URL(request.url).searchParams.has("job")
-      ? poll()
-      : loaded[Math.min(n++, loaded.length - 1)],
-  );
+  const loader = vi.fn(({ request }: { request: Request }) => {
+    const q = new URL(request.url).searchParams;
+    if (q.has("preview"))
+      return { mode: "preview", preview: previews[q.get("preview")!] ?? null };
+    return q.has("job") ? poll() : loaded[Math.min(n++, loaded.length - 1)];
+  });
   const Stub = createRoutesStub([
     {
       path: "/app/rules",
@@ -240,7 +245,10 @@ describe("display rules screen", () => {
     const newer = ranked();
     newer.order = [B, A];
     const { loader } = await open(
-      [edit(ranked()), edit(newer, "d2")],
+      [
+        edit(ranked()),
+        edit(newer, "d2", null, { names: { [P]: "Linen wrap top" } }),
+      ],
       [{ status: 409, body: { error: { code: "conflict" } } }],
     );
     await act(async () =>
@@ -255,6 +263,11 @@ describe("display rules screen", () => {
     expect(headings()).toEqual([]);
     expect(buttons("1. Shoes")).toHaveLength(1);
     expect(saveBar()).toBeNull();
+    // Its picks come by name too.
+    await click(buttons("2. Women's tops")[0]);
+    expect(document.querySelector(".picked")?.textContent).toContain(
+      "Linen wrap top",
+    );
   });
 
   it("keeps the edits when Shopify fails and tries again", async () => {
@@ -579,7 +592,190 @@ describe("display rules screen", () => {
     expect(headings()).toEqual(["Your display rules didn't load"]);
     expect(text()).toContain("Still not working? Email");
     await click(buttons("Try again")[0]);
-    expect(loader).toHaveBeenCalledTimes(2);
+    const pages = loader.mock.calls.filter(
+      ([a]) => !a.request.url.includes("preview"),
+    );
+    expect(pages).toHaveLength(2);
     expect(document.querySelector("h2")?.textContent).toBe("Women's tops");
+  });
+});
+
+const matches = () =>
+  document.querySelector('[aria-label="Matching products"]');
+const ids = (n: number, from = 0) =>
+  Array.from({ length: n }, (_, i) => `gid://shopify/Product/${i + from}`);
+const metafields = (n: number) =>
+  Array.from({ length: n }, (_, i) => ({
+    field: "metafield" as const,
+    key: `custom.k${i}`,
+    op: "is" as const,
+    value: "x",
+  }));
+
+describe("matches, counts and names", () => {
+  it("previews the chart on screen's products, and each chart's count in the list", async () => {
+    const top = {
+      count: 148,
+      atLeast: false,
+      products: [
+        { id: P, title: "Linen wrap top", image: "https://cdn/1" },
+        { id: "p2", title: "Ribbed tank", image: null },
+      ],
+      url: "https://admin.shopify.com/store/s/products?query=q",
+    };
+    const shoes = { count: 0, atLeast: false, products: [], url: "u" };
+    const counts = { [A]: { count: 148, atLeast: false } };
+    await open([edit(ranked(), "d1", null, { counts })], [], [], {
+      [A]: top,
+      [B]: shoes,
+    });
+    expect(matches()?.querySelector("h2")?.textContent).toBe(
+      "148 products match",
+    );
+    expect(matches()?.textContent).toContain("Linen wrap topRibbed tank");
+    expect(matches()?.querySelector("img")?.getAttribute("src")).toBe(
+      "https://cdn/1",
+    );
+    const all = matches()?.querySelector("a");
+    expect(all?.textContent).toBe("See all 148");
+    expect(all?.getAttribute("href")).toBe(top.url);
+    expect(all?.getAttribute("target")).toBe("_blank");
+    const list = document.querySelector("ol")!.textContent;
+    expect(list).toContain("1. Women's tops148 products");
+    expect(list).toContain("2. ShoesEverything else");
+    await click(buttons("2. Shoes")[0]);
+    expect(matches()?.textContent).toBe("0 products match");
+  });
+
+  it("previews the chart on screen while a resolve runs, never the last one's", async () => {
+    const card = (count: number) => ({
+      count,
+      atLeast: false,
+      products: [],
+      url: "u",
+    });
+    const running = job("running", 5);
+    await open([edit(ranked(), "d1", null, { job: running })], [], [running], {
+      [A]: card(148),
+      [B]: card(212),
+    });
+    expect(headings()).toEqual(["Applying your rules to 340 products"]);
+    expect(matches()?.querySelector("h2")?.textContent).toBe(
+      "148 products match",
+    );
+    await click(buttons("2. Shoes")[0]);
+    expect(matches()?.querySelector("h2")?.textContent).toBe(
+      "212 products match",
+    );
+  });
+
+  it("leaves the matches card out when Shopify gives no preview", async () => {
+    await open([edit(ranked())]);
+    expect(matches()).toBeNull();
+    expect(document.querySelector("h2")?.textContent).toBe("Women's tops");
+  });
+
+  it("names picked products, the loaded ones and the ones just picked", async () => {
+    const Q = "gid://shopify/Product/10";
+    bridge.resourcePicker.mockResolvedValue([
+      { id: P, title: "Linen wrap top" },
+      { id: Q, title: "Silk camisole" },
+    ]);
+    await open([edit(ranked(), "d1", null, { names: { [P]: "Linen wrap" } })]);
+    expect(document.querySelector(".picked")?.textContent).toContain(
+      "Linen wrap",
+    );
+    await click(byLabel("Edit the picked products"));
+    expect(document.querySelector(".picked")?.textContent).toContain(
+      "Linen wrap top, Silk camisole",
+    );
+  });
+});
+
+describe("the three limits", () => {
+  it("marks the 21st metafield and saves nothing", async () => {
+    const r = ranked();
+    r.charts[A].match = metafields(20);
+    const { sent } = await open([edit(r)]);
+    await click(buttons("Add condition")[0]);
+    await type(byLabel("Field", 20), "metafield");
+    await type(byLabel("Metafield key", 20), "custom.sleeve_length");
+    await type(byLabel("Value", 20), "long");
+    await click(buttons("Save")[0]);
+    expect(sent).toEqual([]);
+    expect(headings()).toEqual(["20 of 20 metafields in use"]);
+    expect(text()).toContain(
+      "That's the most rules can compare, so the marked condition can't be saved. Use a metafield your rules already compare, or a tag, product type or vendor.",
+    );
+    expect(text()).toContain(
+      "This would be the 21st metafield. The most is 20.",
+    );
+    const key = document.getElementById("r1-match-20-key")!;
+    expect(key.getAttribute("aria-invalid")).toBe("true");
+    expect(document.activeElement).toBe(key);
+    // A key the rules already compare doesn't count.
+    await type(key as HTMLInputElement, "custom.k3");
+    await click(buttons("Save")[0]);
+    expect(sent).toHaveLength(1);
+  });
+
+  it("marks the condition whose picks go past 1,000 and saves nothing", async () => {
+    const r = ranked();
+    r.charts[A].match = [{ field: "product", op: "is", ids: ids(990) }];
+    bridge.resourcePicker.mockResolvedValue(
+      ids(38, 2000).map((id) => ({ id })),
+    );
+    const { sent } = await open([edit(r)]);
+    await click(buttons("Add condition")[1]);
+    await type(byLabel("Field", 1), "product");
+    await click(byLabel("Edit the picked products", 1));
+    await click(buttons("Save")[0]);
+    expect(sent).toEqual([]);
+    expect(headings()).toEqual([
+      "1,028 of 1,000 products and collections picked",
+    ]);
+    expect(text()).toContain(
+      "The marked condition goes over, so it can't be saved. Use a tag (doesn't count) or a whole collection (counts once) instead.",
+    );
+    expect(text()).toContain(
+      "38 products picked here, 1,028 across all your charts. The most is 1,000.",
+    );
+    expect(document.activeElement?.id).toBe("r1-exclude-0-value");
+    expect(document.querySelectorAll(".picked")[1].className).toContain("bad");
+  });
+
+  it("at 200 ranked charts, shortens the list and lets a chart come off it", async () => {
+    const many = Array.from({ length: 201 }, (_, i) => ({
+      id: `gid://shopify/Metaobject/${i + 1}`,
+      name: `Chart ${i + 1}`,
+    }));
+    const r: Rules = { v: 1, order: [], charts: {} };
+    for (const c of many.slice(0, 200)) {
+      r.order.push(c.id);
+      r.charts[c.id] = { match: [{ field: "all" }], exclude: [], auto: true };
+    }
+    const { sent } = await open([edit(r, "d1", null, { charts: many })]);
+    expect(headings()).toEqual(["200 of 200 charts ranked"]);
+    expect(text()).toContain(
+      "That's the most rules can rank. To add rules to another chart, take one you don't use off the list below.",
+    );
+    expect(text()).toContain("200 of 200 ranked");
+    expect(document.querySelectorAll("ol li")).toHaveLength(10);
+    expect(text()).not.toContain("Add rules to another chart");
+    expect(text()).toContain(
+      "Taking a chart off the list removes its rules. The chart itself stays.",
+    );
+    await click(buttons("Show all 200")[0]);
+    expect(document.querySelectorAll("ol li")).toHaveLength(200);
+    expect(buttons("Show all 200")).toHaveLength(0);
+    await click(byLabel("Take Chart 2 off the list"));
+    expect(headings()).toEqual([]);
+    expect(document.querySelectorAll("ol li")).toHaveLength(199);
+    expect(text()).toContain("Add rules to another chart");
+    await click(buttons("Save")[0]);
+    const saved = sent[0].rules as Rules;
+    expect(saved.order).toHaveLength(199);
+    expect(saved.order).not.toContain("gid://shopify/Metaobject/2");
+    expect(saved.charts).not.toHaveProperty("gid://shopify/Metaobject/2");
   });
 });
