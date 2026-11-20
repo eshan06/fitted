@@ -1,0 +1,437 @@
+// @vitest-environment happy-dom
+import { act, type ReactNode } from "react";
+import { createRoot } from "react-dom/client";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import { createRoutesStub } from "react-router";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { defaultSettings, type Settings } from "../models/settings.server";
+
+const m = vi.hoisted(() => ({ authenticate: vi.fn() }));
+vi.mock("../shopify.server", () => ({
+  authenticate: { admin: m.authenticate },
+}));
+vi.mock("../db.server", () => ({ default: {} }));
+// The save bar is App Bridge's; here it renders its buttons in place.
+vi.mock("@shopify/app-bridge-react", () => ({
+  SaveBar: ({ open, children }: { open: boolean; children: ReactNode }) =>
+    open ? <div data-testid="save-bar">{children}</div> : null,
+}));
+const {
+  default: Appearance,
+  action,
+  loader,
+} = await import("./app.appearance");
+
+(
+  globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
+
+const SHOP = "fitted-dev.myshopify.com";
+const json = (body: unknown) => new Response(JSON.stringify(body));
+
+// One shop's `$app.settings`, enforcing compareDigest like Shopify. `down`
+// makes every call fail.
+function fakeStore(initial: Settings | null = null) {
+  const store = {
+    value: initial as Settings | null,
+    digest: initial ? "d0" : null,
+    writes: 0,
+    down: false,
+  };
+  const graphql = vi.fn(
+    async (query: string, opts?: { variables?: Record<string, unknown> }) => {
+      if (store.down) throw new Error("socket hang up");
+      if (query.includes("query FittedSettings"))
+        return json({
+          data: {
+            shop: {
+              id: "gid://shopify/Shop/1",
+              metafield: store.value && {
+                jsonValue: store.value,
+                compareDigest: store.digest,
+              },
+            },
+            shopLocales: [
+              { locale: "fr", primary: false },
+              { locale: "en", primary: true },
+            ],
+          },
+        });
+      const [mf] = opts!.variables!.metafields as {
+        ownerId: string;
+        value: string;
+        compareDigest: string | null;
+      }[];
+      expect(mf.ownerId).toBe("gid://shopify/Shop/1");
+      if (mf.compareDigest !== store.digest)
+        return json({
+          data: {
+            metafieldsSet: {
+              metafields: [],
+              userErrors: [{ message: "Stale", code: "STALE_OBJECT" }],
+            },
+          },
+        });
+      store.value = JSON.parse(mf.value);
+      store.digest = `d${++store.writes}`;
+      return json({
+        data: {
+          metafieldsSet: {
+            metafields: [{ compareDigest: store.digest }],
+            userErrors: [],
+          },
+        },
+      });
+    },
+  );
+  return Object.assign(store, { admin: { graphql } });
+}
+// Stored settings with a fit finder and a second language the screen never edits.
+const saved = (): Settings => {
+  const s = defaultSettings("en");
+  s.fitFinder.askAge = true;
+  s.text.fr = { label: "Guide", header: "Tailles", noFit: "Aucune." };
+  return s;
+};
+
+let store: ReturnType<typeof fakeStore>;
+let logs: string[];
+beforeEach(() => {
+  vi.resetAllMocks();
+  vi.stubEnv("SHOPIFY_API_KEY", "key123");
+  logs = [];
+  vi.spyOn(console, "log").mockImplementation((line) => logs.push(line));
+  store = fakeStore(saved());
+  m.authenticate.mockImplementation(async () => ({
+    admin: store.admin,
+    session: { shop: SHOP },
+  }));
+});
+let root: ReturnType<typeof createRoot> | undefined;
+afterEach(() => {
+  act(() => root?.unmount());
+  root = undefined;
+  document.body.innerHTML = "";
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
+
+const request = (body?: unknown) =>
+  new Request("https://fitted.test/app/appearance", {
+    method: body === undefined ? "GET" : "POST",
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+const load = async () => {
+  const r = await loader({ request: request() } as LoaderFunctionArgs);
+  return { ...r, appearance: await r.appearance };
+};
+const post = async (body: unknown) => {
+  const r = (await action({
+    request: request(body),
+  } as ActionFunctionArgs)) as {
+    type?: string;
+    data?: unknown;
+    init?: ResponseInit;
+  };
+  return r?.type === "DataWithResponseInit"
+    ? { status: r.init?.status, body: r.data }
+    : { status: 200, body: r };
+};
+// The edits the screen sends for the stored settings, with changes.
+const edits = (patch: Record<string, unknown> = {}) => ({
+  link: { style: "button", icon: "hanger" },
+  popup: { ...saved().popup, style: "drawer" },
+  placement: { ...saved().placement, quickView: true },
+  units: { default: "cm", toggle: false },
+  colors: {
+    mode: "custom",
+    text: "#111111",
+    accent: "#2448A8",
+    background: "#FFFFFF",
+  },
+  css: ".fitted-link { color: red; }",
+  label: "Fit guide",
+  header: "Find your fit",
+  ...patch,
+});
+
+describe("loading and saving appearance", () => {
+  it("loads the shop's settings, defaults filled, with the theme editor link", async () => {
+    const got = await load();
+    expect(got.appearance).toMatchObject({
+      settings: saved(),
+      digest: "d0",
+      primaryLocale: "en",
+    });
+    expect(got.themeUrl).toBe(
+      "https://admin.shopify.com/store/fitted-dev/themes/current/editor?template=product&addAppBlockId=key123/size-guide&target=mainSection",
+    );
+  });
+
+  it("saves the edits and reads them back, keeping the fit finder and other languages", async () => {
+    expect(await post({ digest: "d0", edits: edits() })).toEqual({
+      status: 200,
+      body: { ok: true },
+    });
+    const { appearance } = await load();
+    const s = (appearance as { settings: Settings }).settings;
+    expect(s.link).toEqual({ style: "button", icon: "hanger" });
+    expect(s.colors).toEqual(edits().colors);
+    expect(s.units).toEqual({ default: "cm", toggle: false });
+    expect(s.text.en).toEqual({
+      ...saved().text.en,
+      label: "Fit guide",
+      header: "Find your fit",
+    });
+    expect(s.text.fr).toEqual(saved().text.fr);
+    expect(s.fitFinder).toEqual(saved().fitFinder);
+  });
+
+  it("ignores anything but the digest and the edits from the browser", async () => {
+    await post({
+      digest: "d0",
+      edits: { ...edits(), fitFinder: { type: "basic" }, text: {} },
+      shopId: "gid://shopify/Shop/999",
+      primaryLocale: "fr",
+    });
+    expect(store.value!.fitFinder).toEqual(saved().fitFinder);
+    expect(store.value!.text.fr).toEqual(saved().text.fr);
+    expect(store.value!.text.en.label).toBe("Fit guide");
+  });
+
+  it("refuses a save without a session before reading anything", async () => {
+    m.authenticate.mockRejectedValue(new Response(null, { status: 401 }));
+    await expect(post({ digest: "d0", edits: edits() })).rejects.toHaveProperty(
+      "status",
+      401,
+    );
+    expect(store.admin.graphql).not.toHaveBeenCalled();
+  });
+
+  it("answers 422 with the screen's field names, and writes nothing", async () => {
+    const r = await post({
+      digest: "d0",
+      edits: edits({
+        label: " ",
+        colors: {
+          mode: "custom",
+          text: "#11",
+          accent: "x",
+          background: "#FFF",
+        },
+        popup: { ...saved().popup, style: "sideways" },
+      }),
+    });
+    expect(r.status).toBe(422);
+    expect(
+      Object.keys((r.body as { fieldErrors: object }).fieldErrors),
+    ).toEqual(
+      expect.arrayContaining([
+        "label",
+        "colors.text",
+        "colors.accent",
+        "colors.background",
+        "popup.style",
+      ]),
+    );
+    expect(store.writes).toBe(0);
+  });
+
+  it("answers 422 to a body that isn't the edits", async () => {
+    expect((await post("nonsense")).status).toBe(422);
+    expect(store.writes).toBe(0);
+  });
+
+  it("refuses a replayed save as changed since, so it never overwrites", async () => {
+    const body = { digest: "d0", edits: edits() };
+    await post(body);
+    expect(await post({ ...body, edits: edits({ label: "Old" }) })).toEqual({
+      status: 409,
+      body: {
+        error: {
+          code: "conflict",
+          message: expect.stringContaining("nothing was overwritten"),
+        },
+      },
+    });
+    expect(store.writes).toBe(1);
+    expect(store.value!.text.en.label).toBe("Fit guide");
+  });
+
+  it("answers 502 in the screen's words when Shopify fails, logging the cause", async () => {
+    store.down = true;
+    const r = await post({ digest: "d0", edits: edits() });
+    expect(r.status).toBe(502);
+    expect(r.body).toEqual({
+      error: { code: "shopify", message: expect.any(String) },
+    });
+    expect(JSON.stringify(r.body)).not.toContain("socket");
+    expect(JSON.parse(logs[0])).toMatchObject({
+      level: "error",
+      shop: SHOP,
+      route: "app.appearance",
+    });
+    expect((await load()).appearance).toMatchObject({
+      error: { code: "load" },
+    });
+  });
+});
+
+// The screen, on the real loader and action over the fake store.
+async function open() {
+  const Stub = createRoutesStub([
+    {
+      path: "/app/appearance",
+      Component: Appearance,
+      HydrateFallback: () => null,
+      loader: (args) => loader(args as LoaderFunctionArgs),
+      action: (args) => action(args as ActionFunctionArgs),
+    },
+  ]);
+  const div = document.body.appendChild(document.createElement("div"));
+  root = createRoot(div);
+  await act(async () =>
+    root!.render(<Stub initialEntries={["/app/appearance"]} />),
+  );
+  await settle();
+}
+const settle = () => act(() => new Promise((r) => setTimeout(r, 30)));
+const text = () => document.body.textContent ?? "";
+const saveBar = () => document.querySelector('[data-testid="save-bar"]');
+const byId = (id: string) =>
+  document.getElementById(id) as HTMLInputElement | HTMLTextAreaElement;
+const labelled = (label: string) =>
+  [...document.querySelectorAll("label")]
+    .find((l) => l.textContent?.startsWith(label))!
+    .querySelector("input, select") as HTMLInputElement;
+const heading = () =>
+  [...document.querySelectorAll("s-banner")].map((b) =>
+    b.getAttribute("heading"),
+  );
+async function type(el: HTMLElement, value: string) {
+  const proto = Object.getPrototypeOf(el);
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(el, value);
+    el.dispatchEvent(
+      new Event(el.tagName === "SELECT" ? "change" : "input", {
+        bubbles: true,
+      }),
+    );
+  });
+}
+const click = async (label: string | HTMLElement) => {
+  const el =
+    typeof label === "string"
+      ? [...document.querySelectorAll<HTMLElement>("button, s-button")].find(
+          (b) => b.textContent === label,
+        )!
+      : label;
+  await act(async () => el.click());
+  await settle();
+};
+
+describe("appearance screen", () => {
+  it("edits every kind of control and saves, then reads back with the save bar closed", async () => {
+    await open();
+    expect(saveBar()).toBeNull();
+    await click(labelled("Button"));
+    await type(byId("label"), "Fit guide");
+    await type(labelled("Icon"), "tape");
+    await click(labelled("Show my logo in the popup"));
+    await click(labelled("Collection pages and quick view"));
+    await type(byId("placement.selector"), ".product-form");
+    await type(labelled("Default unit"), "in");
+    await type(byId("css"), ".fitted-link { color: red; }");
+    expect(saveBar()).not.toBeNull();
+    await click("Save");
+
+    expect(store.value).toMatchObject({
+      link: { style: "button", icon: "tape" },
+      popup: { logo: false },
+      placement: { quickView: true, selector: ".product-form" },
+      colors: { mode: "theme" },
+      units: { default: "in" },
+      css: ".fitted-link { color: red; }",
+      fitFinder: saved().fitFinder,
+    });
+    expect(store.value!.text.en.label).toBe("Fit guide");
+    expect(saveBar()).toBeNull();
+    expect(byId("label").value).toBe("Fit guide");
+  });
+
+  it("marks the fields to fix and sends nothing", async () => {
+    await open();
+    await type(byId("label"), "");
+    await type(byId("header"), " ");
+    await type(byId("placement.selector"), ".product-form__input--size >");
+    await click("Save");
+
+    expect(store.writes).toBe(0);
+    expect(heading()).toEqual(["Fix 3 fields to save"]);
+    expect(text()).toContain(
+      "Nothing was saved, so your store hasn't changed.",
+    );
+    expect(text()).toContain("Label is empty");
+    expect(text()).toContain("Header text is empty");
+    expect(text()).toContain(
+      "Place after this element isn't a valid CSS selector",
+    );
+    expect(text()).toContain("Enter the link text, like Size guide.");
+    expect(text()).toContain(
+      "Not a valid CSS selector. Check it for typos, or leave it empty to use the app block.",
+    );
+    expect(byId("placement.selector").getAttribute("aria-invalid")).toBe(
+      "true",
+    );
+    expect(byId("css").getAttribute("aria-invalid")).toBeNull();
+  });
+
+  it("shows changed elsewhere; Cancel keeps the edits, Reload latest discards them", async () => {
+    await open();
+    await type(byId("label"), "Mine");
+    store.digest = "other-tab"; // another tab saved
+    store.value = { ...saved(), css: ".theirs {}" };
+    await click("Save");
+    expect(heading()).toEqual(["Settings changed since you opened them"]);
+    expect(text()).toContain(
+      "Reload latest shows the newest settings and discards your edits.",
+    );
+
+    await click("Cancel");
+    expect(heading()).toEqual([]);
+    expect(byId("label").value).toBe("Mine");
+
+    await click("Save");
+    await click("Reload latest");
+    expect(heading()).toEqual([]);
+    expect(byId("label").value).toBe("Size guide");
+    expect(byId("css").value).toBe(".theirs {}");
+    expect(saveBar()).toBeNull();
+  });
+
+  it("keeps the edits when the save fails, and Try saving again saves them", async () => {
+    await open();
+    await type(byId("label"), "Fit guide");
+    store.down = true;
+    await click("Save");
+    expect(heading()).toEqual(["Your appearance changes weren't saved"]);
+    expect(byId("label").value).toBe("Fit guide");
+
+    store.down = false;
+    await click("Try saving again");
+    expect(store.value!.text.en.label).toBe("Fit guide");
+    expect(heading()).toEqual([]);
+  });
+
+  it("says so when the settings don't load, and Try again loads them", async () => {
+    store.down = true;
+    await open();
+    expect(heading()).toEqual(["Your appearance settings didn't load"]);
+    expect(text()).toContain("Still not working?");
+
+    store.down = false;
+    await click("Try again");
+    expect(heading()).toEqual([]);
+    expect(byId("label").value).toBe("Size guide");
+  });
+});
