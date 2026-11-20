@@ -2,7 +2,11 @@
 // or mint a new chart's handle, then create, update, publish or unpublish it.
 import { randomInt } from "node:crypto";
 import { useEffect, useState } from "react";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import type {
+  ActionFunctionArgs,
+  LoaderFunctionArgs,
+  ShouldRevalidateFunction,
+} from "react-router";
 import {
   Link,
   data,
@@ -12,10 +16,13 @@ import {
 } from "react-router";
 import { authenticate } from "../shopify.server";
 import {
+  type Admin,
   AdminApiError,
   canReadProducts,
   pricingPlansUrl,
 } from "../models/admin.server";
+import { readFile, uploadImage } from "../models/files.server";
+import { IMAGE_MAX, imageType } from "../lib/image-file";
 import {
   ChartConflictError,
   ChartNotFoundError,
@@ -99,8 +106,35 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 const fail = (status: number, code: string, message: string) =>
   data({ error: { code, message } }, { status });
 
+// The How to measure image: at most the file and its form's fields are read,
+// the file is checked by its name and bytes, and it goes on to Shopify Files.
+// The chart holds it once the editor saves.
+async function upload(request: Request, admin: Admin, shop: string) {
+  const file = await readFile(request, IMAGE_MAX + 64 * 1024);
+  const bytes =
+    file instanceof File && new Uint8Array(await file.arrayBuffer());
+  const mime = bytes && imageType(file.name, bytes);
+  if (!bytes || !mime || bytes.length > IMAGE_MAX)
+    return fail(422, "image", "Use a PNG or JPG up to 20 MB.");
+  try {
+    return {
+      image: await uploadImage(admin, { name: file.name, mime, bytes }),
+    };
+  } catch (err) {
+    if (!(err instanceof AdminApiError)) throw err;
+    logShopifyError(shop, err);
+    return fail(
+      502,
+      "upload",
+      "Shopify didn't answer, so the chart has no drawing yet.",
+    );
+  }
+}
+
 export const action = async ({ request, params }: ActionFunctionArgs) => {
   const { admin, session, redirect } = await authenticate.admin(request);
+  if (request.headers.get("content-type")?.startsWith("multipart/form-data"))
+    return upload(request, admin, session.shop);
   const isNew = params.id === "new";
   const id = isNew ? "" : gid(params.id);
   const body = await request.json().catch(() => null);
@@ -214,6 +248,11 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     );
   }
 };
+
+// An image upload changes no chart, so the chart isn't read again, and a new
+// chart keeps the handle its loader minted.
+export const shouldRevalidate: ShouldRevalidateFunction = (a) =>
+  a.formEncType !== "multipart/form-data" && a.defaultShouldRevalidate;
 
 // The Editor board's states: the editor itself, loading, couldn't load, and a
 // stored chart that fails the checks (opened with its values marked when the
