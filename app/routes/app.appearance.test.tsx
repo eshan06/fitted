@@ -781,6 +781,8 @@ describe("uploading a font", () => {
     expect((await postFont(font(), left.signal)).status).toBe(502);
     expect(early.calls).toHaveLength(1);
     expect(early.calls[0].query).toContain("FittedFontStage");
+    // The merchant chose to drop it, so nothing is logged as an error.
+    expect(logs).toEqual([]);
   });
 
   it("waits while Shopify processes the file, and gives up after 20 seconds", async () => {
@@ -984,6 +986,25 @@ describe("font upload screen", () => {
       expect(store.value!.popup.font).toEqual({ fileUrl: FILE_URL });
     },
   );
+
+  it("says when a font picked during a save didn't upload, and keeps the theme's font", async () => {
+    const s = saved();
+    s.popup.font = { fileUrl: "https://cdn.shopify.com/s/files/1/a.woff2" };
+    store = fakeStore(s);
+    fakeFiles({ target: 503 });
+    await open();
+    await type(byId("label"), "Fit guide");
+    const save = holdSave();
+    await click("Save");
+    await choose(font("Sora-Regular.woff2"));
+    save.release();
+    await settle();
+    expect(document.querySelector('[role="alert"]')!.textContent).toContain(
+      "Sora-Regular.woff2 didn't upload",
+    );
+    await click("Save");
+    expect(store.value!.popup.font).toBe("theme");
+  });
 
   it("holds Reload latest while a font uploads, and the upload reads nothing again", async () => {
     await open();

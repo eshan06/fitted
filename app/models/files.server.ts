@@ -106,7 +106,7 @@ async function upload(
   );
   const { id } = fileCreate.files[0];
   try {
-    const url = await ready(admin, kind, id);
+    const url = await ready(admin, kind, id, dropped);
     dropped();
     return { id, url };
   } catch (err) {
@@ -132,9 +132,15 @@ async function upload(
 }
 
 /** Waits for Shopify to finish the file; answers its cdn.shopify.com URL. */
-async function ready(admin: Admin, kind: keyof typeof KINDS, id: string) {
+async function ready(
+  admin: Admin,
+  kind: keyof typeof KINDS,
+  id: string,
+  dropped: () => void,
+) {
   const { op, type } = KINDS[kind];
   for (const end = Date.now() + WAIT_MS; ; await sleep(500)) {
+    dropped();
     const { node } = await adminGraphql<{ node: Node }>(
       admin,
       `#graphql

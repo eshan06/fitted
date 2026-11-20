@@ -119,7 +119,8 @@ async function upload(request: Request, admin: Admin, shop: string) {
     };
   } catch (err) {
     if (!(err instanceof AdminApiError)) throw err;
-    log(shop, err);
+    // The screen dropped it: nothing went wrong, and no one reads the answer.
+    if (err.detail !== "aborted") log(shop, err);
     const error = { code: "upload", message: FONT_WORDS.failed };
     return data({ error }, { status: 502 });
   }
@@ -616,7 +617,7 @@ function Editor(props: {
           variant="primary"
           onClick={save}
           loading={saving ? "" : undefined}
-          // A save remounts the editor, which would drop the upload.
+          // The font joins the draft once uploaded, so a save waits for it.
           disabled={fontUpload.sending}
         >
           Save
