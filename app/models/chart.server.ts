@@ -388,6 +388,8 @@ export type StoredChart = {
   status: ChartStatus;
   updatedAt: string;
   name: string;
+  /** The How to measure image's cdn.shopify.com address, once Shopify has it. */
+  measureImageUrl?: string;
 } & (
   | { chart: ChartInput; fieldErrors?: undefined; raw?: undefined }
   | {
@@ -411,7 +413,10 @@ const FIELDS = `#graphql
     name: field(key: "name") { value }
     template: field(key: "template") { value }
     content: field(key: "content") { jsonValue }
-    measureImage: field(key: "measure_image") { value }
+    measureImage: field(key: "measure_image") {
+      value
+      reference { ... on MediaImage { image { url } } }
+    }
     importNote: field(key: "import_note") { value }
   }`;
 const UPDATE = `#graphql
@@ -433,7 +438,8 @@ type Node = {
   name: Field;
   template: Field;
   content: Field;
-  measureImage: Field;
+  measureImage:
+    (Field & { reference?: { image?: { url: string } | null } | null }) | null;
   importNote: Field;
 };
 
@@ -447,12 +453,14 @@ function fromNode(n: Node): StoredChart {
   put("content", n.content?.jsonValue);
   put("measureImage", n.measureImage?.value);
   put("importNote", n.importNote?.value);
+  const url = n.measureImage?.reference?.image?.url;
   const meta = {
     id: n.id,
     handle: n.handle,
     status: n.capabilities.publishable?.status ?? "DRAFT",
     updatedAt: n.updatedAt,
     name: n.name?.value ?? "",
+    ...(url && { measureImageUrl: url }),
   };
   try {
     return { ...meta, chart: validateChart(raw) };
