@@ -793,9 +793,9 @@ describe("a chart's ease and stretch", () => {
     expect(
       [...document.querySelectorAll(".qs li")].map((li) => li.textContent),
     ).toEqual([
-      "1What's your bust measurement?Number, optional. Links to How to measure.",
-      "2What size do you usually wear?Choice: XS to XL. Used when there's no measurement.",
-      "3How do you like tops to fit?Choice: Snug, Regular, Relaxed",
+      "1What's your bust measurement?Number, optional. Links to How to measure.Edit",
+      "2What size do you usually wear?Choice: XS to XL. Used when there's no measurement.Edit",
+      "3How do you like tops to fit?Choice: Snug, Regular, RelaxedEdit",
     ]);
     expect(ease().value).toBe("+2 in at bust");
     // The engine's stretch levels, in the canvas's words.
@@ -807,9 +807,6 @@ describe("a chart's ease and stretch", () => {
       "High",
     ]);
     expect(stretch.value).toBe("some");
-    // The question editor isn't drawn yet (#128).
-    expect(text()).not.toContain("Add question");
-    expect(text()).not.toContain("Edit");
   });
 
   it("keeps each chart's edits while switching, and saves every changed chart", async () => {
@@ -997,4 +994,354 @@ describe("a chart's ease and stretch", () => {
       error: { code: "load", message: expect.any(String) },
     });
   });
+});
+
+describe("the question editor", () => {
+  const TOPS = "gid://shopify/Metaobject/2";
+  const KIDS = "gid://shopify/Metaobject/4";
+  const AT = chart.updatedAt;
+  // A chart that reads but has no questions yet.
+  const bare = () => {
+    const n = fitted(4, "Kids");
+    const content: Partial<Node["content"]["jsonValue"]> = {
+      ...n.content.jsonValue,
+    };
+    delete content.fit;
+    const words = Object.fromEntries(
+      Object.entries(content.words!).filter(([k]) => !k.startsWith("fit.")),
+    );
+    return { ...n, content: { jsonValue: { ...content, words } } };
+  };
+  beforeEach(() => {
+    store.charts = [fitted(2, "Women's tops"), bare() as unknown as Node];
+  });
+  const stored = (i: number) => (store.charts[i] as Node).content.jsonValue;
+  const measure = { id: "q9", kind: "measure", col: "bust", optional: false };
+  const send = (c: Record<string, unknown>) =>
+    post({
+      digest: "d0",
+      edits: { fitFinder: saved().fitFinder, noFit: saved().text.en.noFit },
+      charts: [{ id: KIDS, updatedAt: AT, ease: {}, stretch: "none", ...c }],
+    });
+
+  it("saves a chart's first questions and their words, keeping its other words", async () => {
+    const words = { "fit.q9": "Your chest?", "t1.bust": "Hacked" };
+    expect(await send({ questions: [measure], words })).toEqual({
+      status: 200,
+      body: { ok: true },
+    });
+    expect(stored(1).fit).toEqual({
+      table: "t1",
+      questions: [measure],
+      ease: {},
+      stretch: "none",
+    });
+    // Only the questions' words come from the browser.
+    expect(stored(1).words).toEqual({
+      ...bare().content.jsonValue.words,
+      "fit.q9": "Your chest?",
+    });
+    expect(store.chartWrites).toBe(1);
+  });
+
+  it("replaces the questions' words, so a removed question's words go", async () => {
+    store.charts = [fitted(2, "Women's tops")];
+    const q = fitted(2, "").content.jsonValue.fit.questions.slice(0, 2);
+    const words = {
+      "fit.q1": "Bust?",
+      "fit.q2": "What size do you usually wear?",
+    };
+    const r = await post({
+      digest: "d0",
+      edits: { fitFinder: saved().fitFinder, noFit: saved().text.en.noFit },
+      charts: [
+        {
+          id: TOPS,
+          updatedAt: AT,
+          ease: {},
+          stretch: "none",
+          questions: q,
+          words,
+        },
+      ],
+    });
+    expect(r.status).toBe(200);
+    expect(stored(0).fit.questions).toEqual(q);
+    expect(
+      Object.keys(stored(0).words).filter((k) => k.startsWith("fit.")),
+    ).toEqual(["fit.q1", "fit.q2"]);
+    expect(stored(0).words["fit.q1"]).toBe("Bust?");
+  });
+
+  it("writes the same questions once, so a replay or retry is no change", async () => {
+    const body = { questions: [measure], words: { "fit.q9": "Chest?" } };
+    await send(body);
+    // A retry still carries the updatedAt the screen loaded.
+    expect(await send(body)).toEqual({ status: 200, body: { ok: true } });
+    expect(store.chartWrites).toBe(1);
+  });
+
+  it("answers 422 to questions the chart can't hold, writing nothing", async () => {
+    const choice = (rows: string[]) => ({
+      id: "q8",
+      kind: "choice",
+      options: [{ id: "a", rows }],
+    });
+    for (const questions of [
+      [],
+      Array.from({ length: 7 }, (_, i) => ({ ...measure, id: `q${i}` })),
+      [{ ...measure, col: "size" }],
+      [{ ...measure, kind: "height" }],
+      [choice(["xxl"])],
+      [choice([])],
+      [{ ...measure, id: "t1" }], // the table's own id
+      "q9",
+    ]) {
+      const r = await send({ questions, words: {} });
+      expect(r.status).toBe(422);
+    }
+    expect(
+      (await send({ questions: [measure], words: { "fit.x": "?" } })).status,
+    ).toBe(422);
+    expect(store.chartWrites + store.writes).toBe(0);
+  });
+
+  it("answers 422 to words that aren't an object, writing nothing", async () => {
+    for (const words of [1, "fit.q9", null, []])
+      expect((await send({ questions: [measure], words })).status).toBe(422);
+    expect(store.chartWrites).toBe(0);
+  });
+
+  it("refuses questions for a chart changed since it loaded, even ones it can't hold now", async () => {
+    const r = await send({
+      updatedAt: "2026-10-01T00:00:00Z",
+      questions: [{ ...measure, col: "gone" }],
+      words: {},
+    });
+    expect(r).toMatchObject({
+      status: 409,
+      body: { error: { code: "conflict" } },
+    });
+    expect(store.chartWrites).toBe(0);
+  });
+
+  // The screen.
+  const dialog = () => document.querySelector("dialog");
+  const inDialog = (label: string) =>
+    [...dialog()!.querySelectorAll<HTMLElement>("s-button")].find(
+      (b) =>
+        b.textContent === label ||
+        b.getAttribute("accessibilityLabel") === label,
+    )!;
+  const edit = (n: number) =>
+    document.querySelector<HTMLElement>(
+      `[accessibilityLabel="Edit question ${n}"]`,
+    )!;
+  const listed = () =>
+    [...document.querySelectorAll(".qs li strong")].map((s) => s.textContent);
+  const kinds = () =>
+    [...dialog()!.querySelectorAll("fieldset label strong")].map(
+      (s) => s.textContent,
+    );
+  const check = async (el: HTMLInputElement) => act(async () => el.click());
+  const useType = (t: string) =>
+    check(
+      [...document.querySelectorAll<HTMLInputElement>('input[name="type"]')][
+        ["basic", "advanced", "custom"].indexOf(t)
+      ],
+    );
+
+  it("edits a question in place, and Save writes it to the chart", async () => {
+    await open();
+    await click(edit(1));
+    expect(dialog()!.querySelector("h2")!.textContent).toBe("Edit question 1");
+    expect(labelled("Question").value).toBe("What's your bust measurement?");
+    expect(labelled("Measurement").checked).toBe(true);
+    expect(names(labelled("Chart column"))).toEqual(["Bust"]);
+    expect(labelled("Optional").checked).toBe(true);
+    expect(inDialog("Remove question")).toBeDefined();
+    await type(labelled("Question"), "  Your bust?  ");
+    await check(labelled("Optional"));
+    await click(inDialog("Done"));
+    expect(dialog()).toBeNull();
+    expect(listed()[0]).toBe("Your bust?");
+    expect(text()).toContain("Number. Links to How to measure.");
+    await click("Save");
+    expect(stored(0).fit.questions[0]).toEqual({
+      id: "q1",
+      kind: "measure",
+      col: "bust",
+      optional: false,
+    });
+    expect(stored(0).words["fit.q1"]).toBe("Your bust?");
+    expect(saveBar()).toBeNull();
+  });
+
+  it("checks both fields before adding, and changes nothing until they pass", async () => {
+    await open();
+    await click("Add question");
+    expect(dialog()!.querySelector("h2")!.textContent).toBe("Add question");
+    expect(labelled("Question").value).toBe("");
+    expect(labelled("Question").placeholder).toBe(
+      "For example, What's your waist measurement?",
+    );
+    expect(names(labelled("Chart column"))).toEqual(["Pick a column", "Bust"]);
+    expect(labelled("Optional").checked).toBe(false);
+    expect(dialog()!.textContent).not.toContain("Remove question");
+    await click(inDialog("Add question"));
+    expect(dialog()!.textContent).toContain("Enter the question shoppers see.");
+    expect(dialog()!.textContent).toContain("Pick the chart column to match.");
+    expect(labelled("Question").getAttribute("aria-invalid")).toBe("true");
+    expect(listed()).toHaveLength(3);
+    expect(saveBar()).toBeNull();
+
+    await type(labelled("Question"), "What's your waist?");
+    await type(labelled("Chart column"), "bust");
+    await click(inDialog("Add question"));
+    expect(listed()).toEqual([
+      "What's your bust measurement?",
+      "What size do you usually wear?",
+      "How do you like tops to fit?",
+      "What's your waist?",
+    ]);
+    await click("Save");
+    const added = stored(0).fit.questions[3];
+    expect(added).toMatchObject({
+      kind: "measure",
+      col: "bust",
+      optional: false,
+    });
+    expect(added.id).toMatch(/^[a-z0-9]{1,8}$/);
+    const words = stored(0).words as Record<string, string>;
+    expect(words[`fit.${added.id}`]).toBe("What's your waist?");
+  });
+
+  it("offers the kinds the fit finder type asks, keeping a question's own", async () => {
+    await open();
+    await click("Add question");
+    expect(kinds()).toEqual(["Measurement", "Usual size", "Fit preference"]);
+    await click(inDialog("Cancel"));
+    await useType("basic");
+    await click("Add question");
+    expect(kinds()).toEqual(["Measurement", "Fit preference"]);
+    await click(inDialog("Close"));
+    await click(edit(2));
+    expect(kinds()).toEqual(["Measurement", "Usual size", "Fit preference"]);
+    await click(inDialog("Cancel"));
+    // Choice's answers are their own step, so Custom adds none yet.
+    await useType("custom");
+    await click("Add question");
+    expect(kinds()).toEqual(["Measurement", "Usual size", "Fit preference"]);
+  });
+
+  it("keeps a stored choice question's answers when only its words change", async () => {
+    const n = fitted(2, "Women's tops");
+    const jv = n.content.jsonValue as unknown as {
+      fit: { questions: unknown[] };
+      words: Record<string, string>;
+    };
+    jv.fit.questions[1] = {
+      id: "q2",
+      kind: "choice",
+      options: [
+        { id: "a", rows: ["xs", "m"] },
+        { id: "b", rows: ["xl"] },
+      ],
+    };
+    Object.assign(jv.words, { "fit.q2.a": "Narrow", "fit.q2.b": "Broad" });
+    store.charts = [n];
+    await open();
+    await click(edit(2));
+    expect(labelled("Choice").checked).toBe(true);
+    await type(labelled("Question"), "Your shoulders?");
+    await click(inDialog("Done"));
+    await click("Save");
+    expect(stored(0).fit.questions[1]).toEqual(jv.fit.questions[1]);
+    expect(stored(0).words).toMatchObject({
+      "fit.q2": "Your shoulders?",
+      "fit.q2.a": "Narrow",
+      "fit.q2.b": "Broad",
+    });
+  });
+
+  it("removes a question with its words, never the only one", async () => {
+    await open();
+    await click(edit(2));
+    await click(inDialog("Remove question"));
+    expect(listed()).toHaveLength(2);
+    await click("Save");
+    expect(stored(0).fit.questions.map((q) => q.id)).toEqual(["q1", "q3"]);
+    expect(stored(0).words["fit.q2"]).toBeUndefined();
+
+    const one = fitted(2, "Women's tops");
+    one.content.jsonValue.fit.questions.splice(1);
+    delete (one.content.jsonValue.words as Record<string, string>)["fit.q2"];
+    delete (one.content.jsonValue.words as Record<string, string>)["fit.q3"];
+    store.charts = [one];
+    act(() => root?.unmount());
+    await open();
+    await click(edit(1));
+    expect(inDialog("Remove question").hasAttribute("disabled")).toBe(true);
+  });
+
+  it("discards the dialog's edits on Cancel and Close", async () => {
+    await open();
+    for (const how of ["Cancel", "Close"]) {
+      await click(edit(1));
+      await type(labelled("Question"), "Changed");
+      await click(inDialog(how));
+      expect(dialog()).toBeNull();
+      expect(listed()[0]).toBe("What's your bust measurement?");
+    }
+    expect(saveBar()).toBeNull();
+  });
+
+  it("stops adding at 6 questions, saying so", async () => {
+    await open();
+    for (let i = 0; i < 3; i++) {
+      await click("Add question");
+      await type(labelled("Question"), `Question ${i}`);
+      await check(labelled("Fit preference"));
+      await click(inDialog("Add question"));
+    }
+    const add = [...document.querySelectorAll("s-button")].find(
+      (b) => b.textContent === "Add question",
+    )!;
+    expect(add.hasAttribute("disabled")).toBe(true);
+    expect(text()).toContain("A fit finder asks up to 6 questions.");
+  });
+
+  it("opens on a chart with questions, and on Pro calls only those live", async () => {
+    store.charts.reverse(); // the bare chart first
+    m.getPlan.mockResolvedValue({ plan: "pro", checkFailed: false });
+    store.products = { [TOPS]: 148, [KIDS]: 5 };
+    await open();
+    expect(labelled("Recommend sizes from").value).toBe(TOPS);
+    expect(document.querySelector(".live")).not.toBeNull();
+    await type(labelled("Recommend sizes from"), KIDS);
+    expect(document.querySelector(".live")).toBeNull();
+  });
+
+  it("gives a chart without questions its first, then shows its fit settings", async () => {
+    await open();
+    await type(labelled("Recommend sizes from"), KIDS);
+    expect(listed()).toEqual([]);
+    expect(document.getElementById("ease")).toBeNull();
+    expect(text()).not.toContain("How Fitted picks a size");
+    expect(text()).not.toContain("What shoppers see");
+    await click("Add question");
+    await type(labelled("Question"), "What's your chest?");
+    await type(labelled("Chart column"), "bust");
+    await click(inDialog("Add question"));
+    expect(document.getElementById("ease")).not.toBeNull();
+    expect(text()).toContain("How Fitted picks a size");
+    await click("Save");
+    expect(stored(1).fit).toMatchObject({
+      table: "t1",
+      questions: [{ kind: "measure", col: "bust", optional: false }],
+    });
+  });
+
+  const names = (el: HTMLElement) =>
+    [...el.querySelectorAll("option")].map((o) => o.textContent);
 });

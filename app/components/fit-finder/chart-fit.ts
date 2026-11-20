@@ -21,6 +21,23 @@ export type FitChart = {
   words: Record<string, string>;
 };
 
+// A chart's fit, or a new one on its first table with measurements (§10).
+export const fitOf = (c: { tables: Table[]; fit?: Fit }): Fit =>
+  c.fit ?? {
+    table: (
+      c.tables.find((t) => t.columns.some((x) => x.kind === "measure")) ??
+      c.tables[0]
+    ).id,
+    questions: [],
+    ease: {},
+    stretch: "none",
+  };
+// The words of a chart's questions, or with `fit` false all its others.
+export const fitWords = (w: Record<string, string>, fit = true) =>
+  Object.fromEntries(
+    Object.entries(w).filter(([k]) => k.startsWith("fit.") === fit),
+  );
+
 const label = (c: FitChart, col: string) =>
   c.words[`${c.table.id}.${col}`] || col;
 export const size = (c: FitChart, row: string) =>
