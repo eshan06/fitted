@@ -731,13 +731,15 @@ export function render(root: HTMLElement, g: Guide) {
       );
       return Number.isSafeInteger(id) && id > 0 ? [{ id: `${id}`, o }] : [];
     });
-    // The theme's form for this product near the block, and the one variant
-    // with the size and the other options that form has now: what Add to
-    // cart adds, so it adds what the shopper sees. Null without them, as on a
+    // The theme's form for this product near the block, and the variant with
+    // the size and the other options that form has now: what Add to cart
+    // adds, so it adds what the shopper sees. Null without them, as on a
     // theme with no such form, beside another product's form, where the size
-    // is also another option's value (it could mean either), or in a browser
-    // that can't submit a form as its button does.
+    // is also another option's value (Waist 30 and Length 30: it could mean
+    // either), or in a browser that can't submit a form as its button does.
     const cart = (size: string) => {
+      const is = (x: string | null) => !!size && x !== null && norm(x) === size;
+      const named = [0, 1, 2].filter((k) => variants.some((v) => is(v.o[k])));
       for (const form of scope()?.querySelectorAll<HTMLFormElement>(FORM) ??
         []) {
         // A hidden input or an older theme's select; never radios, as only
@@ -749,29 +751,25 @@ export function render(root: HTMLElement, g: Guide) {
             ? el
             : null;
         const now = variants.find((v) => v.id === id?.value);
-        const next = now
-          ? variants.filter((v) =>
-              v.o.some(
-                (x, k) =>
-                  x !== null &&
-                  norm(x) === size &&
-                  v.o.every((y, j) => j === k || y === now.o[j]),
-              ),
-            )
-          : [];
+        const [k] = named;
+        const next =
+          now &&
+          named.length === 1 &&
+          variants.find(
+            (v) => is(v.o[k]) && v.o.every((y, j) => j === k || y === now.o[j]),
+          );
         const button = [...form.elements].find(
           (b) => (b as HTMLButtonElement).type === "submit",
         ) as HTMLButtonElement | undefined;
-        const variant = next.length === 1 ? next[0].id : "";
         if (
           id &&
-          variant &&
+          next &&
           button &&
           "requestSubmit" in form &&
           (!("options" in id) ||
-            [...id.options].some((o) => o.value === variant))
+            [...id.options].some((o) => o.value === next.id))
         )
-          return { form, id, button, variant };
+          return { form, id, button, variant: next.id };
       }
       return null;
     };
@@ -882,7 +880,7 @@ export function render(root: HTMLElement, g: Guide) {
       const notes = !!pick && on("note") && measured.length > 0;
       const parts = r
         ? [
-            h("h3", { class: "fitted-h3" }, ...head),
+            h("h3", { class: "fitted-h3", tabindex: "-1" }, ...head),
             said && h("p", { class: "fitted-note" }, said),
             row !== pick &&
               h(
@@ -930,7 +928,8 @@ export function render(root: HTMLElement, g: Guide) {
         // The theme's form changed since the result showed: it offers what
         // works now, with focus there.
         show(last, row);
-        return out.querySelector<HTMLElement>(".fitted-act > *")?.focus();
+        const to = out.querySelector(".fitted-act > *") ?? out.firstChild;
+        return (to as HTMLElement | null)?.focus();
       }
       apply(k);
       c.id.value = c.variant;

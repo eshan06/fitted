@@ -960,7 +960,9 @@ describe("Find my size's result screen (§7)", () => {
       "We use these measurements to suggest a size for this product.",
     );
     expect(note.parentElement).toBe(root.querySelector(".fitted-result"));
-    // The link goes to the note without changing the page's address.
+    // The link goes to the note, which a browser focuses only with a
+    // tabindex, without changing the page's address.
+    expect(note.getAttribute("tabindex")).toBe("-1");
     const before = location.href;
     const click = new MouseEvent("click", { bubbles: true, cancelable: true });
     link.dispatchEvent(click);
@@ -1166,34 +1168,40 @@ describe("Find my size's Add to cart", () => {
     }
   });
 
-  it("offers Select when the size is also a value of another option, as it can't tell which to change", () => {
-    // Length, then Size, both with S, M and L, in Shopify's order. The form
-    // shows Length M, Size M, so S could mean Length S / Size M (listed
-    // first) or Length M / Size S.
-    const pairs = ["S", "M", "L"].flatMap((l) =>
-      ["XS", "S", "M", "L", "XL"].map((s) => [l, s]),
-    );
-    const ids = pairs.map((_, i) => 301 + i);
-    const now = ids[pairs.findIndex(([l, s]) => l === "M" && s === "M")];
-    const root = page(
-      {
-        variants: {
-          id: ids,
-          o1: pairs.map(([l]) => l),
-          o2: pairs.map(([, s]) => s),
-          o3: pairs.map(() => null),
+  it.each([
+    ["every pair is made", ""],
+    ["Length M doesn't come in Size S", "M/S"],
+  ])(
+    "offers Select when the size is also another option's value, as it can't tell which to change: %s",
+    (_, missing) => {
+      // Length, then Size, both with S, M and L, in Shopify's order. The form
+      // shows Length M, Size M, so S could mean Length S / Size M (listed
+      // first) or Length M / Size S, whether or not that one is made.
+      const pairs = ["S", "M", "L"]
+        .flatMap((l) => ["XS", "S", "M", "L", "XL"].map((s) => [l, s]))
+        .filter((p) => p.join("/") !== missing);
+      const ids = pairs.map((_, i) => 301 + i);
+      const now = ids[pairs.findIndex(([l, s]) => l === "M" && s === "M")];
+      const root = page(
+        {
+          variants: {
+            id: ids,
+            o1: pairs.map(([l]) => l),
+            o2: pairs.map(([, s]) => s),
+            o3: pairs.map(() => null),
+          },
         },
-      },
-      button.replace('value="103"', `value="${now}"`),
-    );
-    const sent = submitted();
-    answer(root, { q1: "33.5", q2: "s", q3: "regular" });
-    expect(said(root)?.[0]).toBe("We recommend S");
-    expect(act(root)?.textContent).toBe("Select S");
-    act(root)!.click();
-    expect(theme("S").checked).toBe(true);
-    expect(sent).toEqual([]);
-  });
+        button.replace('value="103"', `value="${now}"`),
+      );
+      const sent = submitted();
+      answer(root, { q1: "33.5", q2: "s", q3: "regular" });
+      expect(said(root)?.[0]).toBe("We recommend S");
+      expect(act(root)?.textContent).toBe("Select S");
+      act(root)!.click();
+      expect(theme("S").checked).toBe(true);
+      expect(sent).toEqual([]);
+    },
+  );
 
   it("sets a select that holds the variant id, as older themes print it", () => {
     const select = (ids: number[]) =>
@@ -1243,6 +1251,16 @@ describe("Find my size's Add to cart", () => {
     expect(root.closest("dialog")!.open).toBe(true);
     expect(act(root)?.textContent).toBe("Select M");
     expect(document.activeElement).toBe(act(root));
+    // With nothing left to offer, focus goes to the result's heading.
+    sessionStorage.clear();
+    const bare = page({ fitFinder: { note: false } });
+    answer(bare, { q1: "35.5", q2: "m", q3: "regular" });
+    theme("M").remove();
+    act(bare)!.click();
+    expect(act(bare)).toBeNull();
+    expect(document.activeElement).toBe(
+      bare.querySelector(".fitted-result h3"),
+    );
   });
 
   it("offers neither for a size the theme's controls don't have", () => {
