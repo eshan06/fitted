@@ -318,10 +318,18 @@ describe("storedDraft", () => {
     expect(storedDraft(r, "DRAFT", {})).toBeNull();
   });
 
-  it.each(["content.v", "content.unit", "content.tables.1.rows.0.cells.len"])(
-    "gives up when a finding (%s) is outside what the editor shows",
+  it.each([
+    "content.v",
+    "content.roundTo",
+    "content.tables.1.rows.0.cells.len",
+  ])("gives up when a finding (%s) is outside what the editor shows", (key) => {
+    expect(storedDraft(raw(), "DRAFT", { [key]: "Wrong" })).toBeNull();
+  });
+
+  it.each(["content.unit", "content.words.t1.note"])(
+    "opens a chart whose finding (%s) the units or the note can fix",
     (key) => {
-      expect(storedDraft(raw(), "DRAFT", { [key]: "Wrong" })).toBeNull();
+      expect(storedDraft(raw(), "DRAFT", { [key]: "Wrong" })).not.toBeNull();
     },
   );
 });

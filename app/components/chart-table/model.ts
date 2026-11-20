@@ -306,6 +306,11 @@ export function storedDraft(
       measureImage: raw.measureImage,
     }),
   };
-  // Every finding must land on a field the editor shows.
-  return problems(d, errors).every((p) => p.id) ? d : null;
+  // Every finding must land on a field the editor shows: the units and the
+  // note, or one problems() can point at.
+  const note = `content.words.${content.tables[0].id}.note`;
+  const rest = Object.fromEntries(
+    Object.entries(errors).filter(([k]) => k !== "content.unit" && k !== note),
+  );
+  return problems(d, rest).every((p) => p.id) ? d : null;
 }
