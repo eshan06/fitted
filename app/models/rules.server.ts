@@ -1015,3 +1015,27 @@ export function startJobChecks() {
   void run();
   globalThis.fittedJobChecks = setInterval(run, 60_000).unref();
 }
+
+/** The shop's newest resolve, for the Display rules screen's progress (§13). */
+export async function latestResolve(shop: string) {
+  const job = await db.job.findFirst({
+    where: { shop, kind: "resolve" },
+    orderBy: { createdAt: "desc" },
+  });
+  return job && { status: job.status, error: job.error, at: +job.createdAt };
+}
+
+/** How many products the store has; null when it can't say (staff without access). */
+export async function countProducts(admin: Admin) {
+  try {
+    const data = await adminGraphql<{ productsCount: { count: number } }>(
+      admin,
+      `#graphql
+      query FittedProductCount { productsCount(limit: null) { count } }`,
+    );
+    return data.productsCount.count;
+  } catch (err) {
+    if (err instanceof AdminApiError) return null;
+    throw err;
+  }
+}
