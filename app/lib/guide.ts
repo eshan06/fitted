@@ -531,14 +531,8 @@ export function render(root: HTMLElement, g: Guide) {
     if (!found) return null;
     const { table: ft, fit } = found;
     const qs = fit.questions;
-    const measured = qs.filter(
-      (q): q is Extract<Question, { kind: "measure" }> => q.kind === "measure",
-    );
-    const { handle } = g.raw;
-    const key =
-      isStr(handle) && /^[a-z0-9-]{1,255}$/.test(handle)
-        ? `fitted:answers:${handle}`
-        : "";
+    const measured = qs.flatMap((q) => (q.kind === "measure" ? [q] : []));
+    const key = isStr(g.raw.handle) && `fitted:answers:${g.raw.handle}`;
     const size = (row: string) => word(`${ft.id}.${row}.${ft.columns[0].id}`);
     const label = (c: string) => word(`${ft.id}.${c}`);
     const col = (c: string) => ft.columns.find((x) => x.id === c) as Measure;
@@ -562,6 +556,12 @@ export function render(root: HTMLElement, g: Guide) {
     const written = (m: { value: number; unit: Unit }) =>
       `${String(m.value).replace(".", comma ? "," : ".")} ${t(m.unit)}`;
 
+    // With every measurement skippable, the usual size stands in.
+    const names = measured.map((m) => lower(label(m.col)));
+    const hint =
+      names.length > 0 &&
+      measured.every((m) => m.optional) &&
+      fill("no_tape", { measure: new Intl.ListFormat(g.locale).format(names) });
     const form = h("form", { class: "fitted-fit" });
     for (const q of qs) {
       const words = word(`fit.${q.id}`);
@@ -609,18 +609,8 @@ export function render(root: HTMLElement, g: Guide) {
                   ),
             ),
       );
-      // With every measurement skippable, the usual size stands in.
-      const names = measured.map((m) => lower(label(m.col)));
-      if (
-        q.kind === "usual_size" &&
-        names.length &&
-        measured.every((m) => m.optional)
-      ) {
-        const measure = new Intl.ListFormat(g.locale).format(names);
-        form.append(
-          h("p", { class: "fitted-fine" }, fill("no_tape", { measure })),
-        );
-      }
+      if (q.kind === "usual_size" && hint)
+        form.append(h("p", { class: "fitted-fine" }, hint));
     }
     const out = h("div", { class: "fitted-result", "aria-live": "polite" });
     form.append(out);

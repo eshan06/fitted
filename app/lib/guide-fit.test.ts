@@ -536,8 +536,8 @@ describe("Find my size", () => {
     expect(fields(open(data()), "q1")[0].value).toBe("");
   });
 
-  it("stores nothing without a handle that reads as one", () => {
-    for (const handle of [undefined, "../x", ""]) {
+  it("stores nothing without the chart's handle", () => {
+    for (const handle of [undefined, 5, null]) {
       answer(open(data({}, { handle })), { q2: "m", q3: "regular" });
       expect(sessionStorage).toHaveLength(0);
     }
