@@ -25,7 +25,7 @@ type Answer = {
     plansUrl?: string;
   };
   updatedAt?: string;
-  /** The chart saved, but its version history didn't record it (§5). */
+  /** The edits saved, the status didn't, and history missed the save. */
   historyMissed?: true;
 };
 
@@ -37,7 +37,10 @@ export function Editor(props: {
   handle?: string;
   /** Set when the stored chart fails the checks: the server's findings. */
   invalid?: FieldErrors;
-  /** The create saved the chart but not its first version. */
+  /**
+   * The last save landed, but its version history didn't (§5). Kept by the
+   * route: a save that lands reloads the chart, which remounts the editor.
+   */
   historyMissed?: boolean;
 }) {
   const { handle, invalid } = props;
@@ -196,7 +199,7 @@ export function Editor(props: {
         </button>
       </SaveBar>
       <div className="editor">
-        {(answer?.historyMissed || (props.historyMissed && !answer?.ok)) && (
+        {(props.historyMissed || answer?.historyMissed) && (
           <s-banner
             tone="warning"
             heading="Saved, but version history missed it"

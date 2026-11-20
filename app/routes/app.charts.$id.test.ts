@@ -285,8 +285,17 @@ describe("saving a chart", () => {
 
   it("says the chart saved but history missed it when the version write fails", async () => {
     m.recordVersion.mockResolvedValue(false);
-    expect(await save("DRAFT")).toEqual({ ok: true, historyMissed: true });
-    expect(await save("ACTIVE")).toEqual({ ok: true, historyMissed: true });
+    // The save reloads the chart, so the note travels in the address.
+    for (const status of ["DRAFT", "ACTIVE"]) {
+      const res = (await save(status)) as Response;
+      expect(res.status).toBe(302);
+      expect(res.headers.get("Location")).toBe("/app/charts/42?history=missed");
+    }
+    // Edits saved but the status didn't: no reload, so the answer says it.
+    m.publishChart.mockRejectedValue(new AdminApiError("failed", "HTTP 500"));
+    const r = await result(save("ACTIVE"));
+    expect(r.status).toBe(502);
+    expect(r.body).toMatchObject({ historyMissed: true });
   });
 
   it("records no version when Shopify refuses the save", async () => {

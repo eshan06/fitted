@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import { createRoutesStub } from "react-router";
+import { createRoutesStub, redirect } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type ChartInput, validateChart } from "../../models/chart.server";
 
@@ -60,7 +60,7 @@ afterEach(() => {
 // Renders the editor route with a loader and an action that answer in turn.
 async function open(
   loaded: unknown[],
-  answers: { status: number; body: unknown }[] = [],
+  answers: ({ status: number; body: unknown } | { redirect: string })[] = [],
   path = "/app/charts/42",
 ) {
   const sent: Record<string, unknown>[] = [];
@@ -76,6 +76,7 @@ async function open(
       action: async ({ request }) => {
         sent.push(await request.json());
         const a = answers.shift() ?? { status: 200, body: { ok: true } };
+        if ("redirect" in a) return redirect(a.redirect);
         return Response.json(a.body, { status: a.status });
       },
     },
@@ -86,6 +87,8 @@ async function open(
   await settle();
   return { sent, loader };
 }
+const missed = () =>
+  document.querySelector('s-banner[tone="warning"]')?.getAttribute("heading");
 const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
 const text = () => document.body.textContent ?? "";
 const byLabel = (label: string) =>
@@ -385,24 +388,58 @@ describe("chart editor screen", () => {
     ]);
   });
 
-  it("says when a save landed but version history missed it", async () => {
+  it("says when a save landed but version history missed it, until a save that history keeps", async () => {
+    // Each save stores a new updatedAt, so the reload rebuilds the editor;
+    // the note's leaving the address reloads the same chart once more.
+    const saved = stored("2026-11-19T10:05:00Z");
     await open(
-      [stored()],
-      [{ status: 200, body: { ok: true, historyMissed: true } }],
+      [stored(), saved, saved, stored("2026-11-19T10:06:00Z")],
+      [
+        { redirect: "/app/charts/42?history=missed" },
+        { status: 200, body: { ok: true } },
+      ],
     );
-    const missed = () =>
-      document
-        .querySelector('s-banner[tone="warning"]')
-        ?.getAttribute("heading");
     expect(missed()).toBeUndefined();
     await type(byLabel("XS, Bust"), "31.5–32");
     await click("Save");
     expect(missed()).toBe("Saved, but version history missed it");
     expect(text()).toContain("This save won't show in version history.");
-    act(() => root?.unmount());
-    // A new chart whose first version wasn't recorded opens saying so.
-    await open([stored()], [], "/app/charts/42?history=missed");
+    await type(byLabel("XS, Bust"), "30–32");
+    await click("Save");
+    expect(missed()).toBeUndefined();
+  });
+
+  it("says so when the edits saved, the status didn't, and history missed it", async () => {
+    await open(
+      [stored()],
+      [
+        {
+          status: 502,
+          body: {
+            error: { code: "status", message: "x" },
+            updatedAt: "2026-11-19T10:05:00Z",
+            historyMissed: true,
+          },
+        },
+      ],
+    );
+    await type(byLabel("Chart status"), "ACTIVE");
+    await click("Save");
     expect(missed()).toBe("Saved, but version history missed it");
+  });
+
+  it("opens a new chart whose first version wasn't recorded saying so, once", async () => {
+    const { loader } = await open(
+      [stored()],
+      [],
+      "/app/charts/42?history=missed",
+    );
+    expect(missed()).toBe("Saved, but version history missed it");
+    // The note leaves the address, so a reload doesn't repeat it.
+    const calls = loader.mock.calls as unknown as [{ request: Request }][];
+    expect(calls.at(-1)?.[0].request.url).toBe(
+      "http://localhost/app/charts/42",
+    );
   });
 
   it("says when the chart didn't load, and tries again", async () => {

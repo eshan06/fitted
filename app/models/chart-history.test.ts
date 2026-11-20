@@ -1,6 +1,15 @@
-import { describe, expect, it } from "vitest";
-import { createdSummary, staffName, summarize } from "./chart-history.server";
+import { describe, expect, it, vi } from "vitest";
+import {
+  createdSummary,
+  recordVersion,
+  staffName,
+  summarize,
+} from "./chart-history.server";
 import type { ChartInput } from "./chart.server";
+
+// The database, for a write that fails; db.server.test.ts covers the real one.
+const db = vi.hoisted(() => ({ chartVersion: { findFirst: vi.fn() } }));
+vi.mock("../db.server", () => ({ default: db }));
 
 const chart = (): ChartInput => ({
   name: "Women's tops",
@@ -71,6 +80,22 @@ describe("a version's summary", () => {
     expect(summarize(chart(), next)).toBe("XL added; L removed; Hips removed");
   });
 
+  it("counts many sizes, and names added measurements and a removed note", () => {
+    const base = edit((c) => {
+      c.content.words["t1.note"] = "Old";
+    });
+    const next = edit((c) => {
+      const t = c.content.tables[0];
+      for (const id of ["a", "b", "c", "d", "e"])
+        t.rows.push({ id, cells: {} });
+      t.columns.push({ id: "waist", kind: "measure", convert: true });
+      c.content.words["t1.waist"] = "Waist";
+    });
+    expect(summarize(base, next)).toBe(
+      "5 sizes added; Waist added; note removed",
+    );
+  });
+
   it("stays one short line when much changed", () => {
     const next = edit((c) => {
       c.name = "Tops";
@@ -106,5 +131,28 @@ describe("who saved a version", () => {
     expect(as("Priya", "")).toBe("Priya");
     expect(as(undefined, "Nair")).toBe("Staff");
     expect(staffName({})).toBe("Staff");
+    // How a stored session reads back a name Shopify didn't send.
+    expect(as("Priya", "null")).toBe("Priya");
+    expect(as("null", "Nair")).toBe("Staff");
+  });
+});
+
+describe("recording a version", () => {
+  it("answers false and logs without the staff name when the database fails", async () => {
+    db.chartVersion.findFirst.mockRejectedValue(new Error("connection lost"));
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((l) => logs.push(l));
+
+    expect(
+      await recordVersion("a.myshopify.com", "gid://x/1", chart(), "Priya N."),
+    ).toBe(false);
+    expect(JSON.parse(logs[0])).toEqual({
+      level: "error",
+      msg: "Version history write failed",
+      shop: "a.myshopify.com",
+      route: "chart-history",
+      detail: "Error",
+    });
+    expect(logs.join()).not.toContain("Priya");
   });
 });

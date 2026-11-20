@@ -10,12 +10,17 @@ import { TEMPLATES } from "../components/chart-table/model";
 /** The canvas's [VERSION LIMIT]. */
 export const VERSION_LIMIT = 30;
 
-/** "Priya N.": first name and last initial only (§3). */
+/**
+ * "Priya N.": first name and last initial only (§3). Offline sessions carry no
+ * staff member until online tokens are on (#131), so they read "Staff".
+ */
 export function staffName(session: Pick<Session, "onlineAccessInfo">) {
   const u = session.onlineAccessInfo?.associated_user;
-  const first = u?.first_name?.trim();
+  // A stored session's missing name reads back as the text "null".
+  const name = (n?: string) => (n?.trim() === "null" ? "" : n?.trim());
+  const first = name(u?.first_name);
   if (!first) return "Staff";
-  const last = u?.last_name?.trim()[0];
+  const last = name(u?.last_name)?.[0];
   return last ? `${first} ${last.toUpperCase()}.` : first;
 }
 
@@ -80,7 +85,7 @@ export function summarize(prev: ChartInput, next: ChartInput) {
 async function latestVersion(shop: string, chartId: string) {
   return db.chartVersion.findFirst({
     where: { shop, chartId },
-    orderBy: { createdAt: "desc" },
+    orderBy: { id: "desc" },
   });
 }
 
@@ -132,7 +137,7 @@ async function record(
     });
     const keep = await tx.chartVersion.findMany({
       where: { shop, chartId },
-      orderBy: { createdAt: "desc" },
+      orderBy: { id: "desc" },
       take: VERSION_LIMIT,
       select: { id: true },
     });
@@ -146,12 +151,6 @@ async function record(
 export const listVersions = (shop: string, chartId: string) =>
   db.chartVersion.findMany({
     where: { shop, chartId },
-    orderBy: { createdAt: "desc" },
+    orderBy: { id: "desc" },
     take: VERSION_LIMIT,
   });
-
-/** The id comes from a browser, so it is looked up within the shop's chart. */
-export const getVersion = (shop: string, chartId: string, id: unknown) =>
-  typeof id === "string"
-    ? db.chartVersion.findFirst({ where: { shop, chartId, id } })
-    : null;

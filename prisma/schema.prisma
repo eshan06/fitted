@@ -57,7 +57,7 @@ model Job {
 
 // Version history (ARCHITECTURE §5, §14): the last 30 saves of each chart.
 model ChartVersion {
-  id        String   @id @default(uuid())
+  id        Int      @id @default(autoincrement())
   shop      String
   chartId   String
   createdAt DateTime @default(now())
@@ -65,5 +65,5 @@ model ChartVersion {
   summary   String
   snapshot  Json // the saved ChartInput
 
-  @@index([shop, chartId, createdAt])
+  @@index([shop, chartId, id])
 }

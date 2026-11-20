@@ -1,6 +1,7 @@
 // The chart editor's reads and saves (ARCHITECTURE §5, §8, §15): load a chart
 // or mint a new chart's handle, then create, update, publish or unpublish it.
 import { randomInt } from "node:crypto";
+import { useEffect, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import {
   Link,
@@ -156,10 +157,15 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         );
     }
     const saved = await updateChart(admin, id, body.chart, body.updatedAt);
-    const history = (await recordVersion(session.shop, id, input, by))
-      ? {}
-      : { historyMissed: true as const };
-    if (saved.status === status) return { ok: true as const, ...history };
+    const kept = await recordVersion(session.shop, id, input, by);
+    const history = kept ? {} : { historyMissed: true as const };
+    // A save that lands reloads the chart and remounts the editor, so the
+    // note that history missed it travels in the address.
+    const done = () =>
+      kept
+        ? { ok: true as const }
+        : redirect(`/app/charts/${params.id}?history=missed`);
+    if (saved.status === status) return done();
     // A failed action doesn't reload the chart, so the next save needs the new updatedAt.
     const still = (http: number, code: string, then: string) =>
       data(
@@ -189,7 +195,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
     // Every product follows, `auto: false` charts included (§6).
     void startResolve(session.shop, true);
-    return { ok: true as const, ...history };
+    return done();
   } catch (err) {
     if (err instanceof ChartValidationError)
       return data({ fieldErrors: err.fieldErrors }, { status: 422 });
@@ -212,7 +218,19 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 export default function ChartEditor() {
   const loaded = useLoaderData<typeof loader>();
   const revalidator = useRevalidator();
-  const [params] = useSearchParams();
+  // A save that history missed lands on ?history=missed (the action). The
+  // note holds until the chart next reloads, and leaves the address so a
+  // reload doesn't repeat it. Effects run in order: a missed save reloads
+  // the chart and sets the note in the same render.
+  const [missed, setMissed] = useState(false);
+  const [params, setParams] = useSearchParams();
+  const at = loaded.mode === "edit" ? loaded.stored.updatedAt : undefined;
+  useEffect(() => setMissed(false), [at]);
+  useEffect(() => {
+    if (params.get("history") !== "missed") return;
+    setMissed(true);
+    setParams({}, { replace: true });
+  }, [params, setParams]);
   if (loaded.mode === "new")
     return <Editor key="new" initial={blankDraft()} handle={loaded.handle} />;
   const s = loaded.mode === "edit" ? loaded.stored : undefined;
@@ -226,7 +244,7 @@ export default function ChartEditor() {
         initial={initial}
         updatedAt={s.updatedAt}
         invalid={s.fieldErrors}
-        historyMissed={params.get("history") === "missed"}
+        historyMissed={missed}
       />
     );
   const invalid = loaded.mode === "edit" ? loaded.stored.fieldErrors : null;

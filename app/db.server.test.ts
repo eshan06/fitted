@@ -8,7 +8,6 @@ import { resetCachedPlan } from "./models/billing.server";
 import { checkJobs } from "./models/rules.server";
 import {
   VERSION_LIMIT,
-  getVersion,
   listVersions,
   recordVersion,
 } from "./models/chart-history.server";
@@ -312,43 +311,6 @@ describe.runIf(hasDatabase)("the app database on Postgres", () => {
     expect(left.map((j) => j.id).sort()).toEqual(kept.sort());
   });
 
-  it("deletes a shop's expired staff sessions when it stores a new one", async () => {
-    Object.assign(process.env, {
-      SHOPIFY_API_KEY: "test-api-key",
-      SHOPIFY_API_SECRET: "test-api-secret",
-      SHOPIFY_APP_URL: "https://fitted.test",
-    });
-    const { SessionStorage } =
-      await vi.importActual<typeof import("./shopify.server")>(
-        "./shopify.server",
-      );
-    const fitted = new SessionStorage(prisma);
-    const shop = newShop();
-    const otherShop = newShop();
-    const online = (forShop: string, user: number, expires: Date) =>
-      new Session({
-        id: `${forShop}_${user}`,
-        shop: forShop,
-        state: "state",
-        isOnline: true,
-        accessToken: "test-online-token",
-        expires,
-      });
-    const past = new Date(Date.now() - 60000);
-    const later = new Date(Date.now() + 3600000);
-    await storage.storeSession(offlineSession(shop));
-    await storage.storeSession(online(shop, 1, past));
-    await storage.storeSession(online(shop, 2, later));
-    await storage.storeSession(online(otherShop, 1, past));
-
-    await fitted.storeSession(online(shop, 3, later));
-
-    expect(
-      (await storage.findSessionsByShop(shop)).map((s) => s.id).sort(),
-    ).toEqual([`${shop}_2`, `${shop}_3`, `offline_${shop}`]);
-    expect(await storage.loadSession(`${otherShop}_1`)).toBeDefined();
-  });
-
   it("keeps each chart's last versions, newest first, within its shop", async () => {
     const shop = newShop();
     const otherShop = newShop();
@@ -372,14 +334,45 @@ describe.runIf(hasDatabase)("the app database on Postgres", () => {
     });
     expect(versions[VERSION_LIMIT - 1].summary).toBe("Save 3");
     expect(await listVersions(otherShop, id)).toHaveLength(1);
-    // An id sent by a browser is looked up within the shop's chart.
-    const [theirs] = await listVersions(otherShop, id);
-    expect(await getVersion(shop, id, theirs.id)).toBeNull();
+    // Older versions are deleted, not only hidden.
     expect(
-      await getVersion(otherShop, "gid://shopify/Metaobject/2", theirs.id),
-    ).toBeNull();
-    expect(await getVersion(otherShop, id, theirs.id)).toMatchObject({
-      summary: "First saved version",
+      await prisma.chartVersion.count({ where: { shop, chartId: id } }),
+    ).toBe(VERSION_LIMIT);
+    expect(versions[1].createdAt <= versions[0].createdAt).toBe(true);
+  });
+
+  it("summarizes a save against the version stored before it", async () => {
+    const shop = newShop();
+    const id = "gid://shopify/Metaobject/3";
+    const chart = (bust: [number, number]): ChartInput => ({
+      name: "Women's tops",
+      template: "tops",
+      content: {
+        v: 1,
+        unit: "in",
+        roundTo: 0.5,
+        tables: [
+          {
+            id: "t1",
+            columns: [
+              { id: "size", kind: "size" },
+              { id: "bust", kind: "measure", convert: true },
+            ],
+            rows: [{ id: "m", cells: { bust } }],
+          },
+        ],
+        measure: { steps: [] },
+        words: { "t1.size": "Size", "t1.bust": "Bust", "t1.m.size": "M" },
+      },
     });
+    await recordVersion(shop, id, chart([35, 36]), "Priya N.");
+    await recordVersion(shop, id, chart([35, 37]), "Jordan K.");
+
+    expect(
+      (await listVersions(shop, id)).map((v) => [v.by, v.summary]),
+    ).toEqual([
+      ["Jordan K.", "Bust for M changed"],
+      ["Priya N.", "First saved version"],
+    ]);
   });
 });

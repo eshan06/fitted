@@ -1,6 +1,6 @@
 -- CreateTable
 CREATE TABLE "ChartVersion" (
-    "id" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
     "shop" TEXT NOT NULL,
     "chartId" TEXT NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -12,4 +12,4 @@ CREATE TABLE "ChartVersion" (
 );
 
 -- CreateIndex
-CREATE INDEX "ChartVersion_shop_chartId_createdAt_idx" ON "ChartVersion"("shop", "chartId", "createdAt");
+CREATE INDEX "ChartVersion_shop_chartId_id_idx" ON "ChartVersion"("shop", "chartId", "id");
