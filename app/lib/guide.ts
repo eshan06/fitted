@@ -1,9 +1,10 @@
 // The shopper's size guide (ARCHITECTURE §9): re-validates the chart Liquid
 // printed and draws the Size chart tab: the US/UK/EU/AU and in/cm switches,
 // the tables, row select, and the footer that picks the size in the theme's
-// product form, and on Pro the Find my size tab (§10). No dependencies and
-// no React, so the admin preview (#23) can draw with it too. Chart words reach
-// the page only as text nodes and attribute values, never as HTML.
+// product form; the How to measure tab; and on Pro the Find my size tab
+// (§10). No dependencies and no React, so the admin preview (#23) can draw
+// with it too. Chart words reach the page only as text nodes and attribute
+// values, never as HTML.
 import { COLOR, FONT_URL, cssProblem } from "./appearance";
 import {
   convert,
@@ -294,6 +295,9 @@ export function render(root: HTMLElement, g: Guide) {
     const [a, b = ""] = t(k).split("{size}");
     return [a, size, b];
   };
+  // An extension word with its {name}s filled in.
+  const fill = (k: string, v: Record<string, string>) =>
+    t(k).replace(/\{(\w+)\}/g, (_, n: string) => v[n] ?? "");
   const nf = new Intl.NumberFormat(g.locale, { maximumFractionDigits: 4 });
   const word = (k: string) => g.words[k] ?? "";
   const note = (k: string) =>
@@ -539,6 +543,60 @@ export function render(root: HTMLElement, g: Guide) {
       toggle && seg("units", "fitted-sys", ["in", "cm"], sys, t),
     );
 
+  // How to measure (§9): the chart's drawing beside its numbered steps, each
+  // a name and how to measure it. Step n is line n on the drawing, so with a
+  // drawing each step says which line it is. Null with neither.
+  function measureTab() {
+    const { measure } = g.raw.chart as { measure?: unknown };
+    const steps =
+      isObj(measure) && list(measure.steps, 20) && measure.steps.every(isId)
+        ? (measure.steps as string[])
+        : [];
+    // The drawing comes only from Shopify's CDN: /cdn/shop/files/ on the
+    // domain serving the page, where Liquid's image_url points, or
+    // cdn.shopify.com, as the admin has it.
+    const image = g.raw.measureImage;
+    let src = "";
+    try {
+      const u = new URL(isStr(image) ? image : "", location.href);
+      if (
+        u.origin === "https://cdn.shopify.com" ||
+        (u.origin === location.origin &&
+          u.pathname.startsWith("/cdn/shop/files/"))
+      )
+        src = u.href;
+    } catch {
+      // Not a URL: no drawing.
+    }
+    // "Bust. Line 1 on the drawing. Measure around ...", then "Line 2." and
+    // so on. A step left blank is left out. With a drawing, the rest keep
+    // their numbers, so each still matches its line.
+    const filled = steps.flatMap((s, i) => {
+      const [name, text] = [word(`m.${s}.name`), word(`m.${s}.text`)];
+      return name || text ? [{ n: `${i + 1}`, name, text }] : [];
+    });
+    if (!filled.length && !src) return null;
+    const items = filled.map(({ n, name, text }, i) => {
+      const line = src && fill(i ? "line" : "line_first", { n });
+      const how = [line, text].filter(Boolean).join(" ");
+      return h(
+        "li",
+        { value: src ? n : undefined },
+        name && h("strong", {}, `${name}.`),
+        name && how && " ",
+        how,
+      );
+    });
+    const tab = h(
+      "div",
+      { class: "fitted-measure" },
+      src && h("img", { src, alt: t("drawing"), loading: "lazy" }),
+      items.length > 0 && h("ol", { class: "fitted-steps" }, ...items),
+    );
+    tab.hidden = true;
+    return tab;
+  }
+
   let redo = () => {}; // redraws Find my size's result, once there is one
   // Find my size (§10): the chart's questions, then, once each one a shopper
   // can't skip has an answer, findSize's pick and why, and as the Result
@@ -559,9 +617,6 @@ export function render(root: HTMLElement, g: Guide) {
     const label = (c: string) => word(`${ft.id}.${c}`);
     const col = (c: string) => ft.columns.find((x) => x.id === c) as Measure;
     const lower = (s: string) => s.toLocaleLowerCase(g.locale);
-    // An extension word with its {name}s filled in.
-    const fill = (k: string, v: Record<string, string>) =>
-      t(k).replace(/\{(\w+)\}/g, (_, n: string) => v[n] ?? "");
     const comma = nf.formatToParts(0.5).some((p) => p.value === ",");
     // A measurement as typed, like "35.5", "35,5 cm" or "90cm": in the unit
     // it names, else the units the guide shows. Leaving the field writes it
@@ -1026,8 +1081,13 @@ export function render(root: HTMLElement, g: Guide) {
       opt.parentElement
         ?.querySelectorAll("button")
         .forEach((b) => b.setAttribute("aria-pressed", `${b === opt}`));
-      chart.hidden = opt.dataset.fittedTab === "fit";
-      if (finder) finder.hidden = !chart.hidden;
+      const tab = opt.dataset.fittedTab;
+      if (tab) {
+        sized.hidden = tab === "fit";
+        chart.hidden = tab !== "chart";
+        if (measure) measure.hidden = tab !== "measure";
+        if (finder) finder.hidden = tab !== "fit";
+      }
       draw();
     } else if (hit("[data-fitted-select]")) apply(pick);
     else {
@@ -1035,13 +1095,19 @@ export function render(root: HTMLElement, g: Guide) {
       if (tr?.dataset.fittedSize) choose(tr.dataset.fittedSize);
     }
   });
-  // With Find my size, tabs: the Size chart's parts, or Find my size.
-  const chart = h("div", { class: "fitted-part" }, bar, part, foot);
+  // Tabs once there's more than the Size chart: its parts, How to measure or
+  // Find my size. The footer stays with the first two, as drawn.
+  const chart = h("div", { class: "fitted-part" }, bar, part);
+  const measure = measureTab();
   const finder = fitTab();
+  const sized = h("div", { class: "fitted-part" }, chart, measure, foot);
+  const names = ["chart", measure && "measure", finder && "fit"].filter(
+    (n): n is string => !!n,
+  );
   const tabs =
-    finder &&
-    seg("sections", "fitted-tab", ["chart", "fit"], "chart", t, "fitted-tabs");
-  root.replaceChildren(...[tabs, chart, finder].filter((k) => !!k));
+    names.length > 1 &&
+    seg("sections", "fitted-tab", names, "chart", t, "fitted-tabs");
+  root.replaceChildren(...[tabs, sized, finder].filter((k) => !!k));
   draw();
   const sync = () => {
     track(root, "open");

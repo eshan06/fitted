@@ -81,6 +81,7 @@ describe("size guide Liquid", () => {
         rows: [{ id: "m", cells: {} }],
       },
     ],
+    "c.measure | json": { steps: ["m1"] },
     "c.words | json": { "t1.m.size": "M", tips: "Measure snugly." },
     "c.fit | json": {
       table: "t1",
@@ -89,6 +90,8 @@ describe("size guide Liquid", () => {
       stretch: "none",
     },
     "chart.strings.value | json": { "t1.m.size": "Moyen" },
+    "drawing | json":
+      "//shop.example.com/cdn/shop/files/measure.png?v=1&width=1000",
     "s.units | json": { default: "cm", toggle: true },
     "s.link | json": { style: "text", icon: "none" },
     "s.popup | json": { rtl: true, font: "theme" },
@@ -165,6 +168,22 @@ describe("size guide Liquid", () => {
     expect(guide).toContain("{%- render 'guide-data', chart: chart, p: p -%}");
   });
 
+  it("prints How to measure's steps on every plan, and the drawing only when the chart has one (§9)", () => {
+    for (const plan of ["free", "standard", "pro"])
+      expect(printed(plan)).toMatchObject({
+        chart: { measure: { steps: ["m1"] } },
+        measureImage: values["drawing | json"],
+      });
+    // Without a drawing, drawing stays nil and prints null.
+    expect(snippet).toContain(
+      [
+        "{%- if chart.measure_image.value -%}",
+        "  {%- assign drawing = chart.measure_image.value | image_url: width: 1000 -%}",
+        "{%- endif -%}",
+      ].join("\n"),
+    );
+  });
+
   it("prints data that parseGuide reads", () => {
     const json = JSON.stringify(printed("pro"));
     expect(parseGuide(json)).toMatchObject({
@@ -212,7 +231,18 @@ describe("size guide Liquid", () => {
     const used = (src = "") =>
       [...src.matchAll(/data-t-(\w+)=/g)].map((m) => m[1]);
     expect(used(pro)).toEqual(expect.arrayContaining(["fit", "recommend"]));
-    expect(used(before)).toEqual(expect.arrayContaining(["chart", "select"]));
+    // How to measure and the tab bar show on every plan (§9).
+    expect(used(before)).toEqual(
+      expect.arrayContaining([
+        "chart",
+        "select",
+        "sections",
+        "measure",
+        "line_first",
+        "line",
+        "drawing",
+      ]),
+    );
     expect(used(before)).not.toContain("fit");
   });
 
