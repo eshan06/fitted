@@ -345,6 +345,31 @@ describe("the screen", () => {
     );
   });
 
+  it("shows the error state when the load fails outright, as a database outage would", async () => {
+    m.chartPages.mockReturnValue(pages([]));
+    m.getPlan.mockRejectedValue(new Error("db down"));
+    const { home } = await load();
+    home.catch(() => {});
+    const el = await show(home);
+    expect(
+      el.querySelector(
+        's-banner[heading="Your charts and numbers didn\'t load"]',
+      ),
+    ).not.toBeNull();
+    expect(button(el, "Try again")).toBeDefined();
+  });
+
+  it("leaves out the coverage card in a store with no products", async () => {
+    const el = await show(
+      Promise.resolve({
+        ...OK,
+        products: { all: N(0), covered: N(0), missing: [] },
+      }),
+    );
+    expect(text(el)).toContain("Your charts");
+    expect(el.querySelector('s-section[heading*="size guide"]')).toBeNull();
+  });
+
   it("shows the loading state, then the error with Try again that reloads", async () => {
     let fail!: (d: Data) => void;
     const el = await show(
