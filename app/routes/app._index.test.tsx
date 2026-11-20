@@ -174,7 +174,7 @@ describe("loading Home", () => {
     );
   });
 
-  it("flags Free at 3 published charts, and no other plan", async () => {
+  it("gives Free its limit of 3 published charts, and no other plan", async () => {
     const three = () =>
       pages([1, 2, 3, 4].map((n) => stored(n, n < 4 ? "ACTIVE" : "DRAFT")));
     m.getPlan.mockResolvedValue({ plan: "free", checkFailed: false });
@@ -182,7 +182,7 @@ describe("loading Home", () => {
     expect(await (await load()).home).toMatchObject({ active: 3, limit: 3 });
 
     m.chartPages.mockReturnValue(pages([stored(1, "ACTIVE")]));
-    expect(await (await load()).home).toMatchObject({ limit: null });
+    expect(await (await load()).home).toMatchObject({ active: 1, limit: 3 });
 
     m.getPlan.mockResolvedValue({ plan: "standard", checkFailed: false });
     m.chartPages.mockReturnValue(three());
@@ -388,6 +388,7 @@ describe("the screen", () => {
         yearly: null, // as on every shop whose plan check hasn't succeeded
         charts: 0,
         active: 0,
+        limit: 3,
         rows: [],
         products: { all: N(340), covered: N(0), missing: [] },
       }),
@@ -396,6 +397,25 @@ describe("the screen", () => {
       "Free plan: 3 charts, CSV export, no watermark. No order fees on any plan.",
     );
     expect(text(el)).not.toContain("Your charts");
+  });
+
+  it("shows a returning Free shop how many of its 3 charts are published", async () => {
+    for (const active of [2, 0]) {
+      const el = await show(
+        Promise.resolve({ ...OK, plan: "free", active, limit: 3 }),
+      );
+      const plan = el.querySelector("s-banner")!;
+      expect(plan.getAttribute("heading")).toBe(
+        `Free plan: ${active} of 3 published charts`,
+      );
+      expect(plan.getAttribute("tone")).toBe("info");
+      expect(text(plan)).toBe(
+        "Drafts don't count. For more than 3, move to Standard, $9 a month.Change plan",
+      );
+      expect(
+        plan.querySelector(`s-link[href="${PLANS}"]`)?.getAttribute("target"),
+      ).toBe("_top");
+    }
   });
 
   it("shows Free at its limit", async () => {
