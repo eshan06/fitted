@@ -39,6 +39,7 @@ export type HomeRow = {
 export type HomeData =
   | {
       plan: Plan;
+      yearly: boolean | null; // billed yearly; null if no plan check has said
       plansUrl: string;
       themeUrl: string; // the theme editor, adding the size guide block
       charts: number;
@@ -56,7 +57,7 @@ async function loadHome(admin: Admin, shop: string): Promise<HomeData> {
   try {
     const charts: StoredChart[] = [];
     for await (const page of chartPages(admin)) charts.push(...page);
-    const [counts, coverage, { plan }, plansUrl] = await Promise.all([
+    const [counts, coverage, { plan, yearly }, plansUrl] = await Promise.all([
       countChartProducts(
         admin,
         charts.map((c) => c.id),
@@ -69,6 +70,7 @@ async function loadHome(admin: Admin, shop: string): Promise<HomeData> {
     const active = live.length;
     return {
       plan,
+      yearly,
       plansUrl,
       themeUrl: themeEditorUrl(shop),
       charts: charts.length,
@@ -490,12 +492,27 @@ export function Dashboard(h: Ok) {
   );
 }
 
-function PlanBanner({ plan, plansUrl, active, limit }: Ok) {
+function PlanBanner({ plan, yearly, plansUrl, active, limit }: Ok) {
   const link = (
     <s-link href={plansUrl} target="_top">
       Change plan
     </s-link>
   );
+  // After a downgrade: nothing was unpublished, and publishing needs fewer than the limit (§8).
+  if (limit && active > limit)
+    return (
+      <s-banner
+        tone="warning"
+        heading={`${active} published charts, over Free's limit of ${limit}`}
+      >
+        <s-stack gap="small-200">
+          <s-paragraph>
+            {`They stay live. To publish another, set ${active - limit + 1} to Draft or move to Standard, $9 a month.`}
+          </s-paragraph>
+          {link}
+        </s-stack>
+      </s-banner>
+    );
   if (limit)
     return (
       <s-banner
@@ -512,11 +529,13 @@ function PlanBanner({ plan, plansUrl, active, limit }: Ok) {
         </s-stack>
       </s-banner>
     );
+  // A paid plan cached before Fitted recorded how it's billed: no price to
+  // state until a check succeeds.
+  if (plan !== "free" && yearly === null) return null;
   const heading = {
     free: "Free plan: 3 charts, CSV export, no watermark. No order fees on any plan.",
-    standard:
-      "Standard plan, $9 a month. No order fees, however many orders your store gets.",
-    pro: "Pro plan, $15 a month. No order fees.",
+    standard: `Standard plan, ${yearly ? "$90 a year" : "$9 a month"}. No order fees, however many orders your store gets.`,
+    pro: `Pro plan, ${yearly ? "$150 a year" : "$15 a month"}. No order fees.`,
   }[plan];
   return (
     <s-banner tone="info" heading={heading}>

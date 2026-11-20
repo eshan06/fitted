@@ -8,8 +8,16 @@ import { unauthenticated } from "../shopify.server";
 
 const PLANS = ["free", "standard", "pro"] as const;
 export type Plan = (typeof PLANS)[number];
-/** `checkFailed`: the plan couldn't be confirmed, so `plan` is the last confirmed one (Free if none). */
-export type PlanState = { plan: Plan; checkFailed: boolean };
+/**
+ * `yearly`: billed yearly, from the read that confirmed `plan`; null when no
+ * read said, so a price is never guessed.
+ * `checkFailed`: the plan couldn't be confirmed, so `plan` is the last confirmed one (Free if none).
+ */
+export type PlanState = {
+  plan: Plan;
+  yearly: boolean | null;
+  checkFailed: boolean;
+};
 
 // Gates block new actions only: nothing already live is taken down after a downgrade.
 export const FREE_ACTIVE_CHARTS = 3;
@@ -62,7 +70,11 @@ export async function getPlan(
   const fresh =
     row?.planCheckedAt && Date.now() - row.planCheckedAt.getTime() < FRESH_MS;
   if (fresh && !last?.failed)
-    return { plan: toPlan(row.plan), checkFailed: false };
+    return {
+      plan: toPlan(row.plan),
+      yearly: row.planYearly,
+      checkFailed: false,
+    };
   if (!recheck && last && Date.now() - last.startedAt < GAP_MS)
     return last.result;
 
@@ -102,7 +114,12 @@ export async function lastConfirmedPlan(
 export async function resetCachedPlan(shop: string) {
   await db.shop.updateMany({
     where: { shop },
-    data: { plan: "free", planCheckedAt: null, planOnStore: null },
+    data: {
+      plan: "free",
+      planYearly: null,
+      planCheckedAt: null,
+      planOnStore: null,
+    },
   });
 }
 
@@ -113,15 +130,20 @@ async function check(shop: string): Promise<PlanState> {
     // The offline session: a staff member's own access may not allow the metafield write.
     const { admin } = await unauthenticated.admin(shop);
     const shopId = await readShopId(admin);
-    const plan = await fetchPlan(shopId);
+    const { plan, yearly } = await fetchPlan(shopId);
     if (plan !== row?.planOnStore) await writeStorePlan(admin, shopId, plan);
-    const data = { plan, planCheckedAt: new Date(), planOnStore: plan };
+    const data = {
+      plan,
+      planYearly: yearly,
+      planCheckedAt: new Date(),
+      planOnStore: plan,
+    };
     await db.shop.upsert({
       where: { shop },
       create: { shop, ...data },
       update: data,
     });
-    return { plan, checkFailed: false };
+    return { plan, yearly, checkFailed: false };
   } catch (error) {
     // The last confirmed plan stands. The store only ever gets a confirmed plan,
     // and the next check repeats a write this one didn't record.
@@ -134,7 +156,11 @@ async function check(shop: string): Promise<PlanState> {
         error: String(error),
       }),
     );
-    return { plan: toPlan(row?.plan), checkFailed: true };
+    return {
+      plan: toPlan(row?.plan),
+      yearly: row?.planYearly ?? null,
+      checkFailed: true,
+    };
   }
 }
 
@@ -158,13 +184,16 @@ async function readShopId(admin: Admin): Promise<string> {
 
 const ACTIVE_SUBSCRIPTION = `query ActiveSubscription($appId: ID!, $shopId: ID!) {
   activeSubscription(appId: $appId, shopId: $shopId) {
+    billingPeriod
     items {
       handle
     }
   }
 }`;
 
-async function fetchPlan(shopId: string): Promise<Plan> {
+async function fetchPlan(
+  shopId: string,
+): Promise<{ plan: Plan; yearly: boolean }> {
   const org = process.env.SHOPIFY_PARTNER_ORG_ID;
   const token = process.env.SHOPIFY_PARTNER_API_ACCESS_TOKEN;
   const appId = process.env.SHOPIFY_APP_GID;
@@ -210,16 +239,23 @@ async function fetchPlan(shopId: string): Promise<Plan> {
       `Partner API returned ${response.status}: ${JSON.stringify(errors ?? null)}`,
     );
   const subscription = body?.data?.activeSubscription;
-  if (subscription === null) return "free"; // no subscription
+  if (subscription === null) return { plan: "free", yearly: false }; // no subscription
   if (!Array.isArray(subscription?.items))
     throw new Error("Partner API returned no subscription items");
+  // Never null in the schema; without it Home would have to guess the price.
+  const period = subscription.billingPeriod;
+  if (period !== "ANNUAL" && period !== "EVERY_30_DAYS")
+    throw new Error(
+      `Partner API returned billing period ${JSON.stringify(period ?? null)}`,
+    );
   const handles = subscription.items.map(
     (item: { handle?: unknown }) => item?.handle,
   );
+  const yearly = period === "ANNUAL";
   // A missing or unknown handle is Free.
-  if (handles.includes("pro")) return "pro";
-  if (handles.includes("standard")) return "standard";
-  return "free";
+  if (handles.includes("pro")) return { plan: "pro", yearly };
+  if (handles.includes("standard")) return { plan: "standard", yearly };
+  return { plan: "free", yearly };
 }
 
 async function writeStorePlan(admin: Admin, shopId: string, plan: Plan) {

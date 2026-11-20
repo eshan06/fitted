@@ -77,7 +77,11 @@ beforeEach(() => {
   logs = [];
   vi.spyOn(console, "log").mockImplementation((line) => logs.push(line));
   m.authenticate.mockResolvedValue({ admin, session: { shop: SHOP } });
-  m.getPlan.mockResolvedValue({ plan: "standard", checkFailed: false });
+  m.getPlan.mockResolvedValue({
+    plan: "standard",
+    yearly: false,
+    checkFailed: false,
+  });
   m.pricingPlansUrl.mockResolvedValue(PLANS);
   m.resolveIfStale.mockResolvedValue(undefined);
   m.productCoverage.mockResolvedValue({
@@ -124,6 +128,7 @@ describe("loading Home", () => {
     expect(storeUrl).toBe(`https://${SHOP}`);
     expect(await home).toEqual({
       plan: "standard",
+      yearly: false,
       plansUrl: PLANS,
       themeUrl:
         "https://admin.shopify.com/store/fitted-dev/themes/current/editor?template=product&addAppBlockId=key123/size-guide&target=mainSection",
@@ -184,6 +189,22 @@ describe("loading Home", () => {
     expect(await (await load()).home).toMatchObject({ limit: null });
   });
 
+  it("flags Free past its limit after a downgrade, with every chart still live", async () => {
+    m.getPlan.mockResolvedValue({ plan: "free", checkFailed: false });
+    m.chartPages.mockReturnValue(
+      pages([1, 2, 3, 4, 5].map((n) => stored(n, "ACTIVE"))),
+    );
+    expect(await (await load()).home).toMatchObject({ active: 5, limit: 3 });
+  });
+
+  it("passes on whether the plan is billed yearly, as the plan check read it", async () => {
+    m.chartPages.mockReturnValue(pages([stored(1, "ACTIVE")]));
+    for (const yearly of [true, false, null]) {
+      m.getPlan.mockResolvedValue({ plan: "pro", yearly, checkFailed: false });
+      expect(await (await load()).home).toMatchObject({ plan: "pro", yearly });
+    }
+  });
+
   it("answers a failed Shopify call with the error state and logs the detail", async () => {
     m.chartPages.mockReturnValue(pages([]));
     m.productCoverage.mockRejectedValue(
@@ -233,6 +254,7 @@ describe("the screen", () => {
   ).IS_REACT_ACT_ENVIRONMENT = true;
   const OK: Ok = {
     plan: "standard",
+    yearly: false,
     plansUrl: PLANS,
     themeUrl: "https://admin.shopify.com/theme",
     charts: 4,
@@ -381,6 +403,57 @@ describe("the screen", () => {
     expect(text(el)).toContain(
       "Drafts don't count. To publish a 4th, set one to Draft or move to Standard, $9 a month.",
     );
+  });
+
+  it("shows Free over its limit after a downgrade, and how many to set to Draft", async () => {
+    for (const [active, heading, fix] of [
+      [
+        5,
+        "5 published charts, over Free's limit of 3",
+        "They stay live. To publish another, set 3 to Draft or move to Standard, $9 a month.",
+      ],
+      [
+        4,
+        "4 published charts, over Free's limit of 3",
+        "They stay live. To publish another, set 2 to Draft or move to Standard, $9 a month.",
+      ],
+    ] as const) {
+      const el = await show(
+        Promise.resolve({ ...OK, plan: "free", active, limit: 3 }),
+      );
+      const plan = el.querySelector("s-banner")!;
+      expect(plan.getAttribute("heading")).toBe(heading);
+      expect(plan.getAttribute("tone")).toBe("warning");
+      expect(text(plan)).toBe(`${fix}Change plan`);
+      expect(
+        plan.querySelector(`s-link[href="${PLANS}"]`)?.getAttribute("target"),
+      ).toBe("_top");
+      expect(text(el)).not.toContain(`of 3 published charts`);
+    }
+  });
+
+  it("prices a yearly payer's plan by the year", async () => {
+    for (const [plan, heading] of [
+      [
+        "standard",
+        "Standard plan, $90 a year. No order fees, however many orders your store gets.",
+      ],
+      ["pro", "Pro plan, $150 a year. No order fees."],
+    ] as const) {
+      const el = await show(Promise.resolve({ ...OK, plan, yearly: true }));
+      expect(banner(el)).toBe(heading);
+      expect(
+        el.querySelector(`s-banner s-link[href="${PLANS}"]`)?.textContent,
+      ).toBe("Change plan");
+    }
+  });
+
+  it("states no price for a paid plan whose billing Fitted hasn't read", async () => {
+    for (const plan of ["standard", "pro"] as const) {
+      const el = await show(Promise.resolve({ ...OK, plan, yearly: null }));
+      expect(el.querySelector("s-banner")).toBeNull();
+      expect(text(el)).toContain("Women's tops");
+    }
   });
 
   it("shows Pro, and every product covered", async () => {

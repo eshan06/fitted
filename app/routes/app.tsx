@@ -26,7 +26,10 @@ import {
   type PlanState,
 } from "../models/billing.server";
 
-export type PlanCheck = PlanState & { confirmed: string | null };
+// The banner names the plan, never its price.
+export type PlanCheck = Omit<PlanState, "yearly"> & {
+  confirmed: string | null;
+};
 
 // The plan for every admin load (ARCHITECTURE §8), streamed so a slow check
 // never holds up the screen. A screen can read it from here instead of calling

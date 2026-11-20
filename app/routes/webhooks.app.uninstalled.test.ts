@@ -85,7 +85,12 @@ const refreshRefused = () =>
 const deleteSessions = { where: { shop } };
 const resetPlanToFree = {
   where: { shop },
-  data: { plan: "free", planCheckedAt: null, planOnStore: null },
+  data: {
+    plan: "free",
+    planYearly: null,
+    planCheckedAt: null,
+    planOnStore: null,
+  },
 };
 
 beforeEach(() => {
@@ -181,6 +186,7 @@ describe("app/uninstalled webhook", () => {
     let cached = {
       shop,
       plan: "pro",
+      planYearly: true,
       planCheckedAt: new Date(Date.now() - 60_000),
       planOnStore: "pro",
       resolvedAt: null,
@@ -197,6 +203,7 @@ describe("app/uninstalled webhook", () => {
     fetchMock.mockImplementation(refreshRefused);
     await expect(getPlan(shop)).resolves.toEqual({
       plan: "pro",
+      yearly: true,
       checkFailed: false,
     });
 
@@ -206,6 +213,7 @@ describe("app/uninstalled webhook", () => {
     // first check that fails for any other reason ends the same way.
     await expect(getPlan(shop)).resolves.toEqual({
       plan: "free",
+      yearly: null,
       checkFailed: true,
     });
   });
