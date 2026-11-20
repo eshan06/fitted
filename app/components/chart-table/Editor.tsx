@@ -320,15 +320,12 @@ export function Editor(props: {
               onRemove={(sel) => {
                 setDraft(model.remove(draft, sel));
                 // Cell findings name sizes by position, so they move up too.
-                if (notice?.fieldErrors)
-                  setLocal({
-                    ...notice,
-                    fieldErrors: model.removeErrors(
-                      draft,
-                      sel,
-                      notice.fieldErrors,
-                    ),
-                  });
+                if (!notice?.fieldErrors) return;
+                const left = model.removeErrors(draft, sel, notice.fieldErrors);
+                // With none left, the banner goes, as after a fix and save.
+                if (Object.keys(left).length)
+                  setLocal({ ...notice, fieldErrors: left });
+                else dismiss();
               }}
             />
           ) : (

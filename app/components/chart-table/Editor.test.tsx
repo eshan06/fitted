@@ -652,4 +652,19 @@ describe("chart editor screen", () => {
     expect(c.tables[0].columns).toEqual([{ id: "size", kind: "size" }]);
     expect(c.words).not.toHaveProperty(["t1.bust"]);
   });
+
+  it("drops the banner when a remove takes its only marked value", async () => {
+    await open([stored()]);
+    await type(byLabel("XS, Bust"), "33-");
+    await click("Save");
+    expect(document.querySelector("s-banner")).not.toBeNull();
+    await act(async () => byLabel("Column 2 name").focus());
+    await click("Remove measurement");
+    await act(async () =>
+      document.querySelector<HTMLElement>("dialog s-button[tone]")!.click(),
+    );
+    await settle();
+    expect(document.querySelector("s-banner")).toBeNull();
+    expect(document.activeElement).toBe(byLabel("Column 1 name"));
+  });
 });
