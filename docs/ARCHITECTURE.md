@@ -37,7 +37,7 @@ States these contracts add that the canvas doesn't draw yet get drawn before the
 
 `app/shopify.server.ts` configures `shopifyApp`: Admin API version July 2026, App Store distribution, expiring offline tokens, and `PrismaSessionStorage`. OAuth runs through `app/routes/auth.$.tsx`. Every loader and action that touches shop data calls `authenticate.admin` (or `authenticate.webhook` / `authenticate.public.appProxy`) and uses only that session's shop. Background work (webhooks, jobs) uses `unauthenticated.admin(shop)` with the shop from a verified webhook or from the job row, never from a browser.
 
-Staff names: the charts list and version history show who saved ("Priya N."). The first step that records an editor (#24) turns on `useOnlineTokens: true` and reads `session.onlineAccessInfo.associated_user`; version rows keep only first name plus last initial. From then on the `Session` table also holds one online session per staff member who opens Fitted, with the name and email Shopify sends (§14), and admin calls run with that staff member's permissions, so every screen handles a 403 for staff without access (§15). Offline tokens keep serving background work.
+Staff names: the charts list and version history show who saved ("Priya N."). The step that names editors (#131) turns on `useOnlineTokens: true` and reads `session.onlineAccessInfo.associated_user`; version rows keep only first name plus last initial. From then on the `Session` table also holds one online session per staff member who opens Fitted, with the name and email Shopify sends (§14), and admin calls run with that staff member's permissions, so every screen handles a 403 for staff without access (§15). Offline tokens keep serving background work.
 
 Scopes, added by the step that first needs each: `write_products`, `write_metaobjects`, `write_metaobject_definitions` (already set); `read_locales` (#28, the primary locale for `settings.text`); `write_files` (#22, How to measure images); `write_app_proxy` (#44's events, then #127's Copy link page); `write_translations` (#43). Nothing else without updating this list.
 
@@ -63,14 +63,14 @@ Postgres 18 on Railway (#8, `DATABASE_URL`), and the same version locally from `
 
 | Table          | Holds                                                                                                                     | Step     |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------- | -------- |
-| `Session`      | The template's sessions: offline, plus online ones with the staff member's name and email from #24 (§3)                   | exists   |
+| `Session`      | The template's sessions: offline, plus online ones with the staff member's name and email from #131 (§3)                  | exists   |
 | `Shop`         | `shop` (key), `plan`, `planCheckedAt`, `planOnStore` (last value written to `$app.plan`), `resolvedAt`                    | #17      |
 | `ChartVersion` | `shop`, `chartId`, `createdAt`, `by` (display name or source), `summary`, `snapshot` (json)                               | #24      |
 | `Job`          | `shop`, `kind` (`import` or `resolve`), `status` (`running`, `done`, `failed`), `progress`, `result`, `error`, timestamps | #73, #34 |
 | `Event`        | `shop`, `id`, `type`, `chartId`, `productId`, `size`, `createdAt`; unique on `(shop, id)`                                 | #44      |
 | `AiUsage`      | `shop`, `day`, `count`; key `(shop, day)`                                                                                 | #38      |
 
-Every query filters on the session's shop, and an id sent by a browser is looked up within that shop. Version snapshots are app-only copies kept for history; the live chart stays in the store. `app/uninstalled` deletes the shop's sessions on every delivery it handles, with or without a session from the library, and resets its cached plan to Free (§8); `shop/redact` deletes every row for the shop in every table; `customers/data_request` and `customers/redact` only acknowledge, because Fitted stores no shopper data. Retention: events 90 days, AI usage 30 days, versions the last 30 per chart, jobs as in §13, and expired online sessions deleted whenever a shop stores a new one (#24). The privacy policy (#47) lists the staff names and emails in `Session`.
+Every query filters on the session's shop, and an id sent by a browser is looked up within that shop. Version snapshots are app-only copies kept for history; the live chart stays in the store. `app/uninstalled` deletes the shop's sessions on every delivery it handles, with or without a session from the library, and resets its cached plan to Free (§8); `shop/redact` deletes every row for the shop in every table; `customers/data_request` and `customers/redact` only acknowledge, because Fitted stores no shopper data. Retention: events 90 days, AI usage 30 days, versions the last 30 per chart, jobs as in §13, and expired online sessions deleted whenever a shop stores a new one (#131). The privacy policy (#47) lists the staff names and emails in `Session`.
 
 ## 15. Errors and retries
 

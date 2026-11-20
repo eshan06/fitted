@@ -55,6 +55,19 @@ model Job {
   @@index([shop, kind, createdAt])
 }
 
+// Version history (ARCHITECTURE §5, §14): the last 30 saves of each chart.
+model ChartVersion {
+  id        Int      @id @default(autoincrement())
+  shop      String
+  chartId   String
+  createdAt DateTime @default(now())
+  by        String // "Priya N.", or where it came from ("Imported from Kiwi")
+  summary   String
+  snapshot  Json // the saved ChartInput
+
+  @@index([shop, chartId, id])
+}
+
 // Size guide events from shoppers' browsers (ARCHITECTURE §12, §14): no
 // shopper data, deleted after 90 days.
 model Event {
