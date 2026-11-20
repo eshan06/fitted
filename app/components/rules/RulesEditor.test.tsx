@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import { createRoutesStub } from "react-router";
+import { createRoutesStub, data } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Rules } from "../../models/rules.server";
 
@@ -95,7 +95,10 @@ async function open(
   let n = 0;
   const poll = vi.fn(() => {
     const p = polls.length > 1 ? polls.shift() : polls[0];
-    return p === LOST ? { job: null, failed: true } : { job: p };
+    // As the route answers it.
+    return p === LOST
+      ? data({ mode: "job", job: null, failed: true }, { status: 503 })
+      : { job: p };
   });
   const loader = vi.fn(({ request }: { request: Request }) => {
     const q = new URL(request.url).searchParams;
@@ -575,6 +578,30 @@ describe("display rules screen", () => {
     await settle();
     expect(poll).toHaveBeenCalledTimes(6);
     expect(headings()).toEqual([]);
+  });
+
+  it("polls when the load couldn't read the job, and a save after it didn't finish polls again", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { poll } = await open(
+      [edit(ranked(), "d1", null, { unread: true })],
+      [{ status: 200, body: { ok: true, after: 5 } }],
+      [LOST, LOST, job("running", 9)],
+    );
+    expect(headings()).toEqual([]);
+    for (let i = 0; i < 2; i++)
+      await act(async () => vi.advanceTimersByTime(3000));
+    await settle();
+    expect(poll).toHaveBeenCalledTimes(2);
+    expect(headings()).toEqual(["Your rules didn't finish applying"]);
+    await act(async () =>
+      byLabel("Move Women's tops").dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
+      ),
+    );
+    await click(buttons("Save")[0]);
+    await act(async () => vi.advanceTimersByTime(3000));
+    await settle();
+    expect(headings()).toEqual(["Applying your rules to 340 products"]);
   });
 
   it("shows a merchant's running resolve as applying, but not the daily check's", async () => {

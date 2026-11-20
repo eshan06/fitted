@@ -108,6 +108,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       mode: "edit" as const,
       charts,
       job: read === "failed" ? null : read,
+      unread: read === "failed", // the screen polls until it reads one
       products,
       counts,
       free,

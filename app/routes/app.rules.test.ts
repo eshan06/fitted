@@ -141,6 +141,7 @@ describe("loading display rules", () => {
       digest: "d1",
       damaged: null,
       job: JOB,
+      unread: false,
       products: 340,
       counts: COUNTS,
       names: NAMES,
@@ -166,7 +167,11 @@ describe("loading display rules", () => {
   // Regression (#115): a failed read of the resolve job showed an error page.
   it("keeps the screen when the resolve job can't be read: the load without progress, the poll says so", async () => {
     m.latestResolve.mockRejectedValue(new Error("Can't reach database"));
-    expect(await load()).toMatchObject({ mode: "edit", job: null });
+    expect(await load()).toMatchObject({
+      mode: "edit",
+      job: null,
+      unread: true,
+    });
     expect(await result(load("?job"))).toEqual({
       status: 503,
       body: { mode: "job", job: null, failed: true },

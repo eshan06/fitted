@@ -19,6 +19,7 @@ export type Loaded = {
   digest: string | null;
   damaged: string[] | null; // the saved rules' problems
   job: Job;
+  unread?: boolean; // the load couldn't read the job
   products: number | null;
   counts: Record<string, { count: number; atLeast: boolean }> | null;
   names: Record<string, string>; // picked products' and collections' titles
@@ -139,9 +140,13 @@ export function RulesEditor(props: {
   const job =
     polled && polled.at >= (loaded.job?.at ?? 0) ? polled : loaded.job;
   const asked = [fetcher.data, apply.data].filter((a) => a?.ok);
-  // Polls that couldn't read the job retry quietly; the third in a row stops
-  // them and says the rules didn't finish. A save or Try again starts over.
-  const [misses, setMisses] = useState({ data: poll.data, n: 0 });
+  // Reads of the job that failed (the load's, then polls') retry quietly; the
+  // third in a row stops them and says the rules didn't finish. A save or Try
+  // again starts over.
+  const [misses, setMisses] = useState({
+    data: poll.data,
+    n: loaded.unread ? 1 : 0,
+  });
   if (poll.data !== misses.data)
     setMisses({ data: poll.data, n: poll.data?.failed ? misses.n + 1 : 0 });
   const lost = misses.n >= 3;
@@ -151,12 +156,13 @@ export function RulesEditor(props: {
     !lost &&
     ((job?.status === "running" && job.merchant) ||
       asked.some((a) => (job?.at ?? 0) <= a!.after!));
+  const polling = applying || (!lost && misses.n > 0);
   const { load } = poll;
   useEffect(() => {
-    if (!applying) return;
+    if (!polling) return;
     const t = setInterval(() => load("/app/rules?job"), 3000);
     return () => clearInterval(t);
-  }, [applying, load]);
+  }, [polling, load]);
   // Try again's refusals; the didn't-finish banner stays to try once more.
   const refused = apply.state === "idle" && apply.data?.error?.code;
   useEffect(() => {
