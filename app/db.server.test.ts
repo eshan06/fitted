@@ -6,6 +6,12 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import prisma from "./db.server";
 import { resetCachedPlan } from "./models/billing.server";
 import { checkJobs } from "./models/rules.server";
+import {
+  VERSION_LIMIT,
+  listVersions,
+  recordVersion,
+} from "./models/chart-history.server";
+import type { ChartInput } from "./models/chart.server";
 
 // billing.server.ts imports it for plan checks, which nothing here runs. A
 // resolve the job checks requeue finds no store: the offline session is
@@ -55,6 +61,7 @@ describe.runIf(hasDatabase)("the app database on Postgres", () => {
     await prisma.session.deleteMany({ where: { shop: { in: shops } } });
     await prisma.shop.deleteMany({ where: { shop: { in: shops } } });
     await prisma.job.deleteMany({ where: { shop: { in: shops } } });
+    await prisma.chartVersion.deleteMany({ where: { shop: { in: shops } } });
     await prisma.$disconnect();
   });
 
@@ -302,5 +309,70 @@ describe.runIf(hasDatabase)("the app database on Postgres", () => {
       where: { shop: { in: [shop, otherShop] } },
     });
     expect(left.map((j) => j.id).sort()).toEqual(kept.sort());
+  });
+
+  it("keeps each chart's last versions, newest first, within its shop", async () => {
+    const shop = newShop();
+    const otherShop = newShop();
+    const id = "gid://shopify/Metaobject/1";
+    const chart = (n: number) =>
+      ({ name: `Chart ${n}` }) as unknown as ChartInput;
+    expect(await recordVersion(otherShop, id, chart(0), "Jordan K.")).toBe(
+      true,
+    );
+    for (let n = 1; n <= VERSION_LIMIT + 2; n++)
+      await recordVersion(shop, id, chart(n), "Priya N.", `Save ${n}`);
+    // The same chart again, from a retried save, adds nothing.
+    await recordVersion(shop, id, chart(VERSION_LIMIT + 2), "Priya N.");
+
+    const versions = await listVersions(shop, id);
+    expect(versions).toHaveLength(VERSION_LIMIT);
+    expect(versions[0]).toMatchObject({
+      by: "Priya N.",
+      summary: `Save ${VERSION_LIMIT + 2}`,
+      snapshot: chart(VERSION_LIMIT + 2),
+    });
+    expect(versions[VERSION_LIMIT - 1].summary).toBe("Save 3");
+    expect(await listVersions(otherShop, id)).toHaveLength(1);
+    // Older versions are deleted, not only hidden.
+    expect(
+      await prisma.chartVersion.count({ where: { shop, chartId: id } }),
+    ).toBe(VERSION_LIMIT);
+    expect(versions[1].createdAt <= versions[0].createdAt).toBe(true);
+  });
+
+  it("summarizes a save against the version stored before it", async () => {
+    const shop = newShop();
+    const id = "gid://shopify/Metaobject/3";
+    const chart = (bust: [number, number]): ChartInput => ({
+      name: "Women's tops",
+      template: "tops",
+      content: {
+        v: 1,
+        unit: "in",
+        roundTo: 0.5,
+        tables: [
+          {
+            id: "t1",
+            columns: [
+              { id: "size", kind: "size" },
+              { id: "bust", kind: "measure", convert: true },
+            ],
+            rows: [{ id: "m", cells: { bust } }],
+          },
+        ],
+        measure: { steps: [] },
+        words: { "t1.size": "Size", "t1.bust": "Bust", "t1.m.size": "M" },
+      },
+    });
+    await recordVersion(shop, id, chart([35, 36]), "Priya N.");
+    await recordVersion(shop, id, chart([35, 37]), "Jordan K.");
+
+    expect(
+      (await listVersions(shop, id)).map((v) => [v.by, v.summary]),
+    ).toEqual([
+      ["Jordan K.", "Bust for M changed"],
+      ["Priya N.", "First saved version"],
+    ]);
   });
 });

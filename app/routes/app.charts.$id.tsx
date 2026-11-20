@@ -1,8 +1,15 @@
 // The chart editor's reads and saves (ARCHITECTURE §5, §8, §15): load a chart
 // or mint a new chart's handle, then create, update, publish or unpublish it.
 import { randomInt } from "node:crypto";
+import { useEffect, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
-import { Link, data, useLoaderData, useRevalidator } from "react-router";
+import {
+  Link,
+  data,
+  useLoaderData,
+  useRevalidator,
+  useSearchParams,
+} from "react-router";
 import { authenticate } from "../shopify.server";
 import {
   AdminApiError,
@@ -27,6 +34,11 @@ import {
   getPlan,
 } from "../models/billing.server";
 import { startResolve } from "../models/rules.server";
+import {
+  createdSummary,
+  recordVersion,
+  staffName,
+} from "../models/chart-history.server";
 import { Editor } from "../components/chart-table/Editor";
 import {
   blankDraft,
@@ -95,10 +107,20 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   try {
     if (typeof body !== "object" || body === null)
       throw new ChartValidationError({ "": "Must be a chart" });
-    validateChart(body.chart);
+    const input = validateChart(body.chart);
+    const by = staffName(session);
     if (isNew) {
       const created = await createChart(admin, body.handle, body.chart);
-      return redirect(`/app/charts/${created.id.split("/").pop()}`);
+      const ok = await recordVersion(
+        session.shop,
+        created.id,
+        input,
+        by,
+        createdSummary(input),
+      );
+      return redirect(
+        `/app/charts/${created.id.split("/").pop()}${ok ? "" : "?history=missed"}`,
+      );
     }
     const { status } = body;
     if (status !== "ACTIVE" && status !== "DRAFT")
@@ -135,7 +157,15 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         );
     }
     const saved = await updateChart(admin, id, body.chart, body.updatedAt);
-    if (saved.status === status) return { ok: true as const };
+    const kept = await recordVersion(session.shop, id, input, by);
+    const history = kept ? {} : { historyMissed: true as const };
+    // A save that lands reloads the chart and remounts the editor, so the
+    // note that history missed it travels in the address.
+    const done = () =>
+      kept
+        ? { ok: true as const }
+        : redirect(`/app/charts/${params.id}?history=missed`);
+    if (saved.status === status) return done();
     // A failed action doesn't reload the chart, so the next save needs the new updatedAt.
     const still = (http: number, code: string, then: string) =>
       data(
@@ -145,6 +175,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
             message: `Your edits were saved, but the chart is still ${saved.status === "ACTIVE" ? "Published" : "a Draft"}. ${then}`,
           },
           updatedAt: saved.updatedAt,
+          ...history,
         },
         { status: http },
       );
@@ -164,7 +195,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
     // Every product follows, `auto: false` charts included (§6).
     void startResolve(session.shop, true);
-    return { ok: true as const };
+    return done();
   } catch (err) {
     if (err instanceof ChartValidationError)
       return data({ fieldErrors: err.fieldErrors }, { status: 422 });
@@ -187,6 +218,21 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 export default function ChartEditor() {
   const loaded = useLoaderData<typeof loader>();
   const revalidator = useRevalidator();
+  // A save that history missed lands on ?history=missed (the action). The
+  // note holds until the chart next reloads, and leaves the address so a
+  // reload doesn't repeat it. Effects run in order: a missed save reloads
+  // the chart and sets the note in the same render.
+  const [missed, setMissed] = useState(false);
+  const [params, setParams] = useSearchParams();
+  const at = loaded.mode === "edit" ? loaded.stored.updatedAt : undefined;
+  useEffect(() => setMissed(false), [at]);
+  useEffect(() => {
+    if (params.get("history") !== "missed") return;
+    setMissed(true);
+    const rest = new URLSearchParams(params);
+    rest.delete("history");
+    setParams(rest, { replace: true });
+  }, [params, setParams]);
   if (loaded.mode === "new")
     return <Editor key="new" initial={blankDraft()} handle={loaded.handle} />;
   const s = loaded.mode === "edit" ? loaded.stored : undefined;
@@ -200,6 +246,7 @@ export default function ChartEditor() {
         initial={initial}
         updatedAt={s.updatedAt}
         invalid={s.fieldErrors}
+        historyMissed={missed}
       />
     );
   const invalid = loaded.mode === "edit" ? loaded.stored.fieldErrors : null;

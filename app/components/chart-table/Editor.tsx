@@ -25,6 +25,8 @@ type Answer = {
     plansUrl?: string;
   };
   updatedAt?: string;
+  /** The edits saved, the status didn't, and history missed the save. */
+  historyMissed?: true;
 };
 
 export function Editor(props: {
@@ -35,6 +37,11 @@ export function Editor(props: {
   handle?: string;
   /** Set when the stored chart fails the checks: the server's findings. */
   invalid?: FieldErrors;
+  /**
+   * The last save landed, but its version history didn't (§5). Kept by the
+   * route: a save that lands reloads the chart, which remounts the editor.
+   */
+  historyMissed?: boolean;
 }) {
   const { handle, invalid } = props;
   const fetcher = useFetcher<Answer>();
@@ -192,6 +199,17 @@ export function Editor(props: {
         </button>
       </SaveBar>
       <div className="editor">
+        {((props.historyMissed && !answer) || answer?.historyMissed) && (
+          <s-banner
+            tone="warning"
+            heading="Saved, but version history missed it"
+          >
+            <s-paragraph>
+              The chart on your store is up to date. This save won&apos;t show
+              in version history.
+            </s-paragraph>
+          </s-banner>
+        )}
         {notice?.fieldErrors && (
           <s-banner
             tone="critical"
