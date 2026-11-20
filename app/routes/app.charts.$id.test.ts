@@ -255,7 +255,18 @@ describe("saving a chart", () => {
     m.countActiveCharts.mockResolvedValue(3);
     const r = await result(save("ACTIVE", { shop: "other.myshopify.com" }));
     expect(r.status).toBe(403);
-    expect(r.body).toMatchObject({ error: { code: "plan_limit" } });
+    expect(r.body).toEqual({
+      error: {
+        code: "plan_limit",
+        message: expect.any(String),
+        limit: 3,
+        published: 3,
+        checkFailed: false,
+        // App Pricing's plan page for the session's store and the app's handle.
+        plansUrl:
+          "https://admin.shopify.com/store/fitted-dev/charges/fitted-5/pricing_plans",
+      },
+    });
     // The plan is the session's shop's, never one the browser sent.
     expect(m.getPlan).toHaveBeenCalledWith(SHOP);
     expect(m.updateChart).not.toHaveBeenCalled();
@@ -410,6 +421,7 @@ describe("saving a chart", () => {
     expect(r.body).toMatchObject({
       error: {
         message: expect.stringMatching(/^Fitted couldn't check your plan/),
+        checkFailed: true,
       },
     });
   });

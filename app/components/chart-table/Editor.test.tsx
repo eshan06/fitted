@@ -190,8 +190,41 @@ describe("chart editor screen", () => {
     expect(document.querySelector("s-banner")?.getAttribute("heading")).toBe(
       "Edits saved, but the chart is still a Draft",
     );
-    await click("Try saving again");
-    expect(sent[1]).toMatchObject({ updatedAt: "2026-11-19T10:05:00Z" });
+    expect(text()).toContain(
+      "Shopify didn't publish Women's tops, so shoppers can't see it yet.",
+    );
+    await click("Try publishing again");
+    expect(sent[1]).toMatchObject({
+      status: "ACTIVE",
+      updatedAt: "2026-11-19T10:05:00Z",
+    });
+  });
+
+  it("says a failed unpublish leaves the chart Published, and tries unpublishing again", async () => {
+    const published = stored();
+    published.stored.status = "ACTIVE";
+    const { sent } = await open(
+      [published],
+      [
+        {
+          status: 502,
+          body: {
+            error: { code: "status", message: "x" },
+            updatedAt: "2026-11-19T10:05:00Z",
+          },
+        },
+      ],
+    );
+    await type(byLabel("Chart status"), "DRAFT");
+    await click("Save");
+    expect(document.querySelector("s-banner")?.getAttribute("heading")).toBe(
+      "Edits saved, but the chart is still Published",
+    );
+    expect(text()).toContain(
+      "Shopify didn't unpublish Women's tops, so shoppers can still see it.",
+    );
+    await click("Try unpublishing again");
+    expect(sent[1]).toMatchObject({ status: "DRAFT" });
   });
 
   it("treats the saved edits as the chart's content once only the status failed", async () => {
@@ -209,7 +242,14 @@ describe("chart editor screen", () => {
     expect(document.querySelector("s-banner")?.getAttribute("heading")).toBe(
       "Edits saved, but the chart is still a Draft",
     );
-    expect(text()).toContain("x");
+    // The Rules board's "No access to products" words.
+    expect(text()).toContain(
+      "You need Products access to publish charts, since that also updates your products.",
+    );
+    expect(text()).toContain(
+      "Ask the store owner to add Products access to your account in Settings › Users.",
+    );
+    expect(button("Try publishing again")).toBeDefined();
     // Discard goes back to what's stored now: the new cell, still a Draft.
     await click("Discard");
     expect(byLabel("XS, Bust").value).toBe("33");
@@ -218,29 +258,59 @@ describe("chart editor screen", () => {
     expect(document.querySelector("s-banner")).toBeNull();
   });
 
-  it("names the Free limit and offers no retry that would fail the same way", async () => {
-    await open(
-      [stored()],
-      [
-        {
-          status: 403,
-          body: {
-            error: {
-              code: "plan_limit",
-              message: "Free includes 3 published charts.",
+  it.each([
+    [false, ""],
+    [true, "Couldn't check your plan, so Fitted counts it as Free."],
+  ])(
+    "names the Free limit, links the plans and saves as a Draft instead (plan check failed: %s)",
+    async (checkFailed, first) => {
+      const plansUrl =
+        "https://admin.shopify.com/store/fitted-dev/charges/fitted-5/pricing_plans";
+      const { sent } = await open(
+        [stored()],
+        [
+          {
+            status: 403,
+            body: {
+              error: {
+                code: "plan_limit",
+                message: "x",
+                limit: 3,
+                published: 3,
+                checkFailed,
+                plansUrl,
+              },
             },
           },
-        },
-      ],
-    );
-    await type(byLabel("Chart status"), "ACTIVE");
-    await click("Save");
-    expect(document.querySelector("s-banner")?.getAttribute("heading")).toBe(
-      "Women's tops wasn't published",
-    );
-    expect(text()).toContain("Free includes 3 published charts.");
-    expect(button("Try saving again")).toBeUndefined();
-  });
+        ],
+      );
+      await type(byLabel("XS, Bust"), "33");
+      await type(byLabel("Chart status"), "ACTIVE");
+      await click("Save");
+      const banner = document.querySelector("s-banner")!;
+      expect(banner.getAttribute("heading")).toBe(
+        "Women's tops wasn't published",
+      );
+      expect(
+        [...banner.querySelectorAll("s-paragraph")].map((p) => p.textContent),
+      ).toEqual([
+        ...(first ? [first] : []),
+        "The Free plan allows 3 published charts and you have 3, so nothing was saved.",
+        "Save it as a Draft, or see plans to publish more.",
+      ]);
+      const plans = button("See plans");
+      expect(plans.getAttribute("href")).toBe(plansUrl);
+      expect(plans.getAttribute("target")).toBe("_top");
+      expect(button("Try saving again")).toBeUndefined();
+      await click("Save as Draft");
+      expect(sent[1]).toMatchObject({ status: "DRAFT" });
+      expect((sent[1].chart as ChartInput).content.tables[0].rows[0]).toEqual({
+        id: "xs",
+        cells: { bust: [33] },
+      });
+      expect(byLabel("Chart status").value).toBe("DRAFT");
+    },
+  );
 
   it("marks the fields the server refused", async () => {
     await open(
@@ -359,5 +429,96 @@ describe("chart editor screen", () => {
       "They were changed outside Fitted. Nothing on your store has changed.",
     );
     expect(document.querySelector("input")).toBeNull();
+  });
+
+  it("opens a saved chart that fails the checks with its bad values marked, and saves once they're fixed", async () => {
+    const raw = chart();
+    raw.content.tables[0].rows[0].cells.bust = [32, 31];
+    const { sent } = await open([
+      {
+        mode: "edit",
+        stored: {
+          id: "gid://shopify/Metaobject/42",
+          status: "DRAFT",
+          updatedAt: "2026-11-19T10:00:00Z",
+          fieldErrors: {
+            "content.tables.0.rows.0.cells.bust":
+              "Use a range from low to high",
+          },
+          raw,
+        },
+      },
+    ]);
+    const banner = document.querySelector("s-banner")!;
+    expect(banner.getAttribute("heading")).toBe(
+      "Fix 1 value to save this chart",
+    );
+    expect(banner.textContent).toContain(
+      "They were changed outside Fitted. Nothing on your store has changed.",
+    );
+    // The editor's own words, linked to the cell.
+    expect(banner.querySelector("a")?.getAttribute("href")).toBe(
+      "#cell-xs-bust",
+    );
+    expect(banner.textContent).toContain("XS, Bust runs from high to low");
+    expect(text()).toContain(
+      "XS, Bust: Put the smaller number first, like 31–32.",
+    );
+    expect(byLabel("XS, Bust").value).toBe("32–31");
+    expect(byLabel("XS, Bust").getAttribute("aria-invalid")).toBe("true");
+    expect(document.querySelector('[data-testid="save-bar"]')).toBeNull();
+    await type(byLabel("XS, Bust"), "31–32");
+    await click("Save");
+    expect(sent).toHaveLength(1);
+  });
+
+  it("removes a size after the dialog names its values, and an empty one straight away", async () => {
+    await open([stored()]);
+    await act(async () => byLabel("Size 1").focus());
+    expect(text()).toContain("Size XS selected");
+    await click("Remove size");
+    const dialog = document.querySelector("dialog")!;
+    expect(dialog.open).toBe(true);
+    expect(dialog.textContent).toContain("Remove size XS?");
+    expect(dialog.textContent).toContain(
+      "Saving removes XS's values: Bust 31–32.",
+    );
+    expect(dialog.textContent).toContain(
+      "Until you save, Discard brings them back.",
+    );
+    await click("Cancel");
+    expect(document.querySelector("dialog")).toBeNull();
+    expect(byLabel("Size 1")).not.toBeNull();
+    await click("Remove size");
+    await act(async () =>
+      document.querySelector<HTMLElement>("dialog s-button[tone]")!.click(),
+    );
+    expect(document.querySelector('[aria-label="Size 1"]')).toBeNull();
+    expect(text()).not.toContain("selected");
+    await act(async () => button("Add size").click());
+    await act(async () => byLabel("Size 1").focus());
+    await click("Remove size");
+    expect(document.querySelector("dialog")).toBeNull();
+    expect(document.querySelector('[aria-label="Size 1"]')).toBeNull();
+    await click("Discard");
+    expect(byLabel("XS, Bust").value).toBe("31–32");
+  });
+
+  it("removes a measurement after the dialog names the sizes it leaves", async () => {
+    const { sent } = await open([stored()]);
+    await act(async () => byLabel("Column 2 name").focus());
+    expect(text()).toContain("Bust column selected");
+    await click("Remove measurement");
+    expect(document.querySelector("dialog")?.textContent).toContain(
+      "Saving removes Bust from 1 size, 31–32 (XS). Shoppers won't see a Bust column.",
+    );
+    await act(async () =>
+      document.querySelector<HTMLElement>("dialog s-button[tone]")!.click(),
+    );
+    expect(document.querySelector('[aria-label="XS, Bust"]')).toBeNull();
+    await click("Save");
+    const c = (sent[0].chart as ChartInput).content;
+    expect(c.tables[0].columns).toEqual([{ id: "size", kind: "size" }]);
+    expect(c.words).not.toHaveProperty(["t1.bust"]);
   });
 });

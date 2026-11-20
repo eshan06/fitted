@@ -701,6 +701,12 @@ describe("chart reads and writes", () => {
     expect(charts.map((c) => c.name)).toEqual(["Broken", "Women's tops"]);
     expect(charts[0].chart).toBeUndefined();
     expect(charts[0].fieldErrors).toHaveProperty(["content.v"]);
+    // Its stored fields come back as they are, for the editor to open.
+    expect(charts[0].raw).toEqual({
+      name: "Broken",
+      template: "tops",
+      content: { v: 2 },
+    });
     expect(charts[1].chart).toBeDefined();
   });
 
