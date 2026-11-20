@@ -83,16 +83,22 @@ async function read(request: Request) {
   return text + decoder.decode();
 }
 
-// Requests counted per key until a time; a map at MAX_KEYS drops the count
-// that started first.
+// Requests counted per key until a time. A count starts over once it ends, or
+// when it would end after a new one (the clock stepped back). Ended counts go
+// from the front of the map, which holds them roughly in the order they end,
+// and a map at MAX_KEYS drops the count that started first.
 // ponytail: counts live in this one instance's memory (§17); a shared store if
 // Railway ever runs two.
 type Count = { n: number; until: number; stored?: Promise<void> };
 const perIp = new Map<string, Count>();
 const perShop = new Map<string, Count>();
 function tally(map: Map<string, Count>, key: string, until: number) {
+  for (const [k, ended] of map) {
+    if (ended.until > Date.now()) break;
+    map.delete(k);
+  }
   let c = map.get(key);
-  if (!c || c.until <= Date.now()) {
+  if (!c || c.until <= Date.now() || c.until > until) {
     map.delete(key);
     if (map.size >= MAX_KEYS) map.delete(map.keys().next().value as string);
     map.set(key, (c = { n: 0, until }));
@@ -121,15 +127,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (!SHOP.test(shop)) return answer(400);
   // A bad signature, or a timestamp over 90 seconds off, throws 400.
   await authenticate.public.appProxy(request);
-  const now = Date.now();
   const ip = shopperIp(request);
   const key = ip && `${shop} ${pseudonym(ip)}`;
-  if (key && ++tally(perIp, key, now + MINUTE).n > PER_MINUTE)
+  if (key && ++tally(perIp, key, Date.now() + MINUTE).n > PER_MINUTE)
     return answer(429);
   const text = await read(request);
   const event = text === null ? null : parse(text);
   if (!event) return answer(400);
-  const today = tally(perShop, shop, (Math.floor(now / DAY) + 1) * DAY);
+  const midnight = (Math.floor(Date.now() / DAY) + 1) * DAY;
+  const today = tally(perShop, shop, midnight);
   // The rows already stored today, counted once a day, so a restart keeps
   // the cap; counted again after a failure.
   today.stored ??= db.event

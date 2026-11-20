@@ -343,6 +343,18 @@ describe("the rate limits", () => {
     expect(await status(open())).toBe(204);
   });
 
+  it("start over when the clock steps back past a count's minute", async () => {
+    vi.useFakeTimers({
+      now: new Date("2026-11-20T12:00:00Z"),
+      toFake: ["Date"],
+    });
+    for (let i = 0; i < 30; i++) expect(await status(open())).toBe(204);
+    expect(await status(open())).toBe(429);
+
+    vi.setSystemTime(new Date("2026-11-20T10:00:00Z"));
+    expect(await status(open())).toBe(204);
+  });
+
   it("count the entry Shopify adds, never ones the browser sends before it", async () => {
     for (let i = 0; i < 30; i++)
       expect(
