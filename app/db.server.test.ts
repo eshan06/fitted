@@ -145,7 +145,12 @@ describe.runIf(hasDatabase)("the app database on Postgres", () => {
       [shop, "pro"],
       [otherShop, "standard"],
     ]) {
-      const data = { plan, planCheckedAt: checkedAt, planOnStore: plan };
+      const data = {
+        plan,
+        planYearly: plan === "pro",
+        planCheckedAt: checkedAt,
+        planOnStore: plan,
+      };
       await prisma.shop.upsert({
         where: { shop: forShop },
         create: { shop: forShop, ...data },
@@ -158,6 +163,7 @@ describe.runIf(hasDatabase)("the app database on Postgres", () => {
     expect(await prisma.shop.findUnique({ where: { shop } })).toEqual({
       shop,
       plan: "free",
+      planYearly: null,
       planCheckedAt: null,
       planOnStore: null,
       resolvedAt: null,
@@ -167,6 +173,7 @@ describe.runIf(hasDatabase)("the app database on Postgres", () => {
     ).toEqual({
       shop: otherShop,
       plan: "standard",
+      planYearly: false,
       planCheckedAt: checkedAt,
       planOnStore: "standard",
       resolvedAt: null,

@@ -60,6 +60,12 @@ describe("privacy policy", () => {
     );
   });
 
+  it("names what the plan record holds (ARCHITECTURE §14)", () => {
+    expect(policy).toContain(
+      "which Fitted plan your store is on and whether it is billed monthly or yearly",
+    );
+  });
+
   it("names every service that receives data and what it gets", () => {
     for (const name of ["Shopify", "Railway", "OpenAI"])
       expect(policy).toContain(name);

@@ -24,15 +24,26 @@ const now = new Date("2026-11-18T12:00:00Z");
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status });
-const subscription = (...handles: (string | null)[]) =>
+const billed = (billingPeriod: unknown, ...handles: (string | null)[]) =>
   json({
     data: {
-      activeSubscription: { items: handles.map((handle) => ({ handle })) },
+      activeSubscription: {
+        billingPeriod,
+        items: handles.map((handle) => ({ handle })),
+      },
     },
   });
-const row = (plan: string, minutesOld: number, planOnStore = plan) => ({
+const subscription = (...handles: (string | null)[]) =>
+  billed("EVERY_30_DAYS", ...handles);
+const row = (
+  plan: string,
+  minutesOld: number,
+  planOnStore = plan,
+  planYearly: boolean | null = false,
+) => ({
   shop,
   plan,
+  planYearly,
   planCheckedAt: new Date(Date.now() - minutesOld * 60_000),
   planOnStore,
   resolvedAt: null,
@@ -45,8 +56,17 @@ const storeWrites = () =>
   adminGraphql.mock.calls
     .filter(([query]) => String(query).includes("metafieldsSet"))
     .map(([, options]) => options.variables.metafields);
-const confirmed = (plan: string) => ({ plan, checkFailed: false });
-const failed = (plan: string) => ({ plan, checkFailed: true });
+const confirmed = (plan: string, yearly: boolean | null = false) => ({
+  plan,
+  yearly,
+  checkFailed: false,
+});
+// `yearly` null: no read named a known billing period.
+const failed = (plan: string, yearly: boolean | null = false) => ({
+  plan,
+  yearly,
+  checkFailed: true,
+});
 
 beforeEach(async () => {
   vi.resetAllMocks();
@@ -144,6 +164,7 @@ describe("getPlan", () => {
     );
     expect(init.headers["X-Shopify-Access-Token"]).toBe(token);
     expect(JSON.parse(init.body).variables).toEqual({ appId, shopId });
+    expect(JSON.parse(init.body).query).toContain("billingPeriod");
     expect(unauthenticatedAdmin).toHaveBeenCalledWith(shop);
     expect(storeWrites()).toEqual([
       [
@@ -156,13 +177,77 @@ describe("getPlan", () => {
         },
       ],
     ]);
-    const data = { plan: "pro", planCheckedAt: now, planOnStore: "pro" };
+    const data = {
+      plan: "pro",
+      planYearly: false,
+      planCheckedAt: now,
+      planOnStore: "pro",
+    };
     expect(upsert).toHaveBeenCalledExactlyOnceWith({
       where: { shop },
       create: { shop, ...data },
       update: data,
     });
   });
+
+  it.each([
+    ["ANNUAL", true],
+    ["EVERY_30_DAYS", false],
+  ])(
+    "reads whether the plan is billed yearly from the same read: %s",
+    async (period, yearly) => {
+      findUnique.mockResolvedValue(row("standard", 6, "standard", !yearly));
+      fetchMock.mockResolvedValue(billed(period, "standard"));
+
+      await expect(billing.getPlan(shop)).resolves.toEqual(
+        confirmed("standard", yearly),
+      );
+      expect(upsert.mock.calls[0][0].update).toMatchObject({
+        plan: "standard",
+        planYearly: yearly,
+      });
+    },
+  );
+
+  it("serves a fresh cached plan with the interval it was confirmed with", async () => {
+    findUnique.mockResolvedValue(row("pro", 1, "pro", true));
+
+    await expect(billing.getPlan(shop)).resolves.toEqual(
+      confirmed("pro", true),
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps the last confirmed interval with the plan when a check fails", async () => {
+    findUnique.mockResolvedValue(row("pro", 6, "pro", true));
+    fetchMock.mockImplementation(() => json({}, 500));
+
+    await expect(billing.getPlan(shop)).resolves.toEqual(failed("pro", true));
+  });
+
+  it.each([
+    ["no billing period", undefined],
+    ["an unknown billing period", "EVERY_7_DAYS"],
+  ])(
+    "still confirms the plan from a subscription with %s, with no interval to price",
+    async (_, period) => {
+      findUnique.mockResolvedValue(row("standard", 6));
+      fetchMock.mockResolvedValue(billed(period, "pro"));
+
+      await expect(billing.getPlan(shop)).resolves.toEqual(
+        confirmed("pro", null),
+      );
+      expect(storeWrites()).toMatchObject([[{ value: "pro" }]]);
+      expect(upsert.mock.calls[0][0].update).toMatchObject({
+        plan: "pro",
+        planYearly: null,
+      });
+      const logged = vi.mocked(console.log).mock.calls.map(([line]) => line);
+      expect(logged.map((line) => JSON.parse(line))).toEqual([
+        { level: "warn", msg: expect.any(String), shop, route: "billing" },
+      ]);
+    },
+  );
 
   it("leaves the store alone when the plan hasn't changed", async () => {
     findUnique.mockResolvedValue(row("standard", 6));
@@ -267,14 +352,14 @@ describe("getPlan", () => {
     findUnique.mockResolvedValue(null);
     fetchMock.mockImplementation(() => json({}, 500));
 
-    await expect(billing.getPlan(shop)).resolves.toEqual(failed("free"));
+    await expect(billing.getPlan(shop)).resolves.toEqual(failed("free", null));
   });
 
   it("fails the check without calling the Partner API when it isn't configured", async () => {
     vi.stubEnv("SHOPIFY_PARTNER_API_ACCESS_TOKEN", "");
     findUnique.mockResolvedValue(null);
 
-    await expect(billing.getPlan(shop)).resolves.toEqual(failed("free"));
+    await expect(billing.getPlan(shop)).resolves.toEqual(failed("free", null));
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -309,7 +394,7 @@ describe("getPlan", () => {
     await billing.getPlan(shop);
 
     await vi.advanceTimersByTimeAsync(9_999);
-    await expect(billing.getPlan(shop)).resolves.toEqual(failed("free"));
+    await expect(billing.getPlan(shop)).resolves.toEqual(failed("free", null));
     expect(fetchMock).toHaveBeenCalledOnce();
 
     await vi.advanceTimersByTimeAsync(1);
@@ -552,7 +637,9 @@ describe("getPlan", () => {
       fetchMock
         .mockImplementationOnce(throttled)
         .mockImplementationOnce(() => subscription("pro"));
-      await expect(billing.getPlan(shop)).resolves.toEqual(failed("free"));
+      await expect(billing.getPlan(shop)).resolves.toEqual(
+        failed("free", null),
+      );
 
       const other = billing.getPlan(otherShop);
       await vi.advanceTimersByTimeAsync(1_999);

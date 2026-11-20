@@ -64,7 +64,7 @@ Postgres 18 on Railway (#8, `DATABASE_URL`), and the same version locally from `
 | Table          | Holds                                                                                                                     | Step     |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------- | -------- |
 | `Session`      | The template's sessions: offline, plus online ones with the staff member's name and email from #131 (§3)                  | exists   |
-| `Shop`         | `shop` (key), `plan`, `planCheckedAt`, `planOnStore` (last value written to `$app.plan`), `resolvedAt`                    | #17      |
+| `Shop`         | `shop` (key), `plan`, `planYearly`, `planCheckedAt`, `planOnStore` (last value written to `$app.plan`), `resolvedAt`      | #17      |
 | `ChartVersion` | `shop`, `chartId`, `createdAt`, `by` (display name or source), `summary`, `snapshot` (json)                               | #24      |
 | `Job`          | `shop`, `kind` (`import` or `resolve`), `status` (`running`, `done`, `failed`), `progress`, `result`, `error`, timestamps | #73, #34 |
 | `Event`        | `shop`, `id`, `type`, `chartId`, `productId`, `size`, `createdAt`; unique on `(shop, id)`                                 | #44      |

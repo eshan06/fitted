@@ -35,6 +35,7 @@ model Session {
 model Shop {
   shop          String    @id
   plan          String
+  planYearly    Boolean? // billed yearly, from the read that confirmed `plan`; null if no read said
   planCheckedAt DateTime?
   planOnStore   String?
   resolvedAt    DateTime?

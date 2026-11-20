@@ -171,13 +171,13 @@ Liquid reads app-owned metafields whatever their storefront access, so none of t
 
 ## 8. Plans and gating
 
-Fitted bills through Shopify App Pricing: plans are set up in the Partner Dashboard (#49) with handles `free`, `standard` and `pro`, monthly and yearly. The app never creates charges. The active plan comes from the Partner API's `activeSubscription(appId, shopId)` (its `items[].handle`), not the Admin API, and App Pricing sends no webhooks. The Partner API token is created with the least access that allows that query. `app/models/billing.server.ts` (#17):
+Fitted bills through Shopify App Pricing: plans are set up in the Partner Dashboard (#49) with handles `free`, `standard` and `pro`, monthly and yearly. The app never creates charges. The active plan comes from the Partner API's `activeSubscription(appId, shopId)` (its `items[].handle`, and its `billingPeriod` for the price Home shows), not the Admin API, and App Pricing sends no webhooks. The Partner API token is created with the least access that allows that query. `app/models/billing.server.ts` (#17):
 
-- Caches the confirmed plan on the `Shop` row and re-checks when it is over 5 minutes old, on the next admin load. The welcome link after a plan change carries `plan_handle`; the app re-checks at once.
+- Caches the confirmed plan, and whether it's billed yearly, on the `Shop` row and re-checks when it is over 5 minutes old, on the next admin load. The welcome link after a plan change carries `plan_handle`; the app re-checks at once.
 - Every check, failed or not, keeps at least 10 seconds from the shop's last one, and a 429 from the Partner API backs off; the Partner API's rate limit is shared across every shop. A welcome-link check inside the gap is delayed, never dropped.
 - If a plan check fails, it keeps the last confirmed plan (Free if none) and shows a banner saying the plan couldn't be checked, with Try again. A failed check never changes the storefront: `$app.plan` changes only on a confirmed read.
-- A missing subscription or an unknown handle is Free.
-- After a confirmed read, it writes `$app.plan` with the offline session (a staff member's own access may not allow it) when the plan differs from `Shop.planOnStore`. `app/uninstalled` resets the cached plan to Free and clears `planOnStore` and `planCheckedAt`, so a reinstall always checks and writes again, and reads as Free, not the plan from before, if that check fails.
+- A missing subscription or an unknown handle is Free. An unknown `billingPeriod` still confirms the plan; on a paid plan Home then shows no plan banner rather than guess a price.
+- After a confirmed read, it writes `$app.plan` with the offline session (a staff member's own access may not allow it) when the plan differs from `Shop.planOnStore`. `app/uninstalled` resets the cached plan to Free and clears `planYearly`, `planOnStore` and `planCheckedAt`, so a reinstall always checks and writes again, and reads as Free, not the plan from before, if that check fails.
 - A cancellation that happens outside the app is seen on the next admin load (Shopify gives no webhook); until then the storefront keeps the last plan.
 
 | Gate                                              | Free                     | Standard  | Pro       |
