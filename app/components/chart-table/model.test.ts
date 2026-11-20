@@ -348,7 +348,12 @@ describe("removing a size or a measurement", () => {
     const added = addSize(d);
     const row = added.content.tables[0].rows.at(-1)!.id;
     expect(removal(added, { row }).text).toBeNull();
-    const typed = setCell(added, row, "bust", "40");
+    // A name of only spaces reads as no name.
+    const typed = setWord(
+      setCell(added, row, "bust", "40"),
+      `t1.${row}.size`,
+      " ",
+    );
     expect(removal(typed, { row })).toMatchObject({
       heading: "Remove size 3?",
       text: "Saving removes Size 3's values: Bust 40.",

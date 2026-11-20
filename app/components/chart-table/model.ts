@@ -320,7 +320,7 @@ export type Selected =
 const sizeOf = (d: Draft, ri: number) => {
   const t = table(d);
   const w = d.content.words[`${t.id}.${t.rows[ri].id}.${t.columns[0].id}`];
-  return w || `Size ${ri + 1}`;
+  return w?.trim() || `Size ${ri + 1}`;
 };
 export const colName = (d: Draft, col: string) =>
   d.content.words[`${table(d).id}.${col}`] || "Measurement";
