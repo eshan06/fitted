@@ -684,7 +684,8 @@ export type Pasted = { head: string[]; rows: string[][]; columns: Column[] };
 export function readPaste(text: string): Pasted | null {
   const lines = text
     .split(/\r\n|\r|\n/)
-    .map((l) => l.split("\t").map((c) => c.trim()))
+    // A lone dash is no value, as in CSV import.
+    .map((l) => l.split("\t").map((c) => c.trim().replace(/^[-–—]$/, "")))
     .filter((l) => l.some(Boolean));
   if (lines.length < 2) return null;
   // Columns with nothing in them, as a spreadsheet's padding, are left out.

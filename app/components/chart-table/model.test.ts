@@ -719,6 +719,14 @@ describe("Paste whole chart", () => {
       // Mostly words is text.
       { id: "", kind: "text" },
     ]);
+    const lb = pasted(
+      "Size\tWeight lbs\tBust\nS\t130\t-\nM\t140\t–\nL\t150\t36",
+    );
+    expect(lb.columns.slice(1)).toEqual([
+      { id: "", kind: "measure", unit: "lb", convert: true },
+      { id: "", kind: "measure", convert: true },
+    ]);
+    expect(lb.rows[0]).toEqual(["S", "130", ""]);
     expect(p.head.slice(3)).toEqual([
       "Weight",
       "Diameter (mm)",
