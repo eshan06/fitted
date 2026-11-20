@@ -121,11 +121,7 @@ async function upload(request: Request, admin: Admin, shop: string) {
     );
   try {
     return {
-      image: await uploadImage(admin, shop, {
-        name: file.name,
-        mime,
-        bytes,
-      }),
+      image: await uploadImage(admin, shop, { name: file.name, mime, bytes }),
     };
   } catch (err) {
     if (!(err instanceof AdminApiError)) throw err;
