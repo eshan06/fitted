@@ -14,8 +14,10 @@ import {
   RulesPlanError,
   RulesValidationError,
   StoredRulesError,
+  chartPreview,
   countProducts,
   getRules,
+  pickedNames,
   resolveChart,
   saveRules,
   validateRules,
@@ -789,5 +791,92 @@ describe("counting the store's products", () => {
       json({ data: { productsCount: null } }),
     );
     expect(await countProducts(admin)).toBeNull();
+  });
+
+  it("previews a chart's products and links the admin's list of them", async () => {
+    const graphql = vi.fn(async () =>
+      json({
+        data: {
+          productsCount: { count: 10000, precision: "AT_LEAST" },
+          products: {
+            nodes: [
+              {
+                id: P1,
+                title: "Linen wrap top",
+                featuredMedia: { preview: { image: { url: "https://cdn/1" } } },
+              },
+              {
+                id: "gid://shopify/Product/12",
+                title: "Tank",
+                featuredMedia: null,
+              },
+            ],
+          },
+          currentAppInstallation: { app: { id: "gid://shopify/App/77" } },
+        },
+      }),
+    );
+    const admin = { graphql } as unknown as Admin;
+    expect(await chartPreview(admin, "s-1.myshopify.com", C1)).toEqual({
+      count: 10000,
+      atLeast: true,
+      products: [
+        { id: P1, title: "Linen wrap top", image: "https://cdn/1" },
+        { id: "gid://shopify/Product/12", title: "Tank", image: null },
+      ],
+      url: `https://admin.shopify.com/store/s-1/products?query=${encodeURIComponent(`metafields.app--77.chart:"${C1}"`)}`,
+    });
+    expect(graphql.mock.calls[0]).toEqual([
+      expect.stringContaining("products(first: 5, query: $q"),
+      { variables: { q: `metafields.$app.chart:"${C1}"` } },
+    ]);
+    // The id is written into search text, so only a chart's gets through.
+    await expect(
+      chartPreview(admin, "s-1.myshopify.com", `${C1}" OR title:*`),
+    ).rejects.toThrow(RulesValidationError);
+    expect(graphql).toHaveBeenCalledOnce();
+  });
+
+  it("names every picked product and collection, 250 ids a request, skipping deleted ones", async () => {
+    const products = Array.from(
+      { length: 300 },
+      (_, i) => `gid://shopify/Product/${i + 1}`,
+    );
+    const graphql = vi.fn(
+      async (_q: string, { variables }: { variables: { ids: string[] } }) =>
+        json({
+          data: {
+            nodes: variables.ids.map((id) =>
+              id.endsWith("/2") ? null : { id, title: `T${id.split("/")[4]}` },
+            ),
+          },
+        }),
+    );
+    const admin = { graphql } as unknown as Admin;
+    const picked: Rules = {
+      v: 1,
+      order: [C1, C2],
+      charts: {
+        [C1]: {
+          match: [{ field: "product", op: "is", ids: products }],
+          exclude: [{ field: "collection", op: "is", ids: [COL1] }],
+          auto: true,
+        },
+        // Named twice, asked for once.
+        [C2]: {
+          match: [{ field: "product", op: "is", ids: [products[0]] }],
+          exclude: [],
+          auto: true,
+        },
+      },
+    };
+    const names = await pickedNames(admin, picked);
+    expect(graphql).toHaveBeenCalledTimes(2);
+    expect(graphql.mock.calls[0][1].variables.ids).toHaveLength(250);
+    expect(graphql.mock.calls[1][1].variables.ids).toHaveLength(51);
+    expect(names[products[0]]).toBe("T1");
+    expect(names[COL1]).toBe("T21");
+    expect(names).not.toHaveProperty("gid://shopify/Product/2");
+    expect(Object.keys(names)).toHaveLength(300);
   });
 });

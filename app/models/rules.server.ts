@@ -1052,3 +1052,74 @@ export async function countProducts(admin: Admin) {
   // The field is nullable; the banner then says "your products".
   return data.productsCount?.count ?? null;
 }
+
+/**
+ * The Display rules screen's matches card: how many products show a chart,
+ * the first five by title, and the admin's product list filtered to them
+ * (§6, Counts). Shopify counts up to 10,000; `atLeast` marks the cap.
+ */
+export async function chartPreview(admin: Admin, shop: string, id: string) {
+  // Written into the search text, so nothing but a chart id gets through.
+  if (!GID.chart.test(id))
+    throw new RulesValidationError({ id: "Not a chart" });
+  type Image = { preview: { image: { url: string } | null } | null } | null;
+  const data = await adminGraphql<{
+    productsCount: { count: number; precision: string } | null;
+    products: { nodes: { id: string; title: string; featuredMedia: Image }[] };
+    currentAppInstallation: { app: { id: string } };
+  }>(
+    admin,
+    `#graphql
+    query FittedChartPreview($q: String!) {
+      productsCount(query: $q) { count precision }
+      products(first: 5, query: $q, sortKey: TITLE) {
+        nodes { id title featuredMedia { preview { image { url(transform: { maxWidth: 72, maxHeight: 72 }) } } } }
+      }
+      currentAppInstallation { app { id } }
+    }`,
+    { q: `metafields.$app.chart:"${id}"` },
+    { retry: true },
+  );
+  // The admin's search names the definition by its namespace, `app--<app id>` (§4).
+  const app = data.currentAppInstallation.app.id.split("/").pop();
+  const query = `metafields.app--${app}.chart:"${id}"`;
+  const store = shop.replace(/\.myshopify\.com$/, "");
+  return {
+    count: data.productsCount?.count ?? 0,
+    atLeast: data.productsCount?.precision === "AT_LEAST",
+    products: data.products.nodes.map((p) => ({
+      id: p.id,
+      title: p.title,
+      image: p.featuredMedia?.preview?.image?.url ?? null,
+    })),
+    url: `https://admin.shopify.com/store/${store}/products?query=${encodeURIComponent(query)}`,
+  };
+}
+
+/** The titles of the products and collections the rules pick, by id; a deleted one has none. */
+export async function pickedNames(admin: Admin, rules: Rules) {
+  const ids = [
+    ...new Set(
+      Object.values(rules.charts).flatMap((r) =>
+        [...r.match, ...r.exclude].flatMap((c) => ("ids" in c ? c.ids : [])),
+      ),
+    ),
+  ];
+  const names: Record<string, string> = {};
+  // Shopify takes at most 250 ids in a list.
+  for (let i = 0; i < ids.length; i += 250) {
+    const data = await adminGraphql<{
+      nodes: ({ id?: string; title?: string } | null)[];
+    }>(
+      admin,
+      `#graphql
+      query FittedPickedNames($ids: [ID!]!) {
+        nodes(ids: $ids) { ... on Product { id title } ... on Collection { id title } }
+      }`,
+      { ids: ids.slice(i, i + 250) },
+      { retry: true },
+    );
+    for (const n of data.nodes) if (n?.id && n.title) names[n.id] = n.title;
+  }
+  return names;
+}

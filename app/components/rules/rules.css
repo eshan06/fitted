@@ -73,3 +73,47 @@
 .editor .check .help {
   display: block;
 }
+/* The chart's rules with its matches beside them; everything else spans both. */
+.editor.rules {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  align-items: start;
+}
+.editor.rules > :not(aside, [aria-labelledby="rule"]),
+.editor.rules:not(:has(> aside)) > * {
+  grid-column: 1 / -1;
+}
+@media (max-width: 760px) {
+  .editor.rules {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.editor .picked > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.editor .matches {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.editor .matches li {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 0;
+  border-top: 1px solid #eef0f1;
+}
+.editor .matches img,
+.editor .matches .thumb {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border-radius: 8px;
+  background: #e9e6e1;
+  object-fit: cover;
+}
+.editor .cond .field[aria-label="Condition"] {
+  flex-basis: 100px;
+}

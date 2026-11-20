@@ -9,15 +9,17 @@ import {
   pricingPlansUrl,
 } from "../models/admin.server";
 import { getPlan } from "../models/billing.server";
-import { chartPages } from "../models/chart.server";
+import { chartPages, countChartProducts } from "../models/chart.server";
 import {
   RulesConflictError,
   RulesPlanError,
   RulesValidationError,
   StoredRulesError,
+  chartPreview,
   countProducts,
   getRules,
   latestResolve,
+  pickedNames,
   saveRules,
   startResolve,
 } from "../models/rules.server";
@@ -50,15 +52,32 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // The screen polls this while a resolve runs.
   if (new URL(request.url).searchParams.has("job"))
     return { mode: "job" as const, job: await latestResolve(shop) };
+  // The matches card of the chart on screen.
+  const id = new URL(request.url).searchParams.get("preview");
+  if (id !== null)
+    try {
+      const preview = await optional(shop, chartPreview(admin, shop, id));
+      return { mode: "preview" as const, preview };
+    } catch (err) {
+      if (!(err instanceof RulesValidationError)) throw err;
+      return data({ mode: "preview" as const, preview: null }, { status: 400 });
+    }
   try {
     const charts = [];
     for await (const page of chartPages(admin))
       charts.push(...page.map((c) => ({ id: c.id, name: c.name })));
     if (!charts.length) return { mode: "empty" as const };
-    const [job, products, { plan }] = await Promise.all([
+    const [job, products, counts, { plan }] = await Promise.all([
       latestResolve(shop),
       // Staff without Products access can't count them.
       optional(shop, countProducts(admin)),
+      optional(
+        shop,
+        countChartProducts(
+          admin,
+          charts.map((c) => c.id),
+        ),
+      ),
       getPlan(shop),
     ]);
     const free = plan === "free";
@@ -70,18 +89,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       charts,
       job,
       products,
+      counts,
       free,
       plansUrl,
     };
     try {
       const { rules, digest } = await getRules(admin);
-      return { ...base, rules, digest, damaged: null };
+      // Without them, picks show as a count.
+      const names = await optional(shop, pickedNames(admin, rules));
+      return { ...base, rules, digest, damaged: null, names: names ?? {} };
     } catch (err) {
       if (!(err instanceof StoredRulesError)) throw err;
       // A valid save with this digest replaces them (§6).
       const rules = { v: 1 as const, order: [], charts: {} };
       const damaged = storedProblems(err.fieldErrors, err.value, charts);
-      return { ...base, rules, digest: err.digest, damaged };
+      return { ...base, rules, digest: err.digest, damaged, names: {} };
     }
   } catch (err) {
     if (!(err instanceof AdminApiError)) throw err;

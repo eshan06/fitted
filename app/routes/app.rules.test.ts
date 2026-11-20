@@ -19,6 +19,9 @@ const m = vi.hoisted(() => ({
   pricingPlansUrl: vi.fn(),
   latestResolve: vi.fn(),
   countProducts: vi.fn(),
+  countChartProducts: vi.fn(),
+  pickedNames: vi.fn(),
+  chartPreview: vi.fn(),
 }));
 vi.mock("../shopify.server", () => ({
   authenticate: { admin: m.authenticate },
@@ -36,6 +39,7 @@ vi.mock("../models/billing.server", async (orig) => ({
 vi.mock("../models/chart.server", async (orig) => ({
   ...(await orig<typeof import("../models/chart.server")>()),
   chartPages: m.chartPages,
+  countChartProducts: m.countChartProducts,
 }));
 // The real validator and errors; only the Shopify calls are stubbed.
 vi.mock("../models/rules.server", async (orig) => ({
@@ -45,6 +49,8 @@ vi.mock("../models/rules.server", async (orig) => ({
   startResolve: m.startResolve,
   latestResolve: m.latestResolve,
   countProducts: m.countProducts,
+  pickedNames: m.pickedNames,
+  chartPreview: m.chartPreview,
 }));
 const { action, loader } = await import("./app.rules");
 const { COPY } = await import("../components/rules/RulesEditor");
@@ -58,6 +64,8 @@ const JOB = { status: "done", error: null, at: 1000, merchant: true };
 const PLANS =
   "https://admin.shopify.com/store/fitted-dev/charges/fitted-5/pricing_plans";
 const CHART = "gid://shopify/Metaobject/42";
+const COUNTS = { [CHART]: { count: 148, atLeast: false } };
+const NAMES = { "gid://shopify/Product/1": "Linen wrap top" };
 const admin = { graphql: vi.fn() };
 const rules = (): Rules => ({
   v: 1,
@@ -110,6 +118,8 @@ beforeEach(() => {
   m.latestResolve.mockResolvedValue(JOB);
   m.countProducts.mockResolvedValue(340);
   m.pricingPlansUrl.mockResolvedValue(PLANS);
+  m.countChartProducts.mockResolvedValue(COUNTS);
+  m.pickedNames.mockResolvedValue(NAMES);
 });
 afterEach(() => vi.restoreAllMocks());
 
@@ -132,9 +142,16 @@ describe("loading display rules", () => {
       damaged: null,
       job: JOB,
       products: 340,
+      counts: COUNTS,
+      names: NAMES,
       free: false,
       plansUrl: null,
     });
+    expect(m.countChartProducts).toHaveBeenCalledWith(admin, [
+      CHART,
+      "gid://shopify/Metaobject/7",
+    ]);
+    expect(m.pickedNames).toHaveBeenCalledWith(admin, rules());
     expect(m.authenticate).toHaveBeenCalledOnce();
     expect(m.latestResolve).toHaveBeenCalledWith(SHOP);
     expect(m.pricingPlansUrl).not.toHaveBeenCalled();
@@ -153,12 +170,49 @@ describe("loading display rules", () => {
     // Staff without Products access can't count them.
     m.countProducts.mockRejectedValue(new AdminApiError("Denied", "raw"));
     m.pricingPlansUrl.mockRejectedValue(new AdminApiError("Down", "raw"));
+    // Without counts the list shows none; without names picks show a count.
+    m.countChartProducts.mockRejectedValue(new AdminApiError("Down", "raw"));
+    m.pickedNames.mockRejectedValue(new AdminApiError("Down", "raw"));
     expect(await load()).toMatchObject({
       mode: "edit",
       products: null,
       plansUrl: null,
+      counts: null,
+      names: {},
     });
-    expect(logs).toHaveLength(2);
+    expect(logs).toHaveLength(4);
+  });
+
+  it("answers the matches card with the chart's products, from the session's shop", async () => {
+    const preview = { count: 148, atLeast: false, products: [], url: "u" };
+    m.chartPreview.mockResolvedValue(preview);
+    const q = `?preview=${encodeURIComponent(CHART)}`;
+    expect(await load(q)).toEqual({ mode: "preview", preview });
+    expect(m.chartPreview).toHaveBeenCalledWith(admin, SHOP, CHART);
+    expect(m.chartPages).not.toHaveBeenCalled();
+  });
+
+  it("refuses a preview of anything but a chart, before asking Shopify", async () => {
+    // The real check: the id goes into Shopify's search text.
+    const real = await vi.importActual<typeof import("../models/rules.server")>(
+      "../models/rules.server",
+    );
+    m.chartPreview.mockImplementation(real.chartPreview);
+    for (const id of ['1" OR title:*', "gid://shopify/Product/1", ""])
+      expect(await result(load(`?preview=${encodeURIComponent(id)}`))).toEqual({
+        status: 400,
+        body: { mode: "preview", preview: null },
+      });
+    expect(admin.graphql).not.toHaveBeenCalled();
+  });
+
+  it("leaves the matches card out, and logs, when Shopify gives no preview", async () => {
+    m.chartPreview.mockRejectedValue(new AdminApiError("Denied", "raw"));
+    expect(await load(`?preview=${encodeURIComponent(CHART)}`)).toEqual({
+      mode: "preview",
+      preview: null,
+    });
+    expect(logs).toHaveLength(1);
   });
 
   it("says rules need a chart when the store has none", async () => {

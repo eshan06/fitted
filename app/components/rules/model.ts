@@ -89,6 +89,62 @@ export function check(rules: Rules): FieldErrors {
   return errs;
 }
 
+const n = (x: number) => x.toLocaleString("en-US");
+const plural = (x: number, noun: string) =>
+  `${n(x)} ${noun}${x === 1 ? "" : "s"}`;
+
+/**
+ * The two limits the screen checks before a save, as the canvas words them,
+ * marking the condition that goes over (rules.server.ts's MAX_IDS and
+ * MAX_METAFIELDS; a test keeps them equal).
+ */
+export const MAX_IDS = 1000;
+export const MAX_METAFIELDS = 20;
+export function limits(rules: Rules) {
+  const errors: FieldErrors = {};
+  const keys = new Set<string>();
+  let metafield: string | undefined;
+  let picked: { path: string; here: string } | undefined;
+  let total = 0;
+  for (const id of rules.order)
+    for (const list of ["match", "exclude"] as const)
+      rules.charts[id][list].forEach((c, i) => {
+        const p = `charts.${id}.${list}.${i}`;
+        // A key the checks refuse doesn't count, as on the server.
+        if ("key" in c && KEY.test(c.key) && !/^app--/i.test(c.key)) {
+          keys.add(c.key);
+          if (keys.size > MAX_METAFIELDS) metafield ??= `${p}.key`;
+        }
+        if ("ids" in c && (total += c.ids.length) > MAX_IDS)
+          picked ??= { path: `${p}.ids`, here: plural(c.ids.length, c.field) };
+      });
+  if (metafield)
+    errors[metafield] =
+      `This would be the ${MAX_METAFIELDS + 1}st metafield. The most is ${MAX_METAFIELDS}.`;
+  if (picked)
+    errors[picked.path] =
+      `${picked.here} picked here, ${n(total)} across all your charts. The most is ${n(MAX_IDS)}.`;
+  return { errors, metafield, ids: picked && { path: picked.path, total } };
+}
+
+/** What a picker shows: up to 3 names, else how many are picked. */
+export function pickedText(
+  c: { field: string; ids: string[] },
+  names: Record<string, string>,
+) {
+  if (!c.ids.length) return "None picked yet";
+  const known = c.ids.map((id) => names[id]);
+  return c.ids.length <= 3 && known.every(Boolean)
+    ? known.join(", ")
+    : plural(c.ids.length, c.field);
+}
+
+/** A chart's product count in the priority list. */
+type Count = { count: number; atLeast: boolean };
+export const amount = (c: Count) => `${n(c.count)}${c.atLeast ? "+" : ""}`;
+export const productCount = (c: Count) =>
+  `${amount(c)} product${c.count === 1 && !c.atLeast ? "" : "s"}`;
+
 /** The element a field error marks: the picker's button stands for its ids. */
 export const elementId = (path: string) => {
   const [, id, list, i, part = ""] = path.split(".");

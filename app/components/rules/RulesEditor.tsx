@@ -20,9 +20,17 @@ export type Loaded = {
   damaged: string[] | null; // the saved rules' problems
   job: Job;
   products: number | null;
+  counts: Record<string, { count: number; atLeast: boolean }> | null;
+  names: Record<string, string>; // picked products' and collections' titles
   free: boolean;
   plansUrl: string | null;
 };
+type Preview = {
+  count: number;
+  atLeast: boolean;
+  products: { id: string; title: string; image: string | null }[];
+  url: string;
+} | null;
 type Answer = {
   ok?: true;
   after?: number; // the newest resolve when this one was asked for
@@ -30,6 +38,7 @@ type Answer = {
   error?: { code: string; message: string };
   checkFailed?: boolean;
   plansUrl?: string | null;
+  limits?: ReturnType<typeof model.limits>; // the screen's own
 };
 type Rule = Rules["charts"][string];
 type List = "match" | "exclude";
@@ -92,6 +101,7 @@ export function RulesEditor(props: {
   const fetcher = useFetcher<Answer>();
   const apply = useFetcher<Answer>();
   const poll = useFetcher<{ job: Job }>();
+  const preview = useFetcher<{ preview: Preview }>();
   const revalidator = useRevalidator();
   const [redo, setRedo] = useState(false); // Set up rules again
   const ids = new Set(loaded.charts.map((c) => c.id));
@@ -104,6 +114,8 @@ export function RulesEditor(props: {
   const [dismissed, setDismissed] = useState<Answer>();
   const [selected, setSelected] = useState<string>();
   const [dragging, setDragging] = useState(-1);
+  const [names, setNames] = useState(loaded.names);
+  const [all, setAll] = useState(false); // Show all, at the chart limit
   // Newer rules loaded (a save, Reload latest): they replace the edits.
   if (loaded.digest !== base.digest) {
     const initial = model.forCharts(loaded.rules, ids);
@@ -161,6 +173,11 @@ export function RulesEditor(props: {
       ? selected
       : (draft.order[0] ?? loaded.charts[0].id);
   const rule = draft.charts[current] ?? NONE;
+  // The chart on screen's matches, again once a resolve ends.
+  const { load: show } = preview;
+  useEffect(() => {
+    if (!applying) show(`/app/rules?preview=${encodeURIComponent(current)}`);
+  }, [current, applying, show]);
 
   const setRule = (id: string, next: Rule) =>
     setDraft((d) => ({
@@ -181,9 +198,10 @@ export function RulesEditor(props: {
   };
   const save = () => {
     const rules = model.toSave(draft);
-    const fieldErrors = model.check(rules);
+    const limits = model.limits(rules);
+    const fieldErrors = { ...model.check(rules), ...limits.errors };
     const bad = Object.keys(fieldErrors).length > 0;
-    setLocal(bad ? { fieldErrors } : null);
+    setLocal(bad ? { fieldErrors, limits } : null);
     const body = { rules, digest: base.digest } as never;
     if (!bad)
       return fetcher.submit(body, {
@@ -210,7 +228,14 @@ export function RulesEditor(props: {
         multiple: true,
         selectionIds: c.ids.map((id) => ({ id })),
       })
-      .then((got) => got && set({ ...c, ids: got.map((r) => r.id) }))
+      .then((got) => {
+        if (!got) return;
+        setNames((n) => ({
+          ...n,
+          ...Object.fromEntries(got.map((r) => [r.id, r.title])),
+        }));
+        set({ ...c, ids: got.map((r) => r.id) });
+      })
       .catch(() =>
         shopify.toast.show("The picker didn't open. Try again.", {
           isError: true,
@@ -236,9 +261,15 @@ export function RulesEditor(props: {
   const plan = err?.code === "plan";
   const [paid] = plan ? marked.map(([p]) => p) : [];
   const paidField = model.LABELS[model.at(draft, paid ?? "")?.field ?? "tag"];
+  const over = notice?.limits;
   const listed = plan
     ? []
-    : model.problems(draft, errors, loaded.charts, current);
+    : model.problems(
+        draft,
+        Object.fromEntries(marked.filter(([p]) => !over?.errors[p])),
+        loaded.charts,
+        current,
+      );
   // Conditions, not problems: one can have several. At least 1 for a message about the whole document.
   const rows =
     new Set(
@@ -273,6 +304,7 @@ export function RulesEditor(props: {
           path={p}
           errors={errors}
           free={loaded.free}
+          names={names}
           message={
             plan && errors[p]
               ? `${old}On Free, change it back or remove it.`
@@ -299,6 +331,19 @@ export function RulesEditor(props: {
   const unranked = loaded.charts.filter(
     (c) => c.id !== current && !draft.order.includes(c.id),
   );
+  // At the most charts rules rank, the list shortens and each can come off it.
+  const full = draft.order.length >= model.MAX_CHARTS;
+  const ranks = full && !all ? draft.order.slice(0, 10) : draft.order;
+  const takeOff = (id: string) =>
+    setDraft((d) => ({
+      ...d,
+      order: d.order.filter((x) => x !== id),
+      charts: Object.fromEntries(
+        Object.entries(d.charts).filter(([x]) => x !== id),
+      ),
+    }));
+  // Undefined while it loads, null when Shopify gave none.
+  const matches = preview.state === "idle" ? preview.data?.preview : undefined;
 
   if (loaded.damaged && !redo)
     return (
@@ -354,7 +399,7 @@ export function RulesEditor(props: {
           Discard
         </button>
       </SaveBar>
-      <div className="editor">
+      <div className="editor rules">
         {listed.length > 0 && (
           <Banner
             copy={[
@@ -409,6 +454,48 @@ export function RulesEditor(props: {
         {(err?.code === "product_access" || err?.code === "shopify") && (
           <Banner copy={COPY[err.code]}>
             {button("Try saving again", save)}
+          </Banner>
+        )}
+        {full && (
+          <Banner
+            tone="info"
+            copy={[
+              `${draft.order.length} of ${model.MAX_CHARTS} charts ranked`,
+              "That's the most rules can rank. To add rules to another chart, take one you don't use off the list below.",
+            ]}
+          >
+            {button("Go to the list", () =>
+              document.getElementById("priority")?.scrollIntoView(),
+            )}
+          </Banner>
+        )}
+        {over?.metafield && (
+          <Banner
+            tone="info"
+            copy={[
+              `${model.MAX_METAFIELDS} of ${model.MAX_METAFIELDS} metafields in use`,
+            ]}
+          >
+            <s-paragraph>
+              That&apos;s the most rules can compare, so the{" "}
+              {link(over.metafield, "marked condition")} can&apos;t be saved.
+              Use a metafield your rules already compare, or a tag, product type
+              or vendor.
+            </s-paragraph>
+          </Banner>
+        )}
+        {over?.ids && (
+          <Banner
+            tone="info"
+            copy={[
+              `${over.ids.total.toLocaleString("en-US")} of ${model.MAX_IDS.toLocaleString("en-US")} products and collections picked`,
+            ]}
+          >
+            <s-paragraph>
+              The {link(over.ids.path, "marked condition")} goes over, so it
+              can&apos;t be saved. Use a tag (doesn&apos;t count) or a whole
+              collection (counts once) instead.
+            </s-paragraph>
           </Banner>
         )}
         {applying ? (
@@ -484,15 +571,62 @@ export function RulesEditor(props: {
             </span>
           </label>
         </section>
+        {/* Without a preview Shopify won't give, the card is left out (§15). */}
+        {matches !== null && (
+          <aside className="card" aria-label="Matching products">
+            {!matches ? (
+              <div role="status">
+                <span className="visually-hidden">
+                  Loading matching products
+                </span>
+                <span className="sk" />
+                <span className="sk short" />
+              </div>
+            ) : (
+              <>
+                <h2>
+                  {matches.count === 1 && !matches.atLeast
+                    ? "1 product matches"
+                    : `${model.productCount(matches)} match`}
+                </h2>
+                <ul className="matches">
+                  {matches.products.map((p) => (
+                    <li key={p.id}>
+                      {p.image ? (
+                        <img src={p.image} alt="" width={36} height={36} />
+                      ) : (
+                        <span className="thumb" />
+                      )}
+                      {p.title}
+                    </li>
+                  ))}
+                </ul>
+                {matches.count > 0 && (
+                  // A new tab: the admin's save bar holds this one while there are unsaved edits.
+                  <a href={matches.url} target="_blank" rel="noreferrer">
+                    See all {model.amount(matches)}
+                  </a>
+                )}
+              </>
+            )}
+          </aside>
+        )}
         <section className="card" aria-labelledby="priority">
-          <div>
-            <h2 id="priority">When more than one chart matches</h2>
-            <p className="help">
-              The chart highest in this list wins. Drag to reorder.
-            </p>
+          <div className="row">
+            <div>
+              <h2 id="priority">When more than one chart matches</h2>
+              <p className="help">
+                The chart highest in this list wins. Drag to reorder.
+              </p>
+            </div>
+            {full && (
+              <strong>
+                {draft.order.length} of {model.MAX_CHARTS} ranked
+              </strong>
+            )}
           </div>
           <ol className="ranks">
-            {draft.order.map((id, i) => (
+            {ranks.map((id, i) => (
               <li
                 key={id}
                 draggable
@@ -524,13 +658,41 @@ export function RulesEditor(props: {
                 >
                   {i + 1}. {name(id)}
                 </button>
-                {draft.charts[id].match.some((c) => c.field === "all") && (
+                {draft.charts[id].match.some((c) => c.field === "all") ? (
                   <span className="help">Everything else</span>
+                ) : (
+                  loaded.counts?.[id] && (
+                    <span className="help">
+                      {model.productCount(loaded.counts[id])}
+                    </span>
+                  )
+                )}
+                {full && (
+                  <button
+                    type="button"
+                    aria-label={`Take ${name(id)} off the list`}
+                    onClick={() => takeOff(id)}
+                  >
+                    <s-icon type="x" />
+                  </button>
                 )}
               </li>
             ))}
           </ol>
-          {unranked.length > 0 && draft.order.length < model.MAX_CHARTS && (
+          {full && (
+            <div className="row">
+              {!all && (
+                <s-button onClick={() => setAll(true)}>
+                  Show all {draft.order.length}
+                </s-button>
+              )}
+              <span className="help">
+                Taking a chart off the list removes its rules. The chart itself
+                stays.
+              </span>
+            </div>
+          )}
+          {unranked.length > 0 && !full && (
             <label>
               Add rules to another chart
               <select
@@ -558,6 +720,7 @@ function ConditionRow(props: {
   path: string;
   errors: FieldErrors;
   free: boolean;
+  names: Record<string, string>;
   message?: string; // in place of the field error
   onChange: (c: Condition) => void;
   onPick: () => void;
@@ -579,7 +742,6 @@ function ConditionRow(props: {
     e("ids"),
   ].find(Boolean);
   const noun = c.field === "product" ? "product" : "collection";
-  const n = "ids" in c ? c.ids.length : 0;
   return (
     <div>
       <div className="cond">
@@ -633,9 +795,7 @@ function ConditionRow(props: {
         )}
         {"ids" in c && (
           <span className={`${attrs("ids").className} picked`}>
-            {n
-              ? `${n.toLocaleString("en-US")} ${noun}${n === 1 ? "" : "s"}`
-              : "None picked yet"}
+            <span>{model.pickedText(c, props.names)}</span>
             <button
               type="button"
               id={model.elementId(`${path}.value`)}
