@@ -200,6 +200,9 @@ export function Dashboard(h: Extract<HomeData, { plan: unknown }>) {
     count: Math.max(all.count - covered.count, titles.length),
     atLeast: all.atLeast,
   };
+  const heading = !titles.length
+    ? "Every product has a size guide"
+    : `${num(missing)} ${missing.count === 1 && !missing.atLeast ? "product has" : "products have"} no size guide`;
   return (
     <>
       <PlanBanner {...h} />
@@ -210,33 +213,31 @@ export function Dashboard(h: Extract<HomeData, { plan: unknown }>) {
           alignItems="start"
         >
           <YourCharts rows={h.rows} />
-          {all.count > 0 &&
-            (titles.length ? (
-              <s-section
-                heading={`${num(missing)} ${missing.count === 1 && !missing.atLeast ? "product has" : "products have"} no size guide`}
-              >
-                <s-stack gap="base">
-                  <s-paragraph color="subdued">
-                    {"Shoppers on these pages can't check sizing."}
-                  </s-paragraph>
+          {all.count > 0 && (
+            // Headed inside the card, as the canvas draws it.
+            <s-section accessibilityLabel={heading}>
+              <s-stack gap="base">
+                <s-heading>{heading}</s-heading>
+                <s-paragraph color="subdued">
+                  {titles.length
+                    ? "Shoppers on these pages can't check sizing."
+                    : `All ${num(all)} products show a chart. New products get one when they match a display rule.`}
+                </s-paragraph>
+                {titles.length > 0 && (
                   <s-unordered-list>
                     {titles.map((t, i) => (
                       <s-list-item key={i}>{t}</s-list-item>
                     ))}
                   </s-unordered-list>
-                  <s-button href="/app/rules">Add a display rule</s-button>
-                </s-stack>
-              </s-section>
-            ) : (
-              <s-section heading="Every product has a size guide">
-                <s-stack gap="base">
-                  <s-paragraph color="subdued">
-                    {`All ${num(all)} products show a chart. New products get one when they match a display rule.`}
-                  </s-paragraph>
-                  <s-button href="/app/rules">Review display rules</s-button>
-                </s-stack>
-              </s-section>
-            ))}
+                )}
+                <s-button href="/app/rules">
+                  {titles.length
+                    ? "Add a display rule"
+                    : "Review display rules"}
+                </s-button>
+              </s-stack>
+            </s-section>
+          )}
         </s-grid>
       )}
     </>

@@ -271,7 +271,9 @@ describe("the screen", () => {
       "Manage",
     );
     expect(
-      el.querySelector('s-section[heading="28 products have no size guide"]'),
+      el.querySelector(
+        's-section[accessibilityLabel="28 products have no size guide"]',
+      ),
     ).not.toBeNull();
     expect(t).toContain("Shoppers on these pages can't check sizing.");
     expect(t).toContain("Merino crew socksCanvas tote bag");
@@ -297,7 +299,9 @@ describe("the screen", () => {
     );
     expect(text(el)).toContain("Shoes (US, UK, EU)27Draft");
     expect(
-      el.querySelector('s-section[heading="1 product has no size guide"]'),
+      el.querySelector(
+        's-section[accessibilityLabel="1 product has no size guide"]',
+      ),
     ).not.toBeNull();
   });
 
@@ -313,7 +317,9 @@ describe("the screen", () => {
       }),
     );
     expect(
-      el.querySelector('s-section[heading="3+ products have no size guide"]'),
+      el.querySelector(
+        's-section[accessibilityLabel="3+ products have no size guide"]',
+      ),
     ).not.toBeNull();
   });
 
@@ -352,7 +358,9 @@ describe("the screen", () => {
     );
     expect(banner(el)).toBe("Pro plan, $15 a month. No order fees.");
     expect(
-      el.querySelector('s-section[heading="Every product has a size guide"]'),
+      el.querySelector(
+        's-section[accessibilityLabel="Every product has a size guide"]',
+      ),
     ).not.toBeNull();
     expect(text(el)).toContain(
       "All 340 products show a chart. New products get one when they match a display rule.",
@@ -384,7 +392,9 @@ describe("the screen", () => {
       }),
     );
     expect(text(el)).toContain("Your charts");
-    expect(el.querySelector('s-section[heading*="size guide"]')).toBeNull();
+    expect(
+      el.querySelector('s-section[accessibilityLabel*="size guide"]'),
+    ).toBeNull();
   });
 
   it("shows the loading state, then the error with Try again that reloads", async () => {
