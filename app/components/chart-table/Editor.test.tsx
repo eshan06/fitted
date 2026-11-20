@@ -2,7 +2,7 @@
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { createRoutesStub, redirect } from "react-router";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type ChartInput, validateChart } from "../../models/chart.server";
 
 // The route's server half needs Shopify and the database; the screen doesn't.
@@ -56,6 +56,10 @@ const stored = (updatedAt = "2026-11-19T10:00:00Z") => ({
 });
 
 let root: ReturnType<typeof createRoot> | undefined;
+beforeEach(() => {
+  bridge.saveBar.leaveConfirmation.mockResolvedValue(undefined);
+  bridge.saveBar.hide.mockResolvedValue(undefined);
+});
 afterEach(() => {
   vi.clearAllMocks();
   act(() => root?.unmount());
@@ -69,8 +73,6 @@ async function open(
   path = "/app/charts/42",
 ) {
   const sent: Record<string, unknown>[] = [];
-  bridge.saveBar.leaveConfirmation.mockResolvedValue(undefined);
-  bridge.saveBar.hide.mockResolvedValue(undefined);
   const loader = vi.fn(
     () => loaded[Math.min(loader.mock.calls.length - 1, loaded.length - 1)],
   );
