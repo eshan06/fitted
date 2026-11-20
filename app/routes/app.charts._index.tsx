@@ -1,4 +1,4 @@
-// The size charts list (ARCHITECTURE §2, §5, §6, §8): status, product counts, search, Free's limit, delete.
+// The size charts list (ARCHITECTURE §2, §5, §6, §8, §13): status, product counts, search, Free's limit, delete, CSV export.
 import { Suspense, useEffect, useRef, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import {
@@ -169,13 +169,79 @@ export const filterRows = (rows: Row[], q: string, status: string) =>
       r.name.toLowerCase().includes(q.trim().toLowerCase()),
   );
 
+type Export =
+  | { state: "idle" | "busy" | "failed"; count: number }
+  | { state: "done"; count: number; file: string };
+
+// Fetched rather than linked, so App Bridge adds the session token and the
+// app's frame never navigates; read as bytes to keep the BOM (#33).
+async function downloadExport(): Promise<string | null> {
+  try {
+    const res = await fetch("/app/export");
+    // Anything but the CSV (a 502, a sign-in page) is a failure, never a file.
+    if (!res.ok || !res.headers.get("Content-Type")?.startsWith("text/csv"))
+      return null;
+    const blob = await res.blob();
+    const file =
+      /filename="([^"]+)"/.exec(
+        res.headers.get("Content-Disposition") ?? "",
+      )?.[1] ?? "fitted-charts.csv";
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = file;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    return file;
+  } catch {
+    return null;
+  }
+}
+
+const SR_ONLY = {
+  position: "absolute",
+  width: 1,
+  height: 1,
+  overflow: "hidden",
+  clipPath: "inset(50%)",
+  whiteSpace: "nowrap",
+} as const;
+
 export default function SizeCharts() {
   const { list } = useLoaderData<typeof loader>();
+  const [exp, setExp] = useState<Export>({ state: "idle", count: 0 });
+  const busy = exp.state === "busy";
+  // A ref, so two clicks before the next render still start one export.
+  const running = useRef(false);
+  const run = async (count: number) => {
+    if (running.current) return;
+    running.current = true;
+    setExp({ state: "busy", count });
+    const file = await downloadExport();
+    running.current = false;
+    setExp(file ? { state: "done", count, file } : { state: "failed", count });
+  };
   return (
     <s-page heading="Size charts">
       <s-button slot="primary-action" variant="primary" href="/app/charts/new">
         New chart
       </s-button>
+      {/* Only over a list of charts, as drawn: not while loading, empty or failed. */}
+      <Suspense fallback={null}>
+        <Await resolve={list} errorElement={<></>}>
+          {(l) =>
+            "rows" in l &&
+            l.rows.length > 0 && (
+              <s-button
+                slot="secondary-actions"
+                {...(busy && { loading: true })}
+                onClick={() => run(l.rows.length)}
+              >
+                {busy ? "Exporting" : "Export CSV"}
+              </s-button>
+            )
+          }
+        </Await>
+      </Suspense>
       <s-button slot="secondary-actions" href="/app/import">
         Import from Kiwi
       </s-button>
@@ -183,6 +249,34 @@ export default function SizeCharts() {
         <s-paragraph color="subdued">
           Saved in your store. Shoppers see the Active ones.
         </s-paragraph>
+        {/* Always mounted, so screen readers announce the text when it arrives. */}
+        <span role="status" style={SR_ONLY}>
+          {busy && `Exporting ${plural(exp.count, "chart")} to CSV`}
+        </span>
+        {exp.state === "done" && (
+          <s-banner
+            tone="info"
+            heading={`Exported ${plural(exp.count, "chart")} to ${exp.file}`}
+          >
+            <s-paragraph>
+              {
+                "It's in your downloads. If you save it from Excel or Google Sheets, check your sizes before importing it again, since they can turn 10-12 into a date or 00 into 0."
+              }
+            </s-paragraph>
+          </s-banner>
+        )}
+        {exp.state === "failed" && (
+          <s-banner tone="critical" heading="Charts didn't export">
+            <s-paragraph>
+              {
+                "Shopify didn't respond, so no file was downloaded. Your charts haven't changed."
+              }
+            </s-paragraph>
+            <s-button slot="secondary-actions" onClick={() => run(exp.count)}>
+              Try again
+            </s-button>
+          </s-banner>
+        )}
         <Suspense fallback={<Loading />}>
           <Await resolve={list} errorElement={<LoadError />}>
             {(l) => ("error" in l ? <LoadError /> : <Charts {...l} />)}
