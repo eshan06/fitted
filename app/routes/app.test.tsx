@@ -8,7 +8,6 @@ import { Link, createRoutesStub } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App, { action, loader, shouldRevalidate } from "./app";
 import Import from "./app.import";
-import FitFinder from "./app.fit-finder";
 
 const m = vi.hoisted(() => ({
   admin: vi.fn(),
@@ -302,10 +301,10 @@ describe("the shell's screen", () => {
 
 // The step that builds a screen deletes its row here and brings its own tests.
 describe("placeholder screens", () => {
-  it.each([
-    ["Import charts", Import],
-    ["Fit finder", FitFinder],
-  ])("%s is an empty page with the canvas's title", (title, Screen) => {
-    expect(render(<Screen />)).toBe(`<s-page heading="${title}"></s-page>`);
-  });
+  it.each([["Import charts", Import]])(
+    "%s is an empty page with the canvas's title",
+    (title, Screen) => {
+      expect(render(<Screen />)).toBe(`<s-page heading="${title}"></s-page>`);
+    },
+  );
 });

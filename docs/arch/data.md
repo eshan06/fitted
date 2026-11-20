@@ -163,7 +163,7 @@ type Settings = {
 };
 ```
 
-Colors are `#rrggbb`. `fileUrl` is an `https://cdn.shopify.com/` URL (an upload to Shopify Files) with no quote, parenthesis, backslash, whitespace or `<`. `selector` is at most 200 characters and only used in `querySelector`. `text` values follow the §5 word rules, at most 200 characters, are kept per locale by Fitted (§11), and fall back to the primary locale. `fitFinder.type` decides which question kinds the Fit finder screen offers, and `askAge` adds an age question; #40 and #41 record the mapping here.
+Colors are `#rrggbb`. `fileUrl` is an `https://cdn.shopify.com/` URL (an upload to Shopify Files) with no quote, parenthesis, backslash, whitespace or `<`. `selector` is at most 200 characters and only used in `querySelector`. `text` values follow the §5 word rules, at most 200 characters, are kept per locale by Fitted (§11), and fall back to the primary locale. `fitFinder.type` decides which question kinds (§10) the Fit finder screen offers: `basic` asks height and weight as `measure` questions plus `fit`, and `askAge` (Basic only) adds an age `choice`; `advanced` asks the chart's body measurements (`measure`), `usual_size` and `fit`; `custom` offers every kind, `choice` included. `askAge` is stored on any type and takes effect only on Basic.
 
 `$app.plan` is a shop metafield (single_line_text_field, choices `free`, `standard`, `pro`), written only by the billing module after a confirmed plan read (§8). The storefront reads it to show or hide Pro features.
 

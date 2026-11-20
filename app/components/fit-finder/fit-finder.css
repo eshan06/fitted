@@ -1,0 +1,53 @@
+/* The FitFinder board's own pieces (Fitted canvas), on top of the editor's
+   and Appearance's form styles. Scoped to .fit-finder. */
+.fit-finder .title {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.fit-finder .pro {
+  border: 1px solid #161616;
+  border-radius: 2px;
+  padding: 1px 6px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.fit-finder .types {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11.25rem, 1fr));
+  gap: 10px;
+}
+.fit-finder .types label {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  align-items: start;
+  font-weight: 400;
+  padding: 14px;
+  border: 1px solid #e1e3e5;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.fit-finder .types label:has(input:checked) {
+  border: 2px solid #2448a8;
+  padding: 13px;
+}
+.fit-finder .types input {
+  grid-row: span 2;
+  margin: 3px 0 0;
+  accent-color: #2448a8;
+}
+.fit-finder .types strong {
+  font-size: 0.875rem;
+}
+.fit-finder .empty {
+  align-items: center;
+  text-align: center;
+  padding: 48px 24px;
+}
+.fit-finder .empty .help {
+  max-width: 460px;
+}
