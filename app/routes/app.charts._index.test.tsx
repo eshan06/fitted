@@ -424,6 +424,10 @@ describe("the screen", () => {
       el.querySelector<HTMLElement>('dialog [aria-label="Close"]')!.click(),
     );
     expect(dialog()).toBeNull();
+    // So does the dialog's own close, as Escape fires it.
+    await act(async () => openers[0].click());
+    await act(async () => dialog()!.dispatchEvent(new Event("close")));
+    expect(dialog()).toBeNull();
   });
 
   it.each([
