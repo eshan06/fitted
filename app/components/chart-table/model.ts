@@ -2,6 +2,7 @@
 // edit the first table; focus() puts the table being edited first. Numbers
 // stay as typed text until Save, so a half-typed range never gets lost.
 import { VIDEO_ERROR, videoSite } from "../../lib/video";
+import { templateContent } from "../../data/templates";
 import type {
   ChartInput,
   ChartStatus,
@@ -34,20 +35,27 @@ export type Draft = {
   measureImage?: string;
 };
 
-export const blankDraft = (): Draft => ({
+/** A new chart's draft, from template `t` (blank: just a Size column). */
+export const blankDraft = (t: Template = "blank"): Draft => ({
   name: "",
-  template: "blank",
+  template: t,
   status: "DRAFT",
-  content: {
-    v: 1,
-    unit: "in",
-    roundTo: 0.5,
-    tables: [{ id: "t1", columns: [{ id: "size", kind: "size" }], rows: [] }],
-    measure: { steps: [] },
-    words: { "t1.size": "Size" },
-  },
+  content: templateContent(t),
   cells: {},
 });
+
+/**
+ * Picking a template fills the table only while it's still as its template
+ * set it up, so nothing typed is lost; otherwise it changes only the label.
+ */
+export function pickTemplate(d: Draft, t: Template): Draft {
+  const untouched =
+    JSON.stringify(d.content) === JSON.stringify(templateContent(d.template)) &&
+    Object.values(d.cells).every((c) => !c.trim());
+  return untouched
+    ? { ...d, template: t, content: templateContent(t), cells: {} }
+    : { ...d, template: t };
+}
 
 export const formatCell = (c: Cell) => c.join("–");
 

@@ -27,6 +27,7 @@ import {
   ChartConflictError,
   ChartNotFoundError,
   ChartValidationError,
+  TEMPLATES,
   countActiveCharts,
   createChart,
   getChart,
@@ -80,7 +81,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     // Minted once per visit and resent on every retry, so a retried create lands on one chart (§5).
     const a = "abcdefghijklmnopqrstuvwxyz0123456789";
     const handle = `c-${Array.from({ length: 10 }, () => a[randomInt(36)]).join("")}`;
-    return { mode: "new" as const, handle };
+    // The template picker's choice; anything else starts blank (§5).
+    const t = new URL(request.url).searchParams.get("template");
+    const template = TEMPLATES.find((x) => x === t) ?? "blank";
+    return { mode: "new" as const, handle, template };
   }
   const id = gid(params.id);
   try {
@@ -314,7 +318,13 @@ export default function ChartEditor() {
     setParams(rest, { replace: true });
   }, [params, setParams]);
   if (loaded.mode === "new")
-    return <Editor key="new" initial={blankDraft()} handle={loaded.handle} />;
+    return (
+      <Editor
+        key="new"
+        initial={blankDraft(loaded.template)}
+        handle={loaded.handle}
+      />
+    );
   const s = loaded.mode === "edit" ? loaded.stored : undefined;
   const initial = s?.chart
     ? toDraft(s.chart, s.status)

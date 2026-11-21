@@ -26,6 +26,7 @@ import {
 } from "../models/chart.server";
 import { FREE_ACTIVE_CHARTS, getPlan } from "../models/billing.server";
 import { startResolve } from "../models/rules.server";
+import { templateCard } from "../data/templates";
 
 const ROUTE = "app.charts._index";
 const logShopifyError = (shop: string, err: AdminApiError) =>
@@ -140,19 +141,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   return { ok: true as const };
 };
 
-const TEMPLATES: Record<Template, string> = {
-  blank: "Blank chart",
-  tops: "Tops",
-  bottoms: "Bottoms",
-  dresses: "Dresses",
-  bras_swimwear: "Bras and swimwear",
-  shoes: "Shoes",
-  kids: "Kids",
-  headwear: "Headwear",
-  rings: "Rings",
-  bracelets: "Bracelets",
-  necklaces: "Necklaces",
-};
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const products = ({ count, atLeast }: Row["products"]) =>
   `${count.toLocaleString("en-US")}${atLeast ? "+" : ""}`;
@@ -537,7 +525,7 @@ export function Charts({ rows, limit }: Extract<ChartList, { rows: unknown }>) {
                         </s-link>
                         <s-text color="subdued">
                           {r.template
-                            ? TEMPLATES[r.template]
+                            ? templateCard(r.template).name
                             : "This chart has errors. Open it to fix them."}
                         </s-text>
                       </s-stack>
