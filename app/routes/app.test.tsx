@@ -343,6 +343,7 @@ describe("settling a check after load", () => {
   afterEach(() => {
     act(() => root?.unmount());
     vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
   type Shown = { plan: string; yearly: boolean | null };
   const at = (plan: string, yearly: boolean | null = false) => ({
@@ -369,6 +370,7 @@ describe("settling a check after load", () => {
             Component: () => (
               <s-page heading="Home">
                 {`On ${useLoaderData<{ planAtLoad: Shown }>().planAtLoad.plan}`}
+                <Link to="/app?again">Load again</Link>
               </s-page>
             ),
           },
@@ -379,9 +381,10 @@ describe("settling a check after load", () => {
     document.body.replaceChildren(el);
     root = createRoot(el);
     await act(async () => root!.render(<Stub initialEntries={["/app"]} />));
-    await act(() => new Promise((r) => setTimeout(r, 10)));
+    await settle();
     return el;
   };
+  const settle = () => act(() => new Promise((r) => setTimeout(r, 10)));
   const banner = (el: Element) =>
     el.querySelector('s-banner[heading="Couldn\'t check your plan"]');
   const wait = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
@@ -391,15 +394,10 @@ describe("settling a check after load", () => {
     m.getPlan.mockReturnValue(
       new Promise((resolve) => setTimeout(() => resolve(state), ms)),
     );
-    const fetch = vi.fn(
-      async (url: string) =>
-        new Response(
-          JSON.stringify(
-            await followUp({
-              request: new Request(new URL(url, "https://fitted.test")),
-            } as LoaderFunctionArgs),
-          ),
-        ),
+    const fetch = vi.fn(async (url: string) =>
+      followUp({
+        request: new Request(new URL(url, "https://fitted.test")),
+      } as LoaderFunctionArgs),
     );
     vi.stubGlobal("fetch", fetch);
     return fetch;
@@ -446,28 +444,93 @@ describe("settling a check after load", () => {
     const el = await show(at("free"), at("pro"));
 
     await wait(6_000);
-    await act(() => new Promise((r) => setTimeout(r, 10)));
+    await settle();
     expect(screenLoads).toBe(2);
     expect(el.textContent).toContain("On pro");
     expect(banner(el)).toBeNull();
   });
 
-  it("shows the banner on the last confirmed plan when the follow-up gets no answer", async () => {
-    slowCheck({ plan: "pro", checkFailed: false }, 60_000);
-    vi.stubGlobal("fetch", () => Promise.reject(new TypeError("offline")));
-    m.lastConfirmedPlan.mockResolvedValue({
-      plan: "pro",
-      yearly: false,
-      at: new Date("2026-11-16T10:00:00Z"),
-    });
-    const el = await show(at("pro"));
+  it.each([
+    ["fails", () => Promise.reject(new TypeError("offline")), 0],
+    // Never read as the plan, whatever its body says.
+    [
+      "answers with an error",
+      async () =>
+        Response.json(
+          { plan: "free", yearly: null, checkFailed: false },
+          { status: 500 },
+        ),
+      0,
+    ],
+    ["takes over 30 seconds", () => new Promise(() => {}), 30_000],
+  ])(
+    "shows the banner on the last confirmed plan when the follow-up %s",
+    async (_, answer, late) => {
+      slowCheck({ plan: "pro", checkFailed: false }, 120_000);
+      vi.stubGlobal("fetch", answer);
+      m.lastConfirmedPlan.mockResolvedValue({
+        plan: "pro",
+        yearly: false,
+        at: new Date("2026-11-16T10:00:00Z"),
+      });
+      const el = await show(at("pro"));
 
-    await wait(4_000);
-    await act(() => new Promise((r) => setTimeout(r, 10)));
-    expect(banner(el)?.textContent).toContain(
-      "you keep Pro (last confirmed Nov 16, 2026) and nothing is switched off.",
+      await wait(4_000);
+      if (late) {
+        await wait(late - 1_000);
+        expect(banner(el)).toBeNull(); // still waiting for it
+        await wait(1_000);
+      }
+      await settle();
+      expect(banner(el)?.textContent).toContain(
+        "you keep Pro (last confirmed Nov 16, 2026) and nothing is switched off.",
+      );
+      expect(screenLoads).toBe(1);
+    },
+  );
+
+  it("drops a follow-up's answer once the next load brings its own check", async () => {
+    slowCheck({ plan: "standard", yearly: false, checkFailed: true });
+    m.lastConfirmedPlan.mockResolvedValue({ plan: "standard", at: null });
+    const el = await show(at("standard"));
+    await wait(6_000);
+    expect(banner(el)).not.toBeNull();
+
+    // Try again: Shopify answers this time, and the loads that follow say so.
+    m.getPlan.mockResolvedValue({
+      plan: "standard",
+      yearly: false,
+      checkFailed: false,
+    });
+    await act(async () =>
+      (banner(el)!.querySelector("s-button") as HTMLElement).click(),
     );
-    expect(screenLoads).toBe(1);
+    await settle();
+    expect(banner(el)).toBeNull();
+  });
+
+  it("keeps a later load's answer when an earlier load's lands after it", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout"], shouldAdvanceTime: true });
+    m.getPlan.mockReturnValue(new Promise(() => {})); // every load outlasts the stream
+    m.lastConfirmedPlan.mockResolvedValue({ plan: "standard", at: null });
+    const answers: ((r: Response) => void)[] = [];
+    vi.stubGlobal("fetch", () => new Promise((r) => answers.push(r)));
+    const reply = (checkFailed: boolean) =>
+      new Response(
+        JSON.stringify({ plan: "standard", yearly: false, checkFailed }),
+      );
+    const el = await show(at("standard"));
+    await wait(4_000);
+    await act(async () => el.querySelector("a")!.click());
+    await wait(4_000);
+    expect(answers).toHaveLength(2);
+
+    await act(async () => answers[1](reply(true)));
+    await settle();
+    expect(banner(el)).not.toBeNull();
+    await act(async () => answers[0](reply(false)));
+    await settle();
+    expect(banner(el)).not.toBeNull();
   });
 
   it("reloads a screen at once when a check inside the stream confirms another plan or price", async () => {
@@ -513,11 +576,14 @@ describe("the plan check's follow-up", () => {
     expect(answered).toBe(false);
 
     answer({ plan: "pro", yearly: true, checkFailed: false });
-    await expect(asked).resolves.toEqual({
+    const res = await asked;
+    await expect(res.json()).resolves.toEqual({
       plan: "pro",
       yearly: true,
       checkFailed: false,
     });
+    // One shop's plan as of now: never kept by a cache.
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
     expect(m.admin).toHaveBeenCalledOnce();
     expect(m.getPlan).toHaveBeenCalledExactlyOnceWith(SHOP); // never a re-check
   });
@@ -545,8 +611,8 @@ describe("the plan check's follow-up", () => {
       checkFailed: true,
     });
 
-    const first = await ask();
-    await expect(ask()).resolves.toEqual(first);
+    const first = await (await ask()).json();
+    await expect((await ask()).json()).resolves.toEqual(first);
     expect(m.getPlan.mock.calls).toEqual([[SHOP], [SHOP]]);
   });
 });

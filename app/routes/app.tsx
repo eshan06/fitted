@@ -74,6 +74,8 @@ async function planCheck(shop: string): Promise<PlanCheck> {
   }
 }
 const SHOW_WITHIN_MS = 4_000; // under entry.server.tsx's 5-second streamTimeout
+// Past a check's slowest: the 10-second gap, then three 5-second calls.
+const FOLLOW_UP_WITHIN_MS = 30_000;
 const sleep = (ms: number) =>
   new Promise<null>((resolve) => setTimeout(() => resolve(null), ms));
 
@@ -143,19 +145,20 @@ function PlanSettle({ check: streamed }: { check: PlanCheck }) {
   const check = answer?.to === streamed ? answer.check : streamed;
   useEffect(() => {
     if (!streamed.pending) return;
+    // An answer for an earlier load, landing after a later one's, is dropped.
     let current = true;
     // Plain fetch (App Bridge adds the session token): a failed fetcher would
     // take the screen to the error page.
-    fetch("/app/plan-check")
+    const asked = fetch("/app/plan-check")
       .then((r) => (r.ok ? (r.json() as Promise<PlanState>) : null))
-      .catch(() => null)
-      .then((state) => {
-        // No answer: not answered, on the last confirmed plan.
-        const settled = state
-          ? { ...state, confirmed: streamed.confirmed }
-          : { ...streamed, pending: undefined };
-        if (current) setAnswer({ to: streamed, check: settled });
-      });
+      .catch(() => null);
+    void Promise.race([asked, sleep(FOLLOW_UP_WITHIN_MS)]).then((state) => {
+      // No answer in time: not answered, on the last confirmed plan.
+      const settled = state
+        ? { ...state, confirmed: streamed.confirmed }
+        : { ...streamed, pending: undefined };
+      if (current) setAnswer({ to: streamed, check: settled });
+    });
     return () => {
       current = false;
     };

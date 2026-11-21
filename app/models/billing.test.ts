@@ -186,12 +186,28 @@ describe("lastConfirmedPlan", () => {
     const logged = vi.mocked(console.log).mock.calls.map(([line]) => line);
     expect(JSON.parse(logged[0])).toEqual({
       level: "error",
-      msg: "Plan check failed",
+      msg: "Plan read failed", // no check ran
       shop,
       route: "billing",
       error: "Error: Can't reach database server",
     });
     expect(logged).toHaveLength(2);
+  });
+
+  // A screen's load is often a shop's first read after a restart.
+  it("remembers what it read for when the database later can't be read", async () => {
+    findUnique.mockResolvedValueOnce(row("standard", 90, "standard", true));
+    await billing.lastConfirmedPlan(shop);
+
+    findUnique.mockRejectedValue(new Error("Can't reach database server"));
+    await expect(billing.lastConfirmedPlan(shop)).resolves.toMatchObject({
+      plan: "standard",
+      yearly: true,
+    });
+    await expect(billing.getPlan(shop)).resolves.toEqual(
+      failed("standard", true),
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

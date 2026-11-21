@@ -866,16 +866,10 @@ describe("when the plan check outlasts the stream", () => {
       ),
     );
     // The shell's follow-up, through App Bridge's fetch.
-    vi.stubGlobal(
-      "fetch",
-      async (url: string) =>
-        new Response(
-          JSON.stringify(
-            await followUp.loader({
-              request: new Request(new URL(url, "https://fitted.test")),
-            } as LoaderFunctionArgs),
-          ),
-        ),
+    vi.stubGlobal("fetch", async (url: string) =>
+      followUp.loader({
+        request: new Request(new URL(url, "https://fitted.test")),
+      } as LoaderFunctionArgs),
     );
     const Stub = createRoutesStub([
       {

@@ -119,7 +119,7 @@ export async function lastConfirmedPlan(
     const at = row?.planCheckedAt ?? null;
     return { plan: toPlan(row?.plan), yearly: row?.planYearly ?? null, at };
   } catch (error) {
-    const { plan, yearly } = unconfirmed(shop, error);
+    const { plan, yearly } = unconfirmed(shop, error, "Plan read failed");
     return { plan, yearly, at: null };
   }
 }
@@ -154,11 +154,15 @@ async function readRow(shop: string) {
 
 // The last confirmed plan stands, Free if none. The store only ever gets a
 // confirmed plan, and the next check repeats a write this one didn't record.
-function unconfirmed(shop: string, error: unknown): PlanState {
+function unconfirmed(
+  shop: string,
+  error: unknown,
+  msg = "Plan check failed",
+): PlanState {
   console.log(
     JSON.stringify({
       level: "error",
-      msg: "Plan check failed",
+      msg,
       shop,
       route: "billing",
       error: String(error),

@@ -8,5 +8,8 @@ import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
-  return getPlan(session.shop); // never rejects
+  // One shop's plan as of now (getPlan never rejects), so never from a cache.
+  return Response.json(await getPlan(session.shop), {
+    headers: { "Cache-Control": "no-store" },
+  });
 };
