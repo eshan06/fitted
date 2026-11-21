@@ -10,6 +10,7 @@ import {
   AccessDeniedError,
   AdminApiError,
   pricingPlansUrl,
+  streamed,
   themeEditorUrl,
 } from "../models/admin.server";
 import { NO_ACCESS, NoAccess } from "../components/no-access";
@@ -129,7 +130,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return {
     storeUrl: `https://${session.shop}`,
     planAtLoad,
-    home: loadHome(admin, session.shop, planAtLoad),
+    home: streamed(
+      admin,
+      () => authenticate.admin(request),
+      (a) => loadHome(a, session.shop, planAtLoad),
+    ),
   };
 };
 

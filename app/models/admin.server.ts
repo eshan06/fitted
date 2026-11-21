@@ -101,6 +101,27 @@ export async function adminGraphql<T>(
 }
 
 /**
+ * A screen's streamed load (§15), run with the staff member's token. Shopify
+ * revokes an online token before it expires when its staff member signs out of
+ * the admin (§3). The library then clears it and throws its re-auth Response,
+ * which a stream that has already answered can't send, so the load signs in
+ * again from the request's session token and runs once more.
+ */
+export function streamed<T>(
+  admin: Admin,
+  signIn: () => Promise<{ admin: Admin }>,
+  load: (admin: Admin) => Promise<T>,
+): Promise<T> {
+  const run = load(admin).catch(async (err: unknown) => {
+    if (!reauth(err)) throw err;
+    return load((await signIn()).admin);
+  });
+  // A load whose page was left has no reader; an unhandled rejection would stop the server.
+  run.catch(() => {});
+  return run;
+}
+
+/**
  * Whether the session's staff member can read products. Jobs run with the
  * offline token, so an action checks this before it starts one (§13). An
  * online token narrowed by the staff member's permissions gets ACCESS_DENIED.

@@ -15,6 +15,7 @@ import {
   AdminApiError,
   canReadProducts,
   pricingPlansUrl,
+  streamed,
 } from "../models/admin.server";
 import { NO_ACCESS, NoAccess } from "../components/no-access";
 import {
@@ -104,7 +105,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const planAtLoad = await lastConfirmedPlan(session.shop);
   return {
     planAtLoad,
-    list: loadList(admin, session.shop, planAtLoad.plan),
+    list: streamed(
+      admin,
+      () => authenticate.admin(request),
+      (a) => loadList(a, session.shop, planAtLoad.plan),
+    ),
   };
 };
 

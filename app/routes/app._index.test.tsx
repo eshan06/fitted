@@ -268,6 +268,25 @@ describe("loading Home", () => {
     });
   });
 
+  it("signs in again and loads Home when Shopify revoked the staff member's token (§3)", async () => {
+    const fresh = { graphql: vi.fn() };
+    m.authenticate
+      .mockResolvedValueOnce({ admin, session: { shop: SHOP } })
+      .mockResolvedValueOnce({ admin: fresh, session: { shop: SHOP } });
+    m.chartPages.mockImplementation((a: unknown) =>
+      a === admin
+        ? (async function* () {
+            yield [];
+            // The library's bounce once it cleared the revoked token.
+            throw new Response(null, { status: 302 });
+          })()
+        : pages([stored(1, "ACTIVE")]),
+    );
+    expect(await (await load()).home).toMatchObject({ charts: 1 });
+    expect(m.authenticate).toHaveBeenCalledTimes(2);
+    expect(m.productCoverage).toHaveBeenCalledWith(fresh);
+  });
+
   it("passes the library's login redirect on and reads nothing", async () => {
     const login = new Response(null, { status: 302 });
     m.authenticate.mockRejectedValue(login);

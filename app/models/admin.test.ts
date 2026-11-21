@@ -6,6 +6,7 @@ import {
   adminGraphql,
   canReadProducts,
   pricingPlansUrl,
+  streamed,
 } from "./admin.server";
 
 const ok = (body: unknown) => new Response(JSON.stringify(body));
@@ -226,6 +227,59 @@ describe("canReadProducts", () => {
     }
     const reauth = new Response(null, { status: 401 });
     await expect(canReadProducts(adminWith(reauth).admin)).rejects.toBe(reauth);
+  });
+});
+
+describe("streamed", () => {
+  // What the library throws once Shopify refuses a revoked token: its bounce
+  // page for a document request, else a 401 the browser retries.
+  const revoked = () =>
+    new Response(null, {
+      status: 302,
+      headers: { Location: "/auth/session-token" },
+    });
+  const first = { graphql: vi.fn() } as unknown as Admin;
+  const fresh = { graphql: vi.fn() } as unknown as Admin;
+
+  it("signs in again and loads once more when the staff member's token was revoked (§3)", async () => {
+    const signIn = vi.fn(async () => ({ admin: fresh }));
+    const load = vi.fn(async (admin: Admin) => {
+      if (admin === first) throw revoked();
+      return "loaded";
+    });
+    await expect(streamed(first, signIn, load)).resolves.toBe("loaded");
+    expect(load.mock.calls.map(([a]) => a)).toEqual([first, fresh]);
+    expect(signIn).toHaveBeenCalledTimes(1);
+  });
+
+  it("signs in again only for a revoked token, and tries only once more", async () => {
+    const signIn = vi.fn(async () => ({ admin: fresh }));
+    const failed = new AdminApiError("Shopify request failed", "HTTP 503");
+    await expect(
+      streamed(first, signIn, async () => {
+        throw failed;
+      }),
+    ).rejects.toBe(failed);
+    expect(signIn).not.toHaveBeenCalled();
+
+    const again = revoked();
+    const load = vi.fn(async () => {
+      throw again;
+    });
+    await expect(streamed(first, signIn, load)).rejects.toBe(again);
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves no unhandled rejection when the page was left and nothing reads the load", async () => {
+    vi.useRealTimers();
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    void streamed(first, vi.fn(), async () => {
+      throw new Error("unexpected");
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    process.off("unhandledRejection", unhandled);
+    expect(unhandled).not.toHaveBeenCalled();
   });
 });
 

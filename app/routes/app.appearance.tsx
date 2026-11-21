@@ -21,6 +21,7 @@ import {
   type Admin,
   AccessDeniedError,
   AdminApiError,
+  streamed,
   themeEditorUrl,
 } from "../models/admin.server";
 import { NO_ACCESS, NoAccess } from "../components/no-access";
@@ -89,7 +90,11 @@ async function load(admin: Parameters<typeof getSettings>[0], shop: string) {
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   return {
-    appearance: load(admin, session.shop),
+    appearance: streamed(
+      admin,
+      () => authenticate.admin(request),
+      (a) => load(a, session.shop),
+    ),
     themeUrl: themeEditorUrl(session.shop),
   };
 };
