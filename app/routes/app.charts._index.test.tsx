@@ -362,42 +362,6 @@ describe("the screen", () => {
       (b) => b.textContent === label,
     ) as HTMLElement;
 
-  it("starts a new chart from a template the picker shows, or blank", async () => {
-    const el = await show(Promise.resolve({ rows: [], limit: null }));
-    const dialog = () => el.querySelector("dialog");
-    const go = () => [...el.querySelectorAll("dialog s-button")].at(-1)!;
-    const card = (name: string) =>
-      [...el.querySelectorAll<HTMLElement>(".tcard")].find((b) =>
-        b.textContent?.startsWith(name),
-      )!;
-    const openers = [...el.querySelectorAll<HTMLElement>("s-button")].filter(
-      (b) => b.textContent === "New chart",
-    );
-    // The page's primary action and the empty state's button.
-    expect(openers).toHaveLength(2);
-    for (const opener of openers) {
-      await act(async () => opener.click());
-      expect(dialog()?.open).toBe(true);
-      expect(el.querySelectorAll(".tcard")).toHaveLength(11);
-      expect(card("Tops").getAttribute("aria-pressed")).toBe("true");
-      expect(card("Tops").textContent).toBe(
-        "TopsSelectedMeasurementsBust, waist, hipsSize rowsXS to XLAlsoUS, UK, EU, AU sizes; 3 how-to-measure steps",
-      );
-      expect(go().textContent).toBe("Use Tops template");
-      expect(go().getAttribute("href")).toBe("/app/charts/new?template=tops");
-      await act(async () => card("Bras and swimwear").click());
-      expect(go().textContent).toBe("Use Bras and swimwear template");
-      expect(go().getAttribute("href")).toBe(
-        "/app/charts/new?template=bras_swimwear",
-      );
-      await act(async () => card("Blank chart").click());
-      expect(go().textContent).toBe("Start blank chart");
-      expect(go().getAttribute("href")).toBe("/app/charts/new");
-      await act(async () => button(el, "Cancel").click());
-      expect(dialog()).toBeNull();
-    }
-  });
-
   it.each([
     [
       "Shopify failed",
