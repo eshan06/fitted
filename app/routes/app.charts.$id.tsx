@@ -135,7 +135,8 @@ async function upload(request: Request, admin: Admin, shop: string) {
 }
 
 // An upload the editor let go before a save: deleted only with the `sig` its
-// upload answered, so no other file is ever touched.
+// upload answered within the hour, and only while no chart holds it, so no
+// other file is ever touched.
 async function discard(request: Request, admin: Admin, shop: string) {
   const form = await request.formData().catch(() => null);
   const id = form?.get("id");
@@ -146,8 +147,17 @@ async function discard(request: Request, admin: Admin, shop: string) {
       { status: 422 },
     );
   try {
-    if (!(await discardImage(admin, shop, id, sig)))
-      return fail(403, "not_fitted", "Fitted didn't upload this file.");
+    const done = await discardImage(admin, shop, id, sig);
+    if (done === "not_fitted")
+      return fail(403, done, "Fitted didn't upload this file.");
+    if (done === "expired")
+      return fail(
+        403,
+        done,
+        "This upload is over an hour old, so Fitted keeps it. Delete it in Settings > Files if you don't need it.",
+      );
+    if (done === "saved")
+      return fail(409, done, "A chart uses this image, so Fitted keeps it.");
     return { discarded: id };
   } catch (err) {
     if (!(err instanceof AdminApiError)) throw err;
