@@ -864,6 +864,18 @@ describe("when the plan check outlasts the stream", () => {
     },
   );
 
+  it("says the failed reload once the held edits are discarded", async () => {
+    await openWhileChecking(() => (store.chartsDown = true));
+    await type(noFit(), "Mine");
+    await reloaded();
+    expect(noFit().value).toBe("Mine");
+
+    await click("Discard");
+    expect(banners()).toContain("Your fit finder settings didn't load");
+    expect(noFit()).toBeNull();
+    expect(saveBar()).toBeNull();
+  });
+
   it("keeps the edits when the reload brings another save, so saving asks to reload", async () => {
     await openWhileChecking(() => {
       store.digest = "other-tab"; // another tab saved
