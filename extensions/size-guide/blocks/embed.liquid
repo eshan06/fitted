@@ -8,8 +8,8 @@
   running it twice is harmless, as each block is set up once. The tab, as the
   link's style, and the selector's link once loader.js has placed it stand in
   for the app block's link on its product page (loader.js marks it
-  data-page), so with the embed off, or a selector that matches nothing, that
-  link still shows.
+  data-page), and its fit line goes with it, so with the embed off, or a
+  selector that matches nothing, that link still shows.
 {%- endcomment -%}
 {%- assign s = shop.metafields['$app'].settings.value -%}
 {%- assign chart = product.metafields['$app'].chart.value -%}
@@ -20,11 +20,11 @@
     {%- assign load = true -%}
   {%- endif -%}
   {%- if s.link.style == 'tab' -%}
-    <style>.fitted-guide[data-page]>.fitted-link{display:none!important}</style>
+    <style>.fitted-guide[data-page]>:is(.fitted-link,.fitted-fits){display:none!important}</style>
   {%- endif -%}
   {%- if s.placement.selector != blank -%}
     {%- render 'guide', p: product, chart: chart, id: 'after', place: 'after' -%}
-    <style>body:has(.fitted-guide[data-placed]) .fitted-guide[data-page]>.fitted-link{display:none!important}</style>
+    <style>body:has(.fitted-guide[data-placed]) .fitted-guide[data-page]>:is(.fitted-link,.fitted-fits){display:none!important}</style>
     {%- assign load = true -%}
   {%- endif -%}
 {%- endif -%}

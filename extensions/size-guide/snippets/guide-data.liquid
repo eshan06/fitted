@@ -5,13 +5,15 @@
   that names the shopper's stored answers, only on Pro (§10), along with the
   fit finder settings and product p's variant ids and options, which Add to
   cart reads. The settings words are the shopper's language's, else the
-  primary language's (§7). The How to measure drawing is the address
+  primary language's (§7), without the Size guide link's label when fit_only
+  makes the link Find my size. The How to measure drawing is the address
   image_url gives it, on Shopify's CDN under the store's own domain.
 {%- endcomment -%}
 {%- assign c = chart.content.value -%}
 {%- assign s = shop.metafields['$app'].settings.value -%}
 {%- assign plan = shop.metafields['$app'].plan.value -%}
 {%- assign primary = shop.published_locales | where: 'primary' | first -%}
+{%- assign words = s.text[request.locale.iso_code] | default: s.text[primary.iso_code] -%}
 {%- if chart.measure_image.value -%}
   {%- assign drawing = chart.measure_image.value | image_url: width: 1000 -%}
 {%- endif -%}
@@ -26,7 +28,7 @@
     "placement": {{ s.placement | json }},
     "colors": {{ s.colors | json }},
     "css": {{ s.css | json }},
-    "text": {{ s.text[request.locale.iso_code] | default: s.text[primary.iso_code] | json }},
+    "text": { "header": {{ words.header | json }}, "noFit": {{ words.noFit | json }}{% unless fit_only %}, "label": {{ words.label | json }}{% endunless %} },
     "country": {{ localization.country.iso_code | json }},
     "locale": {{ request.locale.iso_code | json }},
     "plan": {{ plan | json }}{% if plan == 'pro' %},

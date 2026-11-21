@@ -104,8 +104,9 @@ describe("size guide Liquid", () => {
     },
     "s.colors | json": { mode: "theme" },
     "s.css | json": ".fitted-link { letter-spacing: .1em }",
-    "s.text[request.locale.iso_code] | default: s.text[primary.iso_code] | json":
-      { label: "Guide des tailles", header: "Tailles", noFit: "Aucune." },
+    "words.header | json": "Tailles",
+    "words.noFit | json": "Aucune.",
+    "words.label | json": "Guide des tailles",
     "localization.country.iso_code | json": "US",
     "request.locale.iso_code | json": "fr",
     "plan | json": "pro",
@@ -116,13 +117,18 @@ describe("size guide Liquid", () => {
     "p.variants | map: 'option2' | json": ["Black", "White"],
     "p.variants | map: 'option3' | json": [null, null],
   };
-  // The data the snippet prints on a store with that plan.
-  const printed = (plan: string) =>
+  // The data the snippet prints on a store with that plan, and with
+  // fit_only as guide.liquid passes it.
+  const printed = (plan: string, fitOnly = false) =>
     JSON.parse(
       (/<script[^>]*>([\s\S]*)<\/script>/.exec(snippet)?.[1] ?? "")
         .replace(
           /\{% if plan == 'pro' %\}([\s\S]*?)\{% endif %\}/g,
           (_, pro: string) => (plan === "pro" ? pro : ""),
+        )
+        .replace(
+          /\{% unless fit_only %\}([\s\S]*?)\{% endunless %\}/g,
+          (_, out: string) => (fitOnly ? "" : out),
         )
         .replace(/\{\{-?\s*([\s\S]*?)\s*-?\}\}/g, (_, out: string) =>
           JSON.stringify(out === "plan | json" ? plan : values[out]),
@@ -165,7 +171,9 @@ describe("size guide Liquid", () => {
       expect(d.chart).not.toHaveProperty("fit");
     }
     // The product whose variants it prints is the guide's own.
-    expect(guide).toContain("{%- render 'guide-data', chart: chart, p: p -%}");
+    expect(guide).toContain(
+      "{%- render 'guide-data', chart: chart, p: p, fit_only: fit_only -%}",
+    );
   });
 
   it("prints How to measure's steps on every plan, and the drawing only when the chart has one (§9)", () => {
@@ -182,6 +190,33 @@ describe("size guide Liquid", () => {
         "{%- endif -%}",
       ].join("\n"),
     );
+  });
+
+  it("words the link Find my size, without the merchant's label, only with Show only the Find my size link on, on Pro, for a chart with a fit finder (§7)", () => {
+    expect(tags(guide)).toEqual(
+      expect.arrayContaining([
+        "assign fit_only = false",
+        "if shop.metafields['$app'].plan.value == 'pro' and shop.metafields['$app'].settings.value.popup.fitOnly and chart.content.value.fit",
+        "assign fit_only = true",
+      ]),
+    );
+    expect(guide).toContain(
+      "{%- if fit_only -%}{{- 'size_guide.fit' | t -}}{%- else -%}{{- 'size_guide.title' | t -}}{%- endif -%}",
+    );
+    // The label names the Size guide link, so the data leaves it out then.
+    expect(printed("pro").text).toEqual({
+      label: "Guide des tailles",
+      header: "Tailles",
+      noFit: "Aucune.",
+    });
+    expect(printed("pro", true).text).toEqual({
+      header: "Tailles",
+      noFit: "Aucune.",
+    });
+    expect(parseGuide(JSON.stringify(printed("pro", true)))).toMatchObject({
+      label: "",
+      header: "Tailles",
+    });
   });
 
   it("prints data that parseGuide reads", () => {
@@ -230,7 +265,9 @@ describe("size guide Liquid", () => {
       ) ?? [];
     const used = (src = "") =>
       [...src.matchAll(/data-t-(\w+)=/g)].map((m) => m[1]);
-    expect(used(pro)).toEqual(expect.arrayContaining(["fit", "recommend"]));
+    expect(used(pro)).toEqual(
+      expect.arrayContaining(["fit", "recommend", "fits_from", "fits"]),
+    );
     // How to measure and the tab bar show on every plan (§9).
     expect(used(before)).toEqual(
       expect.arrayContaining([
@@ -248,8 +285,10 @@ describe("size guide Liquid", () => {
 
   it("keeps {size} in the words the guide fills with a size", () => {
     const en = JSON.parse(ext("locales/en.default.json")).size_guide;
-    for (const key of ["choose", "selected", "select"])
+    for (const key of ["choose", "selected", "select", "fits"])
       expect(en[key]).toContain("{size}");
+    // The fit line's bold part, "M fits you", goes where {fits} is.
+    expect(en.fits_from).toContain("{fits}");
   });
 
   it("is an app block that loads loader.js for the product it sits on", () => {
@@ -304,8 +343,8 @@ describe("size guide Liquid", () => {
     // What stands in for the app block's link: guide-loader.test.ts runs these.
     const hide = embed.match(/<style>[\s\S]*?<\/style>/g);
     expect(hide).toEqual([
-      "<style>.fitted-guide[data-page]>.fitted-link{display:none!important}</style>",
-      "<style>body:has(.fitted-guide[data-placed]) .fitted-guide[data-page]>.fitted-link{display:none!important}</style>",
+      "<style>.fitted-guide[data-page]>:is(.fitted-link,.fitted-fits){display:none!important}</style>",
+      "<style>body:has(.fitted-guide[data-placed]) .fitted-guide[data-page]>:is(.fitted-link,.fitted-fits){display:none!important}</style>",
     ]);
     expect(embed.indexOf(hide![0])).toBeGreaterThan(
       embed.indexOf("if s.link.style == 'tab' -%}"),

@@ -13,9 +13,16 @@
   they win over the link's and lose to custom CSS that starts .fitted-guide.
   The chart and product ids are what guide.js's events name (§12). The theme
   editor gets none, so a merchant trying the guide adds no opens. Find my
-  size's words come only on Pro, the one plan that shows it (§10).
+  size's words come only on Pro, the one plan that shows it (§10). With
+  "Show only the Find my size link" on (§7) and Find my size there to open,
+  the link reads Find my size, and guide-data leaves out the label, which
+  names the Size guide link; on other plans that setting changes nothing.
 {%- endcomment -%}
 {%- assign title_id = 'fitted-title-' | append: id -%}
+{%- assign fit_only = false -%}
+{%- if shop.metafields['$app'].plan.value == 'pro' and shop.metafields['$app'].settings.value.popup.fitOnly and chart.content.value.fit -%}
+  {%- assign fit_only = true -%}
+{%- endif -%}
 <div
   class="fitted-guide"
   data-url="{{ 'guide.js' | asset_url }}"
@@ -39,7 +46,7 @@
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <path d="M3 15.5 15.5 3l5.5 5.5L8.5 21z"/><path d="m7 12 2 2M10 9l2 2M13 6l2 2"/>
     </svg>
-    <span>{{- 'size_guide.title' | t -}}</span>
+    <span>{%- if fit_only -%}{{- 'size_guide.fit' | t -}}{%- else -%}{{- 'size_guide.title' | t -}}{%- endif -%}</span>
   </button>
   <dialog class="fitted-dialog" aria-labelledby="{{ title_id }}">
     <div class="fitted-panel">
@@ -98,6 +105,8 @@
         data-t-add="{{ 'size_guide.add' | t }}"
         data-t-privacy="{{ 'size_guide.privacy' | t }}"
         data-t-privacy_note="{{ 'size_guide.privacy_note' | t }}"
+        data-t-fits_from="{{ 'size_guide.fits_from' | t }}"
+        data-t-fits="{{ 'size_guide.fits' | t }}"
         {%- endif %}
       ></div>
     </div>
@@ -123,5 +132,5 @@
       </div>
     </template>
   </dialog>
-  {%- render 'guide-data', chart: chart, p: p -%}
+  {%- render 'guide-data', chart: chart, p: p, fit_only: fit_only -%}
 </div>

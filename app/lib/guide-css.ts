@@ -7,41 +7,41 @@
 // settings (§7); the other shades mix from them. A browser without
 // color-mix() (Safari before 16.2) drops those shades: lines, tint and the
 // alert's fill go, and text keeps the main color, so every color still reads.
-// PURE lets each bundle drop the string it doesn't use.
-export const css = /* @__PURE__ */ [
-  ".fitted-guide{--fitted-bg:#fff;--fitted-text:#161616;--fitted-accent:#2448a8}",
-  ".fitted-link{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 2px;border:0;background:none;color:inherit;font:inherit;font-weight:600;text-decoration:underline;text-underline-offset:4px;cursor:pointer}",
-  ".fitted-dialog{--fitted-muted:color-mix(in srgb,var(--fitted-text) 84%,var(--fitted-bg));--fitted-line:color-mix(in srgb,var(--fitted-text) 16%,var(--fitted-bg));--fitted-faint:color-mix(in srgb,var(--fitted-text) 10%,var(--fitted-bg));--fitted-tint:color-mix(in srgb,var(--fitted-accent) 10%,var(--fitted-bg));--fitted-alert:color-mix(in srgb,#d72c0d 8%,var(--fitted-bg));--fitted-alert-line:color-mix(in srgb,#d72c0d 40%,var(--fitted-bg));box-sizing:border-box;width:calc(100% - 32px);max-width:640px;max-height:calc(100% - 80px);margin:40px auto auto;padding:0;border:0;border-radius:0;background:var(--fitted-bg);color:var(--fitted-text);font-family:var(--fitted-font);box-shadow:0 24px 64px rgba(0,0,0,.28);overflow:auto;text-align:start;line-height:1.5}",
-  ".fitted-dialog::backdrop{background:rgba(22,22,22,.55)}",
-  "html:has(.fitted-dialog[open]){overflow:hidden}",
-  ".fitted-dialog *{box-sizing:border-box}",
-  ".fitted-dialog [hidden]{display:none!important}",
-  ".fitted-dialog :focus-visible{outline:2px solid var(--fitted-accent);outline-offset:2px}",
-  ".fitted-panel{display:flex;flex-direction:column;gap:18px;padding:28px 32px}",
-  ".fitted-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}",
-  ".fitted-body{display:flex;flex-direction:column;gap:14px}",
-  ".fitted-dialog .fitted-title{margin:0;font-size:28px;font-weight:600;letter-spacing:-.01em;line-height:1.2}",
-  ".fitted-dialog .fitted-sub{margin:4px 0 0;font-size:15px;color:var(--fitted-muted)}",
-  ".fitted-dialog .fitted-h3{margin:0;font-size:20px;font-weight:600;line-height:1.3}",
-  ".fitted-dialog .fitted-note{margin:0;font-size:14px;color:var(--fitted-muted);white-space:pre-line}",
-  ".fitted-dialog button{font:inherit;cursor:pointer}",
-  ".fitted-dialog .fitted-x{display:inline-flex;flex:none;align-items:center;justify-content:center;width:44px;height:44px;padding:0;border:1px solid currentColor;border-radius:2px;background:var(--fitted-bg);color:inherit}",
-  ".fitted-dialog .fitted-btn{display:inline-flex;align-items:center;justify-content:center;min-height:48px;padding:0 22px;border:1px solid var(--fitted-accent);border-radius:2px;background:var(--fitted-accent);color:var(--fitted-bg);font-size:15px;font-weight:600}",
-  ".fitted-dialog .fitted-ghost{border-color:currentColor;background:var(--fitted-bg);color:inherit}",
-  ".fitted-alert{display:flex;flex-direction:column;gap:14px;padding:18px;border:1px solid var(--fitted-alert-line);border-radius:2px;background:var(--fitted-alert)}",
-  ".fitted-alert p{margin:0;font-size:15px;line-height:1.6}",
-  ".fitted-actions{display:flex;flex-wrap:wrap;gap:12px}",
-  ".fitted-alert .fitted-help{font-size:13px;line-height:1.5;color:var(--fitted-muted)}",
-  ".fitted-help a{color:var(--fitted-accent);text-underline-offset:3px}",
-  ".fitted-sk{display:block;height:12px;background:var(--fitted-faint)}",
-  ".fitted-skrow{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:16px;padding:14px 12px;border-bottom:1px solid var(--fitted-faint)}",
+// esbuild joins css into one string, which fits loader.js's 10 KB; PURE
+// lets each bundle drop the one it doesn't use.
+export const css =
+  ".fitted-guide{--fitted-bg:#fff;--fitted-text:#161616;--fitted-accent:#2448a8}" +
+  ".fitted-link{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 2px;border:0;background:none;color:inherit;font:inherit;font-weight:600;text-decoration:underline;text-underline-offset:4px;cursor:pointer}" +
+  ".fitted-dialog{--fitted-muted:color-mix(in srgb,var(--fitted-text) 84%,var(--fitted-bg));--fitted-line:color-mix(in srgb,var(--fitted-text) 16%,var(--fitted-bg));--fitted-faint:color-mix(in srgb,var(--fitted-text) 10%,var(--fitted-bg));--fitted-tint:color-mix(in srgb,var(--fitted-accent) 10%,var(--fitted-bg));--fitted-alert:color-mix(in srgb,#d72c0d 8%,var(--fitted-bg));--fitted-alert-line:color-mix(in srgb,#d72c0d 40%,var(--fitted-bg));box-sizing:border-box;width:calc(100% - 32px);max-width:640px;max-height:calc(100% - 80px);margin:40px auto auto;padding:0;border:0;border-radius:0;background:var(--fitted-bg);color:var(--fitted-text);font-family:var(--fitted-font);box-shadow:0 24px 64px rgba(0,0,0,.28);overflow:auto;text-align:start;line-height:1.5}" +
+  ".fitted-dialog::backdrop{background:rgba(22,22,22,.55)}" +
+  "html:has(.fitted-dialog[open]){overflow:hidden}" +
+  ".fitted-dialog *{box-sizing:border-box}" +
+  ".fitted-dialog [hidden]{display:none!important}" +
+  ".fitted-dialog :focus-visible{outline:2px solid var(--fitted-accent);outline-offset:2px}" +
+  ".fitted-panel{display:flex;flex-direction:column;gap:18px;padding:28px 32px}" +
+  ".fitted-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}" +
+  ".fitted-body{display:flex;flex-direction:column;gap:14px}" +
+  ".fitted-dialog .fitted-title{margin:0;font-size:28px;font-weight:600;letter-spacing:-.01em;line-height:1.2}" +
+  ".fitted-dialog .fitted-sub{margin:4px 0 0;font-size:15px;color:var(--fitted-muted)}" +
+  ".fitted-dialog .fitted-h3{margin:0;font-size:20px;font-weight:600;line-height:1.3}" +
+  ".fitted-dialog .fitted-note{margin:0;font-size:14px;color:var(--fitted-muted);white-space:pre-line}" +
+  ".fitted-dialog button{font:inherit;cursor:pointer}" +
+  ".fitted-dialog .fitted-x{display:inline-flex;flex:none;align-items:center;justify-content:center;width:44px;height:44px;padding:0;border:1px solid currentColor;border-radius:2px;background:var(--fitted-bg);color:inherit}" +
+  ".fitted-dialog .fitted-btn{display:inline-flex;align-items:center;justify-content:center;min-height:48px;padding:0 22px;border:1px solid var(--fitted-accent);border-radius:2px;background:var(--fitted-accent);color:var(--fitted-bg);font-size:15px;font-weight:600}" +
+  ".fitted-dialog .fitted-ghost{border-color:currentColor;background:var(--fitted-bg);color:inherit}" +
+  ".fitted-alert{display:flex;flex-direction:column;gap:14px;padding:18px;border:1px solid var(--fitted-alert-line);border-radius:2px;background:var(--fitted-alert)}" +
+  ".fitted-alert p{margin:0;font-size:15px;line-height:1.6}" +
+  ".fitted-actions{display:flex;flex-wrap:wrap;gap:12px}" +
+  ".fitted-alert .fitted-help{font-size:13px;line-height:1.5;color:var(--fitted-muted)}" +
+  ".fitted-help a{color:var(--fitted-accent);text-underline-offset:3px}" +
+  ".fitted-sk{display:block;height:12px;background:var(--fitted-faint)}" +
+  ".fitted-skrow{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:16px;padding:14px 12px;border-bottom:1px solid var(--fitted-faint)}" +
   // Phones: a bottom sheet, with full-width error buttons below the contact line.
-  "@media (max-width:600px){",
-  ".fitted-dialog{width:100%;max-width:none;max-height:92vh;max-height:92dvh;margin:auto 0 0;border-radius:14px 14px 0 0}",
-  ".fitted-panel{gap:14px;padding:18px 16px}",
-  ".fitted-actions{flex-direction:column;order:1}",
-  "}",
-].join("");
+  "@media (max-width:600px){" +
+  ".fitted-dialog{width:100%;max-width:none;max-height:92vh;max-height:92dvh;margin:auto 0 0;border-radius:14px 14px 0 0}" +
+  ".fitted-panel{gap:14px;padding:18px 16px}" +
+  ".fitted-actions{flex-direction:column;order:1}" +
+  "}";
 
 export const tableCss = /* @__PURE__ */ [
   ".fitted-scroll{overflow-x:auto}",
@@ -101,6 +101,9 @@ export const tableCss = /* @__PURE__ */ [
   ".fitted-dialog .fitted-others [aria-pressed=true]{padding:0 13px;border:2px solid var(--fitted-accent);color:var(--fitted-accent)}",
   ".fitted-act{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px}",
   ".fitted-dialog .fitted-act a{font-size:13px;color:var(--fitted-accent);text-underline-offset:3px}",
+  // The fit line under the link on the product page, in the theme's colors.
+  ".fitted-fits{margin:0;font-size:14px;color:color-mix(in srgb,var(--fitted-text) 84%,var(--fitted-bg))}",
+  ".fitted-fits strong{color:var(--fitted-accent);font-weight:600}",
   // Phones: tighter tables and tabs, larger switches, and fields iOS won't
   // zoom into.
   "@media (max-width:600px){",

@@ -2,7 +2,7 @@
 // @vitest-environment-options {"url": "https://shop.example/products/linen-wrap-top"}
 import { readFileSync } from "node:fs";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { render } from "./guide";
+import { fits, render } from "./guide";
 import { css } from "./guide-css";
 import { start, type Load } from "./guide-loader";
 
@@ -16,7 +16,8 @@ const escape = (s: string) =>
 // The guide snippet's Liquid with Shopify's part played by plain
 // substitutions, so the loader runs against the markup that ships. `t`
 // escapes, as Shopify's does. contact is the store's Contact page, or null
-// when it has none; place is where the block or embed put it.
+// when it has none; place is where the block or embed put it; fitOnly is the
+// snippet's fit_only, for Show only the Find my size link.
 function block(
   json: string,
   product = "Linen Wrap Top",
@@ -25,12 +26,17 @@ function block(
     title: "Contact",
   },
   place: "main" | "featured" | "tab" | "after" = "main",
+  fitOnly = false,
 ) {
   let html = read("snippets/guide.liquid")
     .replace(/\{%-? comment -?%\}[\s\S]*?\{%-? endcomment -?%\}/g, "")
     .replace(
       /\{%-? if pages\.contact\.url -?%\}([\s\S]*?)\{%-? endif -?%\}/,
       (_, inner: string) => (contact ? inner : ""),
+    )
+    .replace(
+      /\{%-? if fit_only -?%\}([\s\S]*?)\{%-? else -?%\}([\s\S]*?)\{%-? endif -?%\}/g,
+      (_, fit: string, guide: string) => (fitOnly ? fit : guide),
     )
     .replace(
       /\{%-? if place == 'tab' -?%\}([\s\S]*?)\{%-? endif -?%\}/g,
@@ -97,7 +103,7 @@ const painted = (block: HTMLElement) =>
   );
 
 let load: ReturnType<typeof vi.fn<Load>>;
-const guide = { render: vi.fn(render) };
+const guide = { render: vi.fn(render), fits: vi.fn(fits) };
 // The guide's events (§12); happy-dom's own would fetch.
 const beacon = vi.spyOn(navigator, "sendBeacon").mockReturnValue(true);
 const ok = () => Promise.resolve(guide);
@@ -125,7 +131,9 @@ beforeAll(() => start((url) => load(url)));
 beforeEach(() => {
   load = vi.fn<Load>(ok);
   guide.render.mockClear();
+  guide.fits.mockClear();
   beacon.mockClear();
+  sessionStorage.clear();
 });
 
 // Each assertion here runs before the earlier start()'s observer can act.
@@ -788,5 +796,177 @@ describe("placement", () => {
     expect(theme).toHaveBeenCalled();
     for (const type of ["keydown", "keyup"])
       document.removeEventListener(type, theme);
+  });
+});
+
+// ARCHITECTURE §10: on its product page, answers kept for the chart show what
+// fits under the link before any open, and the Find my size link (§7).
+describe("Find my size on the product page", () => {
+  const contact = { url: "/pages/contact", title: "Contact" };
+  // A Pro chart with a fit finder that asks the usual size, as the data
+  // snippet prints it.
+  const pro = (over: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      ...JSON.parse(valid),
+      chart: {
+        ...chart,
+        fit: {
+          table: "t1",
+          questions: [{ id: "q1", kind: "usual_size" }],
+          ease: {},
+          stretch: "none",
+        },
+      },
+      plan: "pro",
+      handle: "c-tops000001",
+      ...over,
+    });
+  const keep = (handle = "c-tops000001") =>
+    sessionStorage.setItem(
+      `fitted:answers:${handle}`,
+      JSON.stringify({ q1: "m" }),
+    );
+  const line = () =>
+    document.querySelector(".fitted-fits")?.textContent ?? null;
+
+  it("loads guide.js before any open when the shopper kept answers for its chart, and says what fits under the link", async () => {
+    keep();
+    const { root, link, body } = await mount(pro());
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(load).toHaveBeenCalledWith(
+      "https://cdn.example/assets/guide.js?try=1",
+    );
+    expect(guide.fits).toHaveBeenCalledTimes(1);
+    expect(guide.render).not.toHaveBeenCalled();
+    expect(line()).toBe("From your fit finder answers: M fits you");
+    expect(link.nextElementSibling).toBe(root.querySelector(".fitted-fits"));
+    // The first open draws with that load.
+    link.click();
+    await tick();
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(body.querySelector("table")).not.toBeNull();
+  });
+
+  it("shares a load still under way with the first open", async () => {
+    keep();
+    let finish!: () => void;
+    load.mockImplementation(
+      () => new Promise((r) => (finish = () => r(guide))),
+    );
+    const { link, body } = await mount(pro());
+    link.click();
+    expect(body.querySelector('[role="status"]')?.textContent).toBe(en.loading);
+    finish();
+    await tick();
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(body.querySelector("table")).not.toBeNull();
+    expect(line()).toBe("From your fit finder answers: M fits you");
+  });
+
+  it("loads nothing before an open without answers kept for its chart, or away from its product page", async () => {
+    await mount(pro());
+    keep("c-dresses001");
+    await mount(pro());
+    keep();
+    // A store not on Pro prints no handle.
+    await mount(JSON.stringify({ ...JSON.parse(valid), plan: "standard" }));
+    // A featured section, the floating tab and a theme's quick view.
+    document.body.innerHTML = block(
+      pro({ placement: { featured: true } }),
+      "Rain Jacket",
+      contact,
+      "featured",
+    );
+    await tick();
+    document.body.innerHTML = block(
+      pro({ placement: { floatingTab: true } }),
+      "Linen Wrap Top",
+      contact,
+      "tab",
+    );
+    await tick();
+    document.body.innerHTML = `<div role="dialog">${block(pro({ placement: { quickView: true } }))}</div>`;
+    await tick();
+    expect(
+      [...document.querySelectorAll<HTMLElement>(".fitted-link")].every(shown),
+    ).toBe(true);
+    expect(load).not.toHaveBeenCalled();
+    expect(line()).toBeNull();
+  });
+
+  it("tries a failed early load again on the first open, with its own URL", async () => {
+    keep();
+    load.mockImplementationOnce(fail);
+    const { link, body } = await mount(pro());
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(line()).toBeNull();
+    link.click();
+    expect(load).toHaveBeenLastCalledWith(
+      "https://cdn.example/assets/guide.js?try=2",
+    );
+    await tick();
+    expect(body.querySelector("table")).not.toBeNull();
+    expect(line()).toBe("From your fit finder answers: M fits you");
+  });
+
+  it("reads no kept answers where sessionStorage throws, and still opens", async () => {
+    const denied = vi
+      .spyOn(Storage.prototype, "getItem")
+      .mockImplementation(() => {
+        throw new DOMException("denied", "SecurityError");
+      });
+    try {
+      const { link, body } = await mount(pro());
+      expect(load).not.toHaveBeenCalled();
+      link.click();
+      await tick();
+      expect(body.querySelector("table")).not.toBeNull();
+    } finally {
+      denied.mockRestore();
+    }
+  });
+
+  it("hides the line with the app block's link while the embed's tab or placed link stands in", async () => {
+    keep();
+    // The embed's styles (blocks/embed.liquid), as it prints them.
+    const [tabStyle, afterStyle] = read("blocks/embed.liquid").match(
+      /<style>[\s\S]*?<\/style>/g,
+    )!;
+    const shows = () =>
+      getComputedStyle(document.querySelector(".fitted-fits")!).display !==
+      "none";
+    document.body.innerHTML = `${tabStyle}${block(pro())}`;
+    await tick();
+    expect(shows()).toBe(false);
+    const json = pro({ placement: { selector: ".late" } });
+    document.body.innerHTML = `${afterStyle}${block(json)}${block(json, "Linen Wrap Top", contact, "after")}`;
+    await tick();
+    // Nothing matches yet, so the app block's link and its line stay.
+    expect(shows()).toBe(true);
+    document.body.insertAdjacentHTML("afterbegin", '<div class="late"></div>');
+    await tick();
+    expect(shows()).toBe(false);
+  });
+
+  it("opens the Find my size link on Find my size", async () => {
+    document.body.innerHTML = block(
+      pro({ popup: { fitOnly: true } }),
+      "Linen Wrap Top",
+      contact,
+      "main",
+      true,
+    );
+    await tick();
+    const link = document.querySelector<HTMLElement>(".fitted-link")!;
+    expect(link.querySelector("span")?.textContent).toBe(en.fit);
+    link.click();
+    await tick();
+    const pressed = document.querySelectorAll(
+      ".fitted-tabs [aria-pressed=true]",
+    );
+    expect([...pressed].map((b) => b.textContent)).toEqual([en.fit]);
+    expect(document.querySelector<HTMLElement>(".fitted-fit")?.hidden).toBe(
+      false,
+    );
   });
 });

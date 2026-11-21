@@ -2,6 +2,10 @@
 
 Dated entries, newest first. Grep for the area you touch; never read front to back.
 
+## 2026-11-20 Storefront: guide.js before an open, only for the fit line
+
+loader.js loads guide.js as an app block's own product page loads when the shopper has answers kept for its chart, so "From your fit finder answers: M fits you" can show before any open. Computing it needs findSize, which loader.js's 10 KB can't hold. Everyone else still loads guide.js on first open. ARCHITECTURE §9, §10.
+
 ## 2026-11-18 Data: app-owned definitions; uninstall removes charts in time
 
 Charts, rules and settings use app-owned definitions in `shopify.app.toml`, Shopify's recommended path, with `merchant_read` so only Fitted writes. Shopify deletes app-owned definitions at uninstall and keeps the values only temporarily, so charts don't outlive an uninstall; CSV export on every plan is the way out. Merchant-owned definitions would survive uninstall but let any app or staff edit what the storefront renders. ARCHITECTURE §4.

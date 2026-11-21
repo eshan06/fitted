@@ -5,9 +5,11 @@
 // has the guide pick the size the product form shows. It applies the
 // Appearance settings (§7) to the link and the popup.
 import { css } from "./guide-css";
-import { parseGuide, type Guide, type render } from "./guide";
+import { keyOf, parseGuide, type fits, type Guide, type render } from "./guide";
 
-export type Load = (url: string) => Promise<{ render: typeof render }>;
+export type Load = (
+  url: string,
+) => Promise<{ render: typeof render; fits: typeof fits }>;
 
 // The canvas's accent. "Match my theme" keeps it where it reads 4.5:1 on the
 // theme's background and on its tint, and takes the theme's text color elsewhere.
@@ -32,7 +34,7 @@ const ratio = (a: number, b: number) =>
 // painted with a gradient has no background color, so the text can come from
 // one look and the background from another: if they don't read 4.5:1, the
 // text becomes near-black or white, whichever reads on that background.
-function themeColors(block: HTMLElement) {
+export function themeColors(block: HTMLElement) {
   let bg = WHITE;
   for (let el: Element | null = block; el; el = el.parentElement) {
     const c = getComputedStyle(el).backgroundColor;
@@ -95,7 +97,8 @@ function setup(block: HTMLElement, load: Load) {
         : g.page
       : place !== "featured" || g.featured;
   if (!shown) return;
-  if (place === "main" && !popup) block.dataset.page = "";
+  const page = place === "main" && !popup;
+  if (page) block.dataset.page = "";
   const reveal = () => {
     if (!document.getElementById("fitted-css")) document.head.append(styles(g));
     link.style.display = "";
@@ -130,19 +133,28 @@ function setup(block: HTMLElement, load: Load) {
   let state: "idle" | "loading" | "ready" = "idle";
   let tries = 0;
   let sync = () => {}; // once drawn, picks the size the product form shows
+  // guide.js, loaded once: on the first open, or before it for the fit line.
+  // A failed import() stays failed for its URL, so each try asks for its own.
+  let guide: ReturnType<Load> | undefined;
+  const get = () => {
+    if (guide) return guide;
+    const url = new URL(block.dataset.url ?? "", location.href);
+    url.searchParams.set("try", `${++tries}`);
+    return (guide = load(url.href).catch((e) => {
+      guide = undefined;
+      throw e;
+    }));
+  };
   const attempt = () => {
     state = "loading";
     if (body.contains(document.activeElement))
       dialog.querySelector<HTMLElement>("[data-fitted-close]")?.focus();
     dialog.setAttribute("aria-busy", "true");
     show("loading");
-    // A failed import() stays failed for its URL, so each try asks for its own.
-    const url = new URL(block.dataset.url ?? "", location.href);
-    url.searchParams.set("try", `${++tries}`);
-    load(url.href)
-      .then((guide) => {
+    get()
+      .then((m) => {
         body.replaceChildren();
-        sync = guide.render(body, g);
+        sync = m.render(body, g);
         state = "ready";
       })
       .catch(() => {
@@ -169,6 +181,17 @@ function setup(block: HTMLElement, load: Load) {
     else if (state === "ready") sync();
     dialog.showModal();
   });
+  // On its product page, answers kept for this chart show what fits them
+  // under the link (§10), so guide.js loads now to draw it.
+  try {
+    if (page && sessionStorage.getItem(keyOf(g)))
+      get().then(
+        (m) => m.fits(),
+        () => {},
+      );
+  } catch {
+    // No storage: no kept answers.
+  }
   if (place !== "after") return reveal();
   // The link after the merchant's selector waits for that element, which a
   // script may draw later, and goes back after it whenever the theme redraws

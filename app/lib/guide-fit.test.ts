@@ -11,7 +11,7 @@ import {
 } from "vitest";
 import { reasonText } from "../components/fit-finder/chart-fit";
 import { findSize, type Answers, type Fit, type Table } from "./fit-finder";
-import { parseGuide, render } from "./guide";
+import { fits, parseGuide, render } from "./guide";
 
 // Find my size (ARCHITECTURE §10), from the Storefront and FitFinder boards.
 const en = JSON.parse(
@@ -1316,5 +1316,216 @@ describe("Find my size's Add to cart", () => {
     expect(theme.querySelector<HTMLInputElement>("[name=id]")?.value).toBe(
       "103",
     );
+  });
+});
+
+// "Show only the Find my size link" (§7): Liquid words the link Find my
+// size; the guide opens there.
+describe("Find my size's own link", () => {
+  const sections = (root: Element) =>
+    [
+      root.querySelector(":scope > .fitted-part"),
+      root.querySelector(".fitted-fit"),
+    ].map((el) => (el as HTMLElement).hidden);
+
+  it("opens on Find my size, and every open after, with Show only the Find my size link on", () => {
+    const g = parseGuide(data({}, { popup: { fitOnly: true } }))!;
+    const root = document.body.appendChild(document.createElement("div"));
+    for (const [k, v] of Object.entries<string>(en))
+      root.dataset[`t${k[0].toUpperCase()}${k.slice(1)}`] = v;
+    const sync = render(root, g);
+    expect(tabs(root)).toEqual([
+      ["Size chart", "false"],
+      ["Find my size", "true"],
+    ]);
+    expect(sections(root)).toEqual([true, false]);
+    // The shopper turns to the chart, closes, and opens the link again.
+    root.querySelector<HTMLElement>('[data-fitted-tab="chart"]')!.click();
+    expect(sections(root)).toEqual([false, true]);
+    sync();
+    expect(tabs(root).map(([, on]) => on)).toEqual(["false", "true"]);
+    expect(sections(root)).toEqual([true, false]);
+  });
+
+  it("opens on the Size chart with it off, or with no Find my size to open", () => {
+    expect(tabs(open(data({}, { popup: { fitOnly: false } })))).toEqual([
+      ["Size chart", "true"],
+      ["Find my size", "false"],
+    ]);
+    // On Standard the link stays the Size guide's, and so does the guide.
+    const root = open(data({}, { plan: "standard", popup: { fitOnly: true } }));
+    expect(root.querySelector(".fitted-tabs")).toBeNull();
+    expect(root.querySelector("table")).not.toBeNull();
+  });
+});
+
+// The fit line under the product page's link (§10), from the Storefront board.
+describe("the fit line", () => {
+  // An app block on its product page as the loader leaves it (data-page):
+  // the link, the extension's words on the guide's body, then its data.
+  const page = (json = data(), at: Element = document.body) => {
+    const block = at.appendChild(document.createElement("div"));
+    block.className = "fitted-guide";
+    block.dataset.page = "";
+    block.innerHTML =
+      '<button class="fitted-link"><span>Size guide</span></button><dialog><div class="fitted-body"></div></dialog><script type="application/json" data-fitted></script>';
+    const body = block.querySelector<HTMLElement>(".fitted-body")!;
+    for (const [k, v] of Object.entries<string>(en))
+      body.dataset[`t${k[0].toUpperCase()}${k.slice(1)}`] = v;
+    block.querySelector("script")!.textContent = json;
+    return block;
+  };
+  const line = (block: Element) => block.querySelector(":scope > .fitted-fits");
+  const says = (block: Element) => line(block)?.textContent ?? null;
+  const keep = (a: Record<string, unknown>, handle = "c-tops000001") =>
+    sessionStorage.setItem(`fitted:answers:${handle}`, JSON.stringify(a));
+  const fitsM = "From your fit finder answers: M fits you";
+
+  it("says what fits under the link, from the answers kept for the block's chart, as drawn", () => {
+    const beacon = vi.spyOn(navigator, "sendBeacon").mockReturnValue(true);
+    keep({ q1: { value: 35.5, unit: "in" }, q2: "m", q3: "regular" });
+    const block = page();
+    fits();
+    expect(says(block)).toBe(fitsM);
+    expect(line(block)?.tagName).toBe("P");
+    expect(line(block)?.querySelector("strong")?.textContent).toBe(
+      "M fits you",
+    );
+    expect(block.querySelector(".fitted-link")?.nextElementSibling).toBe(
+      line(block),
+    );
+    // Its styles come with it; nothing leaves the browser.
+    expect(document.getElementById("fitted-table-css")?.textContent).toContain(
+      ".fitted-fits{",
+    );
+    expect(beacon).not.toHaveBeenCalled();
+    // Drawn again, it stays one line.
+    fits();
+    expect(block.querySelectorAll(".fitted-fits")).toHaveLength(1);
+  });
+
+  it("follows the answers the shopper gives in any of the page's guides, showing the pick", () => {
+    const block = page();
+    fits();
+    expect(says(block)).toBeNull();
+    // The floating tab's guide, for the same chart.
+    const root = open(data());
+    answer(root, { q1: "35.5", q2: "m", q3: "regular" });
+    expect(says(block)).toBe(fitsM);
+    // Seeing how L would fit leaves the pick as it is.
+    [...root.querySelectorAll<HTMLElement>(".fitted-others button")]
+      .find((b) => b.textContent === "L")!
+      .click();
+    expect(says(block)).toBe(fitsM);
+    pick(root, "q3", "relaxed");
+    expect(says(block)).toBe("From your fit finder answers: L fits you");
+    // Past the largest size nothing fits, so the line goes.
+    type(root, "q1", "50");
+    expect(says(block)).toBeNull();
+    type(root, "q1", "");
+    expect(says(block)).toBe("From your fit finder answers: L fits you");
+  });
+
+  it("says nothing until the kept answers settle on a size", () => {
+    // The usual size, which the shopper can't skip, is missing.
+    keep({ q3: "regular" });
+    const block = page();
+    fits();
+    expect(says(block)).toBeNull();
+    // An answer the fields couldn't take back counts for nothing, so the line
+    // waits for the usual size, as the guide does.
+    keep({ q1: { value: 35.5, unit: "in" }, q2: "<b>", q3: "regular" });
+    fits();
+    expect(says(block)).toBeNull();
+    expect(said(open(data()))).toBeNull();
+    // A size with no word to name it.
+    keep({ q2: "m", q3: "regular" });
+    const json = JSON.parse(data());
+    json.chart.words["tops.m.size"] = " ";
+    const blank = page(JSON.stringify(json));
+    fits();
+    expect(says(blank)).toBeNull();
+  });
+
+  it("keeps nothing for a guide opened or emptied without answers, so no page loads guide.js early for it", () => {
+    const root = open(data());
+    expect(sessionStorage).toHaveLength(0);
+    pick(root, "q2", "m");
+    expect(sessionStorage).toHaveLength(1);
+    pick(root, "q2", "");
+    expect(sessionStorage).toHaveLength(0);
+  });
+
+  it("follows Show the result on the product page button, on unless turned off", () => {
+    keep({ q2: "m", q3: "regular" });
+    const off = page(data({}, { fitFinder: { onButton: false } }));
+    const on = page(data({}, { fitFinder: { fitBars: false } }));
+    fits();
+    expect([says(off), says(on)]).toEqual([null, fitsM]);
+  });
+
+  it("shows only on Pro, for a chart with a fit finder", () => {
+    keep({ q2: "m", q3: "regular" });
+    const none = JSON.parse(data());
+    delete none.chart.fit;
+    const blocks = [
+      ...["free", "standard", null].map((plan) => page(data({}, { plan }))),
+      page(JSON.stringify(none)),
+    ];
+    fits();
+    expect(blocks.map(says)).toEqual([null, null, null, null]);
+  });
+
+  it("shows only under an app block on its product page, each from its own chart's answers", () => {
+    keep({ q2: "m", q3: "regular" });
+    // A featured section, a quick view or the floating tab: no data-page.
+    const elsewhere = page();
+    delete elsewhere.dataset.page;
+    const other = page(data({}, { handle: "c-dresses001" }));
+    const block = page();
+    fits();
+    expect([says(elsewhere), says(other), says(block)]).toEqual([
+      null,
+      null,
+      fitsM,
+    ]);
+  });
+
+  it("names the size by its word, merged as the Size chart does, as text", () => {
+    const json = JSON.parse(data());
+    json.chart.tables[0].merges = [{ row: "l", col: "size", rows: 2, cols: 1 }];
+    json.chart.words["tops.l.size"] = "<b>L/XL</b>";
+    delete json.chart.words["tops.xl.size"];
+    keep({ q2: "xl", q3: "regular" });
+    const block = page(JSON.stringify(json));
+    fits();
+    expect(says(block)).toBe(
+      "From your fit finder answers: <b>L/XL</b> fits you",
+    );
+    expect(block.querySelector("b")).toBeNull();
+  });
+
+  it.each([
+    [
+      "keeps the accent on a light page",
+      "background-color: rgb(250, 247, 240); color: rgb(18, 18, 18)",
+      "#2448a8",
+    ],
+    [
+      "takes the text color on a dark one",
+      "background-color: rgb(18, 18, 18); color: rgb(240, 240, 240)",
+      "rgb(240, 240, 240)",
+    ],
+  ])("colors the line as the theme does: %s", (_, theme, accent) => {
+    keep({ q2: "m", q3: "regular" });
+    const section = document.body.appendChild(document.createElement("div"));
+    section.setAttribute("style", theme);
+    const block = page(data(), section);
+    // The merchant's custom colors, which the loader paints on the block on
+    // open, are the popup's, never the page's.
+    block.style.setProperty("--fitted-accent", "#ff0000");
+    fits();
+    const el = line(block) as HTMLElement;
+    expect(el.style.getPropertyValue("--fitted-accent")).toBe(accent);
   });
 });
