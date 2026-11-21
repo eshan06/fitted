@@ -106,12 +106,22 @@ export async function getPlan(
   return next.result;
 }
 
-/** The shop's last confirmed plan and when, for the plan-check banner: Free and null if never. */
+/**
+ * The shop's last confirmed plan and when, Free and null if never, without
+ * waiting on a check: what a screen loads with, and the plan-check banner's
+ * date. Never rejects: without the database, the plan last read or confirmed.
+ */
 export async function lastConfirmedPlan(
   shop: string,
-): Promise<{ plan: Plan; at: Date | null }> {
-  const row = await db.shop.findUnique({ where: { shop } });
-  return { plan: toPlan(row?.plan), at: row?.planCheckedAt ?? null };
+): Promise<Omit<PlanState, "checkFailed"> & { at: Date | null }> {
+  try {
+    const row = await readRow(shop);
+    const at = row?.planCheckedAt ?? null;
+    return { plan: toPlan(row?.plan), yearly: row?.planYearly ?? null, at };
+  } catch (error) {
+    const { plan, yearly } = unconfirmed(shop, error);
+    return { plan, yearly, at: null };
+  }
 }
 
 /**

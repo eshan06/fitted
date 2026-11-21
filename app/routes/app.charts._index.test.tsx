@@ -12,6 +12,7 @@ const m = vi.hoisted(() => ({
   chartPages: vi.fn(),
   countChartProducts: vi.fn(),
   getPlan: vi.fn(),
+  lastConfirmedPlan: vi.fn(),
   pricingPlansUrl: vi.fn(),
   canReadProducts: vi.fn(),
   deleteChart: vi.fn(),
@@ -42,6 +43,7 @@ vi.mock("../models/admin.server", async (orig) => ({
 vi.mock("../models/billing.server", async (orig) => ({
   ...(await orig<typeof import("../models/billing.server")>()),
   getPlan: m.getPlan,
+  lastConfirmedPlan: m.lastConfirmedPlan,
 }));
 const {
   default: SizeCharts,
@@ -50,6 +52,7 @@ const {
   filterRows,
 } = await import("./app.charts._index");
 const shell = await import("./app");
+const followUp = await import("./app.plan-check");
 type List = Awaited<Awaited<ReturnType<typeof loader>>["list"]>;
 type Row = Extract<List, { rows: unknown }>["rows"][number];
 
@@ -90,6 +93,11 @@ beforeEach(() => {
   vi.spyOn(console, "log").mockImplementation((line) => logs.push(line));
   m.authenticate.mockResolvedValue({ admin, session: { shop: SHOP } });
   m.getPlan.mockResolvedValue({ plan: "free", checkFailed: false });
+  m.lastConfirmedPlan.mockResolvedValue({
+    plan: "free",
+    yearly: false,
+    at: null,
+  });
   m.pricingPlansUrl.mockResolvedValue(PLANS);
   m.canReadProducts.mockResolvedValue(true);
   m.deleteChart.mockResolvedValue(undefined);
@@ -127,8 +135,15 @@ describe("loading the list", () => {
       "gid://shopify/Metaobject/1",
       "gid://shopify/Metaobject/2",
     ]);
-    expect(m.getPlan).toHaveBeenCalledWith(SHOP);
+    // The last confirmed plan, never the check, which the shell settles.
+    expect(m.lastConfirmedPlan).toHaveBeenCalledExactlyOnceWith(SHOP);
+    expect(m.getPlan).not.toHaveBeenCalled();
     expect(m.pricingPlansUrl).not.toHaveBeenCalled();
+    // For the shell, which reloads the list if the check settles on another.
+    const { planAtLoad } = await loader({
+      request: new Request("https://fitted.test/app/charts"),
+    } as LoaderFunctionArgs);
+    expect(planAtLoad).toEqual({ plan: "free", yearly: false, at: null });
   });
 
   it("flags Free at 3 Active charts with the plan page, and no other plan", async () => {
@@ -141,7 +156,11 @@ describe("loading the list", () => {
     expect(m.pricingPlansUrl).toHaveBeenCalledWith(admin, SHOP);
 
     m.chartPages.mockReturnValue(three());
-    m.getPlan.mockResolvedValue({ plan: "standard", checkFailed: false });
+    m.lastConfirmedPlan.mockResolvedValue({
+      plan: "standard",
+      yearly: false,
+      at: null,
+    });
     expect(await load()).toMatchObject({ limit: null });
   });
 
@@ -712,6 +731,7 @@ describe("when the database can't give the plan", () => {
       typeof import("../models/billing.server")
     >("../models/billing.server");
     m.getPlan.mockImplementation(billing.getPlan);
+    m.lastConfirmedPlan.mockImplementation(billing.lastConfirmedPlan);
     m.findUnique.mockRejectedValue(new Error("Can't reach database server"));
     m.chartPages.mockImplementation(() =>
       pages(
@@ -760,15 +780,126 @@ describe("when the database can't give the plan", () => {
       's-banner[heading="Couldn\'t check your plan"] s-button',
     ) as HTMLElement;
     const reads = m.getPlan.mock.calls.length;
+    const listReads = m.lastConfirmedPlan.mock.calls.length;
     await act(async () => retry.click());
     await act(() => new Promise((r) => setTimeout(r, 10)));
-    // The re-check, then the shell's and the list's loads again.
+    // The re-check, then the shell's check and the list's load again: the
+    // list reads the last confirmed plan, and the shell the banner's date.
     expect(m.getPlan.mock.calls.slice(reads)).toEqual([
       [SHOP, { recheck: true }],
+      [SHOP],
+    ]);
+    expect(m.lastConfirmedPlan.mock.calls.slice(listReads)).toEqual([
       [SHOP],
       [SHOP],
     ]);
     expect(headings()).toEqual(shown);
+    expect(el.querySelectorAll("s-table-row")).toHaveLength(3);
+  });
+});
+
+// What React Router does at entry.server.tsx's streamTimeout: whatever a
+// loader streams that's still pending then is rejected, so its Await shows
+// the error.
+const STREAM_LIMIT = 5_000;
+const streamed = async (loaded: Promise<object>) =>
+  Object.fromEntries(
+    Object.entries(await loaded).map(([key, value]) => [
+      key,
+      value instanceof Promise
+        ? Promise.race([
+            value,
+            new Promise((_, reject) =>
+              setTimeout(
+                () => reject(new Error("Server Timeout")),
+                STREAM_LIMIT,
+              ),
+            ),
+          ])
+        : value,
+    ]),
+  );
+
+// Regression (#193): a plan check slower than the stream (a slow Partner API,
+// or a welcome-link re-check waiting out the 10-second gap) held the list past
+// it, so it showed its load error.
+describe("when the plan check outlasts the stream", () => {
+  let root: ReturnType<typeof createRoot> | undefined;
+  afterEach(() => {
+    act(() => root?.unmount());
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("lists the charts on the last confirmed plan, then on the plan the check settles on", async () => {
+    // Only setTimeout: React schedules on setImmediate.
+    vi.useFakeTimers({ toFake: ["setTimeout"], shouldAdvanceTime: true });
+    m.chartPages.mockImplementation(() =>
+      pages(
+        [1, 2, 3].map((n) => stored(n, "ACTIVE", `2026-11-1${n}T10:00:00Z`)),
+      ),
+    );
+    // Shopify answers after 6 seconds; the plan is cached from then on.
+    const standard = { plan: "standard", yearly: false, checkFailed: false };
+    m.getPlan.mockReturnValue(
+      new Promise((resolve) =>
+        setTimeout(() => {
+          m.getPlan.mockResolvedValue(standard);
+          m.lastConfirmedPlan.mockResolvedValue({
+            ...standard,
+            at: new Date(),
+          });
+          resolve(standard);
+        }, 6_000),
+      ),
+    );
+    // The shell's follow-up, through App Bridge's fetch.
+    vi.stubGlobal(
+      "fetch",
+      async (url: string) =>
+        new Response(
+          JSON.stringify(
+            await followUp.loader({
+              request: new Request(new URL(url, "https://fitted.test")),
+            } as LoaderFunctionArgs),
+          ),
+        ),
+    );
+    const Stub = createRoutesStub([
+      {
+        path: "/app",
+        Component: shell.default,
+        HydrateFallback: () => null,
+        loader: (args) => streamed(shell.loader(args as LoaderFunctionArgs)),
+        action: (args) => shell.action(args as ActionFunctionArgs),
+        shouldRevalidate: shell.shouldRevalidate,
+        children: [
+          {
+            path: "charts",
+            Component: SizeCharts,
+            loader: (args) => streamed(loader(args as LoaderFunctionArgs)),
+          },
+        ],
+      },
+    ]);
+    const el = document.createElement("div");
+    document.body.replaceChildren(el);
+    root = createRoot(el);
+    await act(async () =>
+      root!.render(<Stub initialEntries={["/app/charts"]} />),
+    );
+    const headings = () =>
+      [...el.querySelectorAll("s-banner")].map((b) =>
+        b.getAttribute("heading"),
+      );
+
+    await act(() => vi.advanceTimersByTimeAsync(STREAM_LIMIT));
+    expect(headings()).toEqual(["Free plan: 3 of 3 Active charts"]);
+    expect(el.querySelectorAll("s-table-row")).toHaveLength(3);
+
+    await act(() => vi.advanceTimersByTimeAsync(1_000));
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+    expect(headings()).toEqual([]);
     expect(el.querySelectorAll("s-table-row")).toHaveLength(3);
   });
 });

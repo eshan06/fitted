@@ -44,7 +44,11 @@ import {
   size,
 } from "../components/fit-finder/chart-fit";
 import { QuestionEditor } from "../components/fit-finder/QuestionEditor";
-import { getPlan } from "../models/billing.server";
+import {
+  getPlan,
+  lastConfirmedPlan,
+  type Plan,
+} from "../models/billing.server";
 import {
   type FieldErrors,
   type Settings,
@@ -130,11 +134,10 @@ async function liveCounts(
   }
 }
 
-async function load(admin: Admin, shop: string) {
+async function load(admin: Admin, shop: string, plan: Plan) {
   try {
-    const [settings, { plan }, plansUrl, all] = await Promise.all([
+    const [settings, plansUrl, all] = await Promise.all([
       getSettings(admin),
-      getPlan(shop),
       pricingPlansUrl(admin, shop),
       listCharts(admin),
     ]);
@@ -174,14 +177,18 @@ async function recount(admin: Admin, shop: string) {
 type Recount = { counts: Ok["counts"] };
 type Screen = { fitFinder: ReturnType<typeof load>; storeUrl: string };
 
-// Streamed, so the screen shows its loading state while Shopify answers.
-// `?count` answers the live line's Try again.
+// Streamed, so the screen shows its loading state while Shopify answers. On
+// the last confirmed plan, so a slow plan check never holds the stream; the
+// shell reloads the screen, keeping its edits, if the check settles on another
+// (app.tsx). `?count` answers the live line's Try again.
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   if (new URL(request.url).searchParams.has("count"))
     return recount(admin, session.shop);
+  const planAtLoad = await lastConfirmedPlan(session.shop);
   return {
-    fitFinder: load(admin, session.shop),
+    planAtLoad,
+    fitFinder: load(admin, session.shop, planAtLoad.plan),
     storeUrl: `https://${session.shop}`,
   };
 };
