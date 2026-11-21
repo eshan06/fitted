@@ -147,6 +147,7 @@ beforeEach(() => {
   );
 });
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });
@@ -751,17 +752,49 @@ describe("discarding an image the editor let go", () => {
         params: { id },
       } as unknown as ActionFunctionArgs),
     );
-  const deleted = (userErrors: object[] = []) =>
-    admin.graphql.mockResolvedValue(
-      Response.json({
-        data: {
-          fileDelete: {
-            deletedFileIds: userErrors.length ? null : [FILE],
-            userErrors,
+  // A chart as Shopify lists it, holding `image` as its How to measure image.
+  const node = (image: string, valid = true) => ({
+    id: ID,
+    handle: "c-abc123def4",
+    type: "$app:chart",
+    updatedAt: "2026-11-19T00:00:05Z",
+    capabilities: { publishable: { status: "DRAFT" } },
+    name: { value: "Women's tops" },
+    template: { value: valid ? "tops" : "nope" },
+    content: { jsonValue: chart().content },
+    measureImage: { value: image, reference: null },
+    importNote: null,
+  });
+  // Shopify Files deletes, after listing the `saved` charts a page at a time.
+  const deleted = (userErrors: object[] = [], saved: object[][] = [[]]) =>
+    admin.graphql.mockImplementation(
+      async (query: string, opts?: { variables?: { after?: string } }) => {
+        if (!query.includes("ChartList"))
+          return Response.json({
+            data: {
+              fileDelete: {
+                deletedFileIds: userErrors.length ? null : [FILE],
+                userErrors,
+              },
+            },
+          });
+        const page = Number(opts?.variables?.after ?? 0);
+        const more = page + 1 < saved.length;
+        return Response.json({
+          data: {
+            metaobjects: {
+              nodes: saved[page],
+              pageInfo: {
+                hasNextPage: more,
+                endCursor: more ? String(page + 1) : null,
+              },
+            },
           },
-        },
-      }),
+        });
+      },
     );
+  const deletes = () =>
+    admin.graphql.mock.calls.filter(([q]) => q.includes("fileDelete"));
 
   it("deletes a file Fitted uploaded from Shopify Files", async () => {
     const sig = await sigFor();
@@ -770,8 +803,7 @@ describe("discarding an image the editor let go", () => {
       status: 200,
       body: { discarded: FILE },
     });
-    const [query, opts] = admin.graphql.mock.calls[0];
-    expect(query).toContain("fileDelete");
+    const [[, opts]] = deletes();
     expect(opts.variables).toEqual({ ids: [FILE] });
     // A new chart's editor discards too; no chart is touched.
     deleted();
@@ -819,6 +851,75 @@ describe("discarding an image the editor let go", () => {
     });
     expect(await drop({ id: FILE, sig })).toEqual(refused);
     expect(admin.graphql).not.toHaveBeenCalled();
+  });
+
+  it("refuses a sig over an hour old, without calling Shopify (403)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-20T10:00:00Z"));
+    const sig = await sigFor();
+    deleted();
+    vi.setSystemTime(new Date("2026-11-20T10:59:00Z"));
+    expect((await drop({ id: FILE, sig })).status).toBe(200);
+    admin.graphql.mockClear();
+    vi.setSystemTime(new Date("2026-11-20T11:00:01Z"));
+    expect(await drop({ id: FILE, sig })).toEqual({
+      status: 403,
+      body: {
+        error: {
+          code: "expired",
+          message:
+            "This upload is over an hour old, so Fitted keeps it. Delete it in Settings > Files if you don't need it.",
+        },
+      },
+    });
+    // Nor can its issue time be moved on: the sig covers it.
+    const now = String(Math.floor(Date.now() / 1000));
+    const moved = await drop({ id: FILE, sig: sig.replace(/^\d+/, now) });
+    expect(moved).toMatchObject({
+      status: 403,
+      body: { error: { code: "not_fitted" } },
+    });
+    expect(admin.graphql).not.toHaveBeenCalled();
+  });
+
+  it("deletes nothing when the charts can't be read, logging why (502)", async () => {
+    const sig = await sigFor();
+    admin.graphql.mockResolvedValue(Response.json({ errors: [{}] }));
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    const answer = drop({ id: FILE, sig });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await answer).toEqual({
+      status: 502,
+      body: {
+        error: { code: "shopify", message: "Shopify didn't delete the image." },
+      },
+    });
+    expect(deletes()).toHaveLength(0);
+    expect(JSON.parse(logs.at(-1)!)).toMatchObject({ shop: SHOP });
+  });
+
+  it("never deletes an image a chart has saved, on any page of charts (409)", async () => {
+    const sig = await sigFor();
+    const kept = {
+      status: 409,
+      body: {
+        error: {
+          code: "saved",
+          message: "A chart uses this image, so Fitted keeps it.",
+        },
+      },
+    };
+    const other = node("gid://shopify/MediaImage/8");
+    deleted([], [[other], [other, node(FILE)]]);
+    expect(await drop({ id: FILE, sig })).toEqual(kept);
+    // A chart Fitted can't read in full still holds its image.
+    deleted([], [[node(FILE, false)]]);
+    expect(await drop({ id: FILE, sig })).toEqual(kept);
+    expect(deletes()).toHaveLength(0);
+    // Saved on no chart: deleted.
+    deleted([], [[other]]);
+    expect((await drop({ id: FILE, sig })).status).toBe(200);
+    expect(deletes()).toHaveLength(1);
   });
 
   it("refuses a discard without an id and sig (422)", async () => {

@@ -10,6 +10,7 @@ import {
   type UserError,
   adminGraphql,
 } from "./admin.server";
+import { chartPages } from "./chart.server";
 
 const WAIT_MS = 20_000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -190,25 +191,30 @@ export const uploadFont = async (
   file: Upload,
   signal?: AbortSignal,
 ) => (await upload(admin, "font", file, signal)).url;
-// Proof that Fitted uploaded a file for this shop, so a discard never
-// deletes a file the merchant or another app made.
-function sign(shop: string, id: string) {
+// Proof that Fitted uploaded a file for this shop at second `t`, so a discard
+// never deletes a file the merchant or another app made. Only image uploads
+// are signed: a font upload gets none, so the store's font can't be discarded.
+const SIG_MAX_AGE = 60 * 60;
+const nowSeconds = () => Math.floor(Date.now() / 1000);
+function sign(shop: string, id: string, t: number) {
   const secret = process.env.SHOPIFY_API_SECRET;
   if (!secret) throw new Error("SHOPIFY_API_SECRET is not set");
-  return createHmac("sha256", secret)
-    .update(`fitted-discard ${shop} ${id}`)
+  const mac = createHmac("sha256", secret)
+    .update(`fitted-discard ${shop} ${id} ${t}`)
     .digest("base64url");
+  return `${t}.${mac}`;
 }
 
 /** Uploads a checked PNG or JPG; answers its MediaImage id, URL and `sig`. */
 export async function uploadImage(admin: Admin, shop: string, file: Upload) {
   const image = await upload(admin, "image", file);
-  return { ...image, sig: sign(shop, image.id) };
+  return { ...image, sig: sign(shop, image.id, nowSeconds()) };
 }
 
 /**
- * Deletes an image this shop's editor uploaded but never saved; false, with
- * no call to Shopify, when `sig` isn't the one its upload answered.
+ * Deletes an image this shop's editor uploaded within the hour and no chart
+ * saved. Without a call to Shopify, "not_fitted" when `sig` isn't the one its
+ * upload answered and "expired" past the hour; "saved" when a chart holds it.
  */
 export async function discardImage(
   admin: Admin,
@@ -216,9 +222,16 @@ export async function discardImage(
   id: string,
   sig: string,
 ) {
-  const want = Buffer.from(sign(shop, id));
+  const t = Number(/^\d{1,12}(?=\.)/.exec(sig)?.[0]);
+  const want = Buffer.from(t ? sign(shop, id, t) : "");
   const got = Buffer.from(sig);
-  if (got.length !== want.length || !timingSafeEqual(got, want)) return false;
+  if (!t || got.length !== want.length || !timingSafeEqual(got, want))
+    return "not_fitted";
+  if (nowSeconds() - t > SIG_MAX_AGE) return "expired";
+  // Any chart, a clone's included, and one that doesn't read in full.
+  for await (const charts of chartPages(admin))
+    if (charts.some((c) => (c.chart ?? c.raw).measureImage === id))
+      return "saved";
   await adminGraphql(
     admin,
     `#graphql
@@ -236,5 +249,5 @@ export async function discardImage(
     const { userErrors = [] } = err instanceof AdminApiError ? err : {};
     if (!userErrors.length || !userErrors.every(gone)) throw err;
   });
-  return true;
+  return "discarded";
 }
