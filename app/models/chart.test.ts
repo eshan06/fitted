@@ -721,23 +721,40 @@ describe("chart reads and writes", () => {
       });
     });
 
-    it("cuts the copy's name to 100 characters, never through an emoji", async () => {
-      const top = String.fromCodePoint(0x1f45a);
-      const a = await createChart(shop.admin, HANDLE, {
-        ...chart(),
-        name: `${"a".repeat(91)}${top}`,
-      });
+    it("cuts the copy's name to 100 characters, never through an emoji or a flag", async () => {
+      const cut = async (name: string, n: number) => {
+        const c = await createChart(shop.admin, `c-abc123def${n}`, {
+          ...chart(),
+          name,
+        });
+        return (await duplicateChart(shop.admin, c.id, `c-copy00000${n}`)).name;
+      };
       // "Copy of " and 91 letters leave room for half the emoji only.
-      expect((await duplicateChart(shop.admin, a.id, COPY)).name).toBe(
+      const top = String.fromCodePoint(0x1f45a);
+      expect(await cut(`${"a".repeat(91)}${top}`, 1)).toBe(
         `Copy of ${"a".repeat(91)}`,
       );
-      const b = await createChart(shop.admin, "c-abc123def5", {
-        ...chart(),
-        name: "b".repeat(100),
-      });
-      expect(
-        (await duplicateChart(shop.admin, b.id, "c-copy000002")).name,
-      ).toBe(`Copy of ${"b".repeat(92)}`);
+      // A flag is two characters of two units each; 90 letters leave room for one.
+      const us = String.fromCodePoint(0x1f1fa, 0x1f1f8);
+      expect(await cut(`${"a".repeat(90)}${us}`, 2)).toBe(
+        `Copy of ${"a".repeat(90)}`,
+      );
+      expect(await cut("b".repeat(100), 3)).toBe(`Copy of ${"b".repeat(92)}`);
+    });
+
+    it("passes on a Shopify failure while making the copy, never taking it for a reuse", async () => {
+      const source = await createChart(shop.admin, HANDLE, chart());
+      vi.useFakeTimers();
+      shop.hooks.before = (op) => {
+        if (op === "ChartCreate") throw new Error("hang up");
+      };
+      const pending = duplicateChart(shop.admin, source.id, COPY).catch(
+        (e) => e,
+      );
+      await vi.runAllTimersAsync();
+      expect(await pending).toBeInstanceOf(AdminApiError);
+      vi.useRealTimers();
+      expect(shop.recs.size).toBe(1);
     });
 
     it("reuses the copy a slow first try made, even when the chart saved since", async () => {

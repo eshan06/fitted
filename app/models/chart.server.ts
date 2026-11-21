@@ -696,10 +696,15 @@ export async function duplicateChart(
   checkHandle(handle);
   const source = await getChart(admin, id);
   if (!source.chart) throw new ChartValidationError(source.fieldErrors);
-  const s = `Copy of ${source.chart.name}`;
-  // At most 100 UTF-16 units (§5), never half of an emoji.
-  const name =
-    s.length <= 100 ? s : s.slice(0, s.codePointAt(99)! > 0xffff ? 99 : 100);
+  // At most 100 UTF-16 units (§5), cut between characters, never through an
+  // emoji, a flag or an accent.
+  let name = "";
+  for (const { segment } of new Intl.Segmenter().segment(
+    `Copy of ${source.chart.name}`,
+  )) {
+    if (name.length + segment.length > 100) break;
+    name += segment;
+  }
   try {
     return await createChart(admin, handle, { ...source.chart, name });
   } catch (err) {

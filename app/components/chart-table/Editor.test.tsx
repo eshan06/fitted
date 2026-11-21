@@ -76,7 +76,6 @@ afterEach(() => {
   vi.clearAllMocks();
   act(() => root?.unmount());
   document.body.innerHTML = "";
-  held = undefined;
 });
 
 // The router's address, and its Back (the browser's, in the admin).
@@ -100,12 +99,14 @@ const IMG = {
 let uploads: { status: number; body: unknown }[] = [];
 // While set, a drawing's upload waits for it.
 let hold: Promise<unknown> | undefined;
-// While set, a save or duplicate waits for it.
-let held: Promise<unknown> | undefined;
 // Renders the editor route with a loader and an action that answer in turn.
 async function open(
   loaded: unknown[],
-  answers: ({ status: number; body: unknown } | { redirect: string })[] = [],
+  // An answer with `wait` comes once it settles.
+  answers: (
+    | { status: number; body: unknown; wait?: Promise<unknown> }
+    | { redirect: string }
+  )[] = [],
   path: string | string[] = "/app/charts/42",
 ) {
   const sent: Record<string, unknown>[] = [];
@@ -135,9 +136,9 @@ async function open(
           return Response.json({ discarded: f.get("id") });
         }
         sent.push(await request.json());
-        await held;
         const a = answers.shift() ?? { status: 200, body: { ok: true } };
         if ("redirect" in a) return redirect(a.redirect);
+        await a.wait;
         return Response.json(a.body, { status: a.status });
       },
     },
@@ -2204,8 +2205,8 @@ describe("More actions: Duplicate and Copy link", () => {
   const COPY = "c-copy000001";
   const withCopy = () => ({ ...stored(), copyHandle: COPY });
   // The copy, as its own load reads it.
-  const copyOf = () => {
-    const s = stored("2026-11-19T10:09:00Z");
+  const copyOf = (updatedAt = "2026-11-19T10:09:00Z") => {
+    const s = stored(updatedAt);
     s.stored.id = "gid://shopify/Metaobject/43";
     s.stored.chart.name = "Copy of Women's tops";
     return s;
@@ -2217,10 +2218,10 @@ describe("More actions: Duplicate and Copy link", () => {
 
   it("duplicates the saved chart, waiting while Shopify makes the copy, then opens the copy", async () => {
     let answer!: (v?: unknown) => void;
-    held = new Promise((r) => (answer = r));
+    const wait = new Promise((r) => (answer = r));
     const { sent, loader } = await open(
       [withCopy(), copyOf()],
-      [{ status: 200, body: { duplicated: "43" } }],
+      [{ status: 200, body: { duplicated: "43" }, wait }],
     );
     await act(async () => item("Duplicate").click());
     await settle();
@@ -2272,6 +2273,74 @@ describe("More actions: Duplicate and Copy link", () => {
     expect(sent).toEqual([{ duplicate: COPY }, { duplicate: COPY }]);
     expect(at.pathname).toBe("/app/charts/43");
     expect(missed()).toBe("Saved, but version history missed it");
+  });
+
+  // A save rebuilds the editor, and its reload mints a new handle.
+  const saved = () => ({
+    ...stored("2026-11-19T10:05:00Z"),
+    copyHandle: "c-copy000002",
+  });
+  const duplicates = (sent: Record<string, unknown>[]) =>
+    sent.filter((b) => "duplicate" in b);
+
+  it("opens the copy when a save lands while Duplicating", async () => {
+    let answer!: (v?: unknown) => void;
+    const wait = new Promise((r) => (answer = r));
+    const { sent } = await open(
+      [withCopy(), saved(), copyOf()],
+      [
+        { status: 200, body: { duplicated: "43" }, wait },
+        { status: 200, body: { ok: true } },
+      ],
+    );
+    await type(byLabel("XS, Bust"), "30–32");
+    await act(async () => item("Duplicate").click());
+    await click("Save");
+    // The save reloaded the chart and rebuilt the editor; the copy is still on its way.
+    expect(button("Duplicating").getAttribute("aria-busy")).toBe("true");
+    await act(async () => answer());
+    await settle();
+    expect(bridge.toast.show).toHaveBeenCalledWith("Chart duplicated");
+    expect(at.pathname).toBe("/app/charts/43");
+    expect(duplicates(sent)).toEqual([{ duplicate: COPY }]);
+  });
+
+  it("keeps the copy's handle through a save, so a try after a failed one lands on one copy", async () => {
+    const { sent } = await open(
+      [withCopy(), saved(), copyOf()],
+      [
+        { status: 502, body: { error: { code: "shopify", message: "x" } } },
+        { status: 200, body: { ok: true } },
+        { status: 200, body: { duplicated: "43" } },
+      ],
+    );
+    await act(async () => item("Duplicate").click());
+    await settle();
+    await type(byLabel("XS, Bust"), "30–32");
+    await click("Save");
+    await act(async () => item("Duplicate").click());
+    await settle();
+    expect(duplicates(sent)).toEqual([
+      { duplicate: COPY },
+      { duplicate: COPY },
+    ]);
+    expect(at.pathname).toBe("/app/charts/43");
+  });
+
+  it("opens the copy even when it shares the chart's updatedAt and status", async () => {
+    await open(
+      [withCopy(), copyOf("2026-11-19T10:00:00Z")],
+      [{ status: 200, body: { duplicated: "43" } }],
+    );
+    await act(async () => item("Duplicate").click());
+    await settle();
+    expect(at.pathname).toBe("/app/charts/43");
+    expect(document.querySelector("h1")?.textContent).toBe(
+      "Copy of Women's tops",
+    );
+    expect(document.querySelector<HTMLInputElement>("#name")?.value).toBe(
+      "Copy of Women's tops",
+    );
   });
 
   it("greys out Duplicate on a saved chart that fails the checks", async () => {
@@ -2401,4 +2470,28 @@ describe("More actions: Duplicate and Copy link", () => {
       expect(document.querySelector("dialog")).toBeNull();
     },
   );
+
+  it("closes the link's box with its X or Escape, and opens it again on the next refusal", async () => {
+    useClipboard(undefined);
+    await share("ACTIVE");
+    const refuse = async () => {
+      await act(async () => item("Copy link").click());
+      await settle();
+      expect(document.querySelector("dialog")?.open).toBe(true);
+    };
+    await refuse();
+    await act(async () =>
+      document
+        .querySelector<HTMLElement>('dialog [aria-label="Close"]')!
+        .click(),
+    );
+    expect(document.querySelector("dialog")).toBeNull();
+    await refuse();
+    // Escape closes a modal dialog, which fires its close event.
+    await act(async () =>
+      document.querySelector("dialog")!.dispatchEvent(new Event("close")),
+    );
+    expect(document.querySelector("dialog")).toBeNull();
+    await refuse();
+  });
 });

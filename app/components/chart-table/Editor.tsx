@@ -79,7 +79,10 @@ export function Editor(props: {
   imageUrl?: string;
   /** What the live preview draws with besides the draft. */
   look?: Look;
-  /** The handle Duplicate's copy lands on. */
+  /**
+   * The handle Duplicate's copy lands on, kept by the route while the chart
+   * stays open, through this editor's rebuild on each save.
+   */
   copyHandle?: string;
   /**
    * The chart's shareable page (§5). Until that page ships (#214), the route
@@ -87,13 +90,14 @@ export function Editor(props: {
    */
   link?: string;
 }) {
-  const { invalid, link } = props;
+  const { invalid, link, copyHandle } = props;
   // A reload mints a new handle (the loader), but the visit keeps its first,
-  // so a create or duplicate retried after one still lands on one chart (§5).
+  // so a create retried after one still lands on one chart (§5).
   const [handle] = useState(props.handle);
-  const [copyHandle] = useState(props.copyHandle);
   const fetcher = useFetcher<Answer>();
-  const dup = useFetcher<Answer>();
+  // Keyed by its handle, so a duplicate still on its way when a save
+  // rebuilds the editor reaches the rebuilt one and opens the copy.
+  const dup = useFetcher<Answer>({ key: `duplicate-${copyHandle}` });
   const [linkBox, setLinkBox] = useState(false);
   const revalidator = useRevalidator();
   const navigate = useNavigate();

@@ -366,6 +366,21 @@ describe("duplicating a chart", () => {
     });
   });
 
+  it("opens a copy that fails the checks saying history missed it, recording no version", async () => {
+    // The chart already on the handle, read back invalid.
+    m.duplicateChart.mockResolvedValue({
+      ...copied(),
+      chart: undefined,
+      fieldErrors: { "content.v": "Must be 1" },
+      raw: {},
+    });
+    expect(await result(post("42", { duplicate: COPY }))).toEqual({
+      status: 200,
+      body: { duplicated: "43", historyMissed: true },
+    });
+    expect(m.recordVersion).not.toHaveBeenCalled();
+  });
+
   it("sends a replayed duplicate to the same copy", async () => {
     // duplicateChart answers a repeat of its handle with the copy it made (chart.test.ts).
     m.duplicateChart.mockResolvedValue(copied());

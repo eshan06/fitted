@@ -384,7 +384,8 @@ export default function ChartEditor() {
   // the chart and sets the note in the same render.
   const [missed, setMissed] = useState(false);
   const [params, setParams] = useSearchParams();
-  const at = loaded.mode === "edit" ? loaded.stored.updatedAt : undefined;
+  const s = loaded.mode === "edit" ? loaded.stored : undefined;
+  const at = s && `${s.id}|${s.updatedAt}`;
   useEffect(() => setMissed(false), [at]);
   useEffect(() => {
     if (params.get("history") !== "missed") return;
@@ -393,6 +394,15 @@ export default function ChartEditor() {
     rest.delete("history");
     setParams(rest, { replace: true });
   }, [params, setParams]);
+  // Duplicate's handle holds while this chart stays open, through the
+  // editor's rebuild on each save, so a duplicate retried after a save still
+  // lands on one copy (§5).
+  const fresh =
+    loaded.mode === "edit"
+      ? { id: loaded.stored.id, handle: loaded.copyHandle }
+      : undefined;
+  const [copy, setCopy] = useState(fresh);
+  if (fresh?.id !== copy?.id) setCopy(fresh);
   if (loaded.mode === "new")
     return (
       <Editor
@@ -402,21 +412,21 @@ export default function ChartEditor() {
         look={loaded.look}
       />
     );
-  const s = loaded.mode === "edit" ? loaded.stored : undefined;
   const initial = s?.chart
     ? toDraft(s.chart, s.status)
     : s && storedDraft(s.raw, s.status, s.fieldErrors);
+  // A copy opened from Duplicate can share the chart's updatedAt and status.
   if (s && initial)
     return (
       <Editor
-        key={`${s.updatedAt}|${s.status}`}
+        key={`${s.id}|${s.updatedAt}|${s.status}`}
         initial={initial}
         updatedAt={s.updatedAt}
         invalid={s.fieldErrors}
         historyMissed={missed}
         imageUrl={s.measureImageUrl}
         look={loaded.mode === "edit" ? loaded.look : undefined}
-        copyHandle={loaded.mode === "edit" ? loaded.copyHandle : undefined}
+        copyHandle={copy?.handle}
       />
     );
   const invalid = loaded.mode === "edit" ? loaded.stored.fieldErrors : null;
