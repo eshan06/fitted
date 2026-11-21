@@ -11,6 +11,7 @@ import {
 } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type ChartInput, validateChart } from "../../models/chart.server";
+import { defaultSettings } from "../../models/settings.server";
 
 // The route's server half needs Shopify and the database; the screen doesn't.
 vi.mock("../../shopify.server", () => ({ authenticate: { admin: vi.fn() } }));
@@ -558,6 +559,24 @@ describe("chart editor screen", () => {
     await act(async () => hidden());
     await settle();
     expect(text()).toContain("Left for /app/charts");
+  });
+
+  it("updates the live preview as the merchant types, before any save", async () => {
+    const look = {
+      settings: defaultSettings("en"),
+      primaryLocale: "en",
+      plan: "free",
+      products: { count: 3, atLeast: false },
+    };
+    const { sent } = await open([{ ...stored(), look }]);
+    const shown = () =>
+      document.querySelector("iframe")?.contentDocument?.body.textContent;
+    expect(shown()).toContain("31–32");
+    await type(byLabel("XS, Bust"), "30–31");
+    await settle();
+    expect(shown()).toContain("30–31");
+    expect(text()).toContain("Shown on 3 products");
+    expect(sent).toEqual([]);
   });
 
   it("links More actions to the chart's version history, except on a new chart", async () => {

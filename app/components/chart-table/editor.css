@@ -691,3 +691,57 @@
   flex: none;
   margin-top: 2px;
 }
+/* The live preview beside the editor, under it once space runs out. */
+.editor .split {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-start;
+}
+.editor .split > section {
+  flex: 3 1 30rem;
+  min-width: 0;
+}
+.editor .preview {
+  flex: 2 1 18.75rem;
+  min-width: 0;
+  gap: 12px;
+}
+.editor .preview h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+.editor .stage {
+  margin: 0;
+  border-radius: 12px;
+  background: #e9eaec;
+  overflow: hidden;
+}
+.editor .stage.note {
+  padding: 2rem 1rem;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: #45484b;
+  text-align: center;
+}
+.editor .stage.phone {
+  display: flex;
+  justify-content: center;
+  padding: 1rem;
+}
+/* A phone: the product page's photo behind the guide's bottom sheet. */
+.editor .stage.phone .frame {
+  width: 14.875rem;
+  box-sizing: content-box;
+  border: 6px solid #202223;
+  border-radius: 30px;
+  background: linear-gradient(#e9e6e1 10rem, #f7f7f8 10rem);
+}
+.editor .frame {
+  overflow: hidden;
+}
+.editor .frame iframe {
+  display: block;
+  border: 0;
+  transform-origin: 0 0;
+}

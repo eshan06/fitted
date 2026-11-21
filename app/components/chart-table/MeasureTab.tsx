@@ -171,6 +171,8 @@ export function useMeasureImage(
     keep: (id?: string) => id && unsaved.current.delete(id),
     open,
     box,
+    /** The drawing's address, for the live preview. */
+    url: at?.url,
     // Kept mounted outside the tab, so the box under the size table can open it.
     input: (
       <input
