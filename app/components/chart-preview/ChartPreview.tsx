@@ -12,13 +12,14 @@ import { css, tableCss } from "../../lib/guide-css";
 import { type Draft, cellProblem, parseCell } from "../chart-table/model";
 import type { Plan } from "../../models/billing.server";
 import type { Settings } from "../../models/settings.server";
-import locale from "../../../extensions/size-guide/locales/en.default.json";
 
 /** What the preview draws with besides the draft, from the editor's loader. */
 export type Look = {
   settings: Settings;
   primaryLocale: string;
   plan: Plan;
+  /** The guide's own words, from the extension's locale file. */
+  words: Record<string, string>;
   /** How many products show the chart; none for a new chart. */
   products?: { count: number; atLeast: boolean };
 };
@@ -81,10 +82,22 @@ const PAGE = `<!doctype html><html><head><style></style></head><body><div class=
 const SCREEN = { desktop: { w: 720, h: 0 }, phone: { w: 390, h: 700 } };
 type Size = keyof typeof SCREEN;
 
-function Frame(props: { guide: Guide; name: string; tab: string; size: Size }) {
-  const { guide, name, tab, size } = props;
+function Frame(props: {
+  guide: Guide;
+  words: Record<string, string>;
+  name: string;
+  tab: string;
+  size: Size;
+}) {
+  const { guide, words, name, tab, size } = props;
   const box = useRef<HTMLDivElement>(null);
   const [doc, setDoc] = useState<Document | null>(null);
+  const page = useRef<HTMLIFrameElement>(null);
+  // A frame the server rendered can load before hydration, so before onLoad.
+  useEffect(() => {
+    const d = page.current?.contentDocument;
+    if (d?.querySelector(".fitted-guide")) setDoc(d);
+  }, []);
   const [width, setWidth] = useState(0);
   const [height, setHeight] = useState(SCREEN[size].h);
   useEffect(() => {
@@ -99,11 +112,13 @@ function Frame(props: { guide: Guide; name: string; tab: string; size: Size }) {
     const old = doc?.querySelector(".fitted-body");
     if (!doc || !block || !old) return;
     // Fitted's styles, the uploaded font, then the merchant's CSS, in
-    // guide.js's and loader.js's order.
+    // guide.js's and loader.js's order. A desktop frame grows to fit the
+    // popup, so the popup never scrolls there.
     doc.head.querySelector("style")!.textContent =
-      `html,body{height:100%;margin:0;background:transparent}body{display:flex;flex-direction:column;font-family:${FONT}}` +
+      `html,body,.fitted-guide{height:100%;margin:0;background:transparent}body{font-family:${FONT}}.fitted-guide{display:flex;flex-direction:column}` +
       tableCss +
       css +
+      (SCREEN[size].h ? "" : ".fitted-dialog{max-height:none}") +
       (guide.font
         ? `@font-face{font-family:fitted-font;src:url("${guide.font}");font-display:swap}`
         : "") +
@@ -116,7 +131,7 @@ function Frame(props: { guide: Guide; name: string; tab: string; size: Size }) {
     const dialog = block.querySelector<HTMLElement>(".fitted-dialog")!;
     dialog.dir = guide.rtl ? "rtl" : "";
     block.querySelector(".fitted-title")!.textContent =
-      guide.header || locale.size_guide.title;
+      guide.header || words.title;
     // Where the storefront names the product, the chart's name.
     const one = guide.tables.length === 1;
     const title = one && guide.words[`${guide.tables[0].id}.title`];
@@ -125,7 +140,7 @@ function Frame(props: { guide: Guide; name: string; tab: string; size: Size }) {
       .join(" · ");
     // A fresh root each time, so no earlier draw's listeners stay on it.
     const root = old.cloneNode(false) as HTMLElement;
-    for (const [k, v] of Object.entries(locale.size_guide))
+    for (const [k, v] of Object.entries(words))
       root.setAttribute(`data-t-${k}`, v);
     old.replaceWith(root);
     doc.body.inert = false;
@@ -136,17 +151,19 @@ function Frame(props: { guide: Guide; name: string; tab: string; size: Size }) {
     doc.body.inert = true;
     if (SCREEN[size].h) return;
     // The popup's margins, 40px above and below.
-    const fit = () => setHeight(dialog.scrollHeight + 80);
+    const panel = dialog.querySelector<HTMLElement>(".fitted-panel")!;
+    const fit = () => setHeight(panel.offsetHeight + 80);
     fit();
     doc.addEventListener("load", fit, true);
     void doc.fonts?.ready.then(fit);
     return () => doc.removeEventListener("load", fit, true);
-  }, [doc, guide, name, tab, size]);
+  }, [doc, guide, words, name, tab, size]);
   const { w } = SCREEN[size];
   const scale = Math.min(1, width / w);
   return (
     <div ref={box} className="frame" style={{ height: height * scale }}>
       <iframe
+        ref={page}
         title="Size guide preview"
         sandbox="allow-same-origin"
         tabIndex={-1}
@@ -212,6 +229,7 @@ export function ChartPreview(props: {
             <Frame
               key={size}
               guide={guide}
+              words={look.words}
               name={draft.name}
               tab={props.tab}
               size={size}

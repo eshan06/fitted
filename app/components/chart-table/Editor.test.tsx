@@ -582,6 +582,7 @@ describe("chart editor screen", () => {
     const look = {
       settings: defaultSettings("en"),
       primaryLocale: "en",
+      words: { title: "Size guide", chart: "Size chart" },
       plan: "free",
       products: { count: 3, atLeast: false },
     };

@@ -47,6 +47,7 @@ import {
 } from "../models/billing.server";
 import { SettingsReadWriteError, getSettings } from "../models/settings.server";
 import { startResolve } from "../models/rules.server";
+import { guideWords } from "../models/guide-words.server";
 import {
   createdSummary,
   recordVersion,
@@ -87,7 +88,7 @@ const logShopifyError = (
 // reads it: the Appearance settings and the plan (§7, §8).
 async function look(admin: Admin, plan: Plan) {
   const { settings, primaryLocale } = await getSettings(admin);
-  return { settings, primaryLocale, plan };
+  return { settings, primaryLocale, plan, words: guideWords };
 }
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {

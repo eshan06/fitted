@@ -190,6 +190,7 @@ describe("loading the editor", () => {
         settings: defaultSettings("en"),
         primaryLocale: "en",
         plan: "pro",
+        words: expect.objectContaining({ title: "Size guide" }),
         products: { count: 148, atLeast: false },
       },
     });
@@ -208,6 +209,7 @@ describe("loading the editor", () => {
         settings: defaultSettings("en"),
         primaryLocale: "en",
         plan: "pro",
+        words: expect.objectContaining({ title: "Size guide" }),
       },
     });
     expect(m.countChartProducts).toHaveBeenCalledTimes(1);

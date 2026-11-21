@@ -1,7 +1,9 @@
 // @vitest-environment happy-dom
+import { readFileSync } from "node:fs";
 import { act, useState } from "react";
-import { createRoot } from "react-dom/client";
-import { createRoutesStub } from "react-router";
+import { createRoot, hydrateRoot } from "react-dom/client";
+import { renderToString } from "react-dom/server";
+import { MemoryRouter, createRoutesStub } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChartInput } from "../../models/chart.server";
 import { defaultSettings } from "../../models/settings.server";
@@ -11,6 +13,10 @@ import { ChartPreview, type Look, previewGuide } from "./ChartPreview";
 (
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
+
+const words = JSON.parse(
+  readFileSync("extensions/size-guide/locales/en.default.json", "utf8"),
+).size_guide;
 
 const chart = (): ChartInput => ({
   name: "Women's tops",
@@ -55,6 +61,7 @@ const draft = (): Draft => toDraft(chart(), "DRAFT");
 const look = (patch: Partial<Look> = {}): Look => ({
   settings: defaultSettings("en"),
   primaryLocale: "en",
+  words,
   plan: "free",
   products: { count: 148, atLeast: false },
   ...patch,
@@ -164,6 +171,12 @@ describe("live preview", () => {
       ".fitted-table",
     );
     expect(frame().body.inert).toBe(true);
+    // The desktop frame grows to the popup, and the guide's block fills it.
+    const style = () => frame().querySelector("style")?.textContent ?? "";
+    expect(style()).toContain(".fitted-dialog{max-height:none}");
+    expect(style()).toContain(
+      ".fitted-guide{display:flex;flex-direction:column}",
+    );
     expect(text()).toContain("Shown on 148 products");
     expect(document.querySelector('a[href="/app/rules"]')?.textContent).toBe(
       "Edit display rules",
@@ -294,6 +307,10 @@ describe("live preview", () => {
       document.querySelector(".stage.phone iframe")?.getAttribute("style"),
     ).toContain("width: 390px");
     expect(inFrame()).toContain("31–32");
+    // The phone keeps the guide's own bottom sheet, which scrolls.
+    expect(frame().querySelector("style")?.textContent).not.toContain(
+      "max-height:none",
+    );
   });
 
   it("names how many products show the chart", async () => {
@@ -320,6 +337,18 @@ describe("live preview", () => {
     expect(document.querySelector("iframe")).toBeNull();
     expect(text()).not.toContain("Edit display rules");
     expect(text()).not.toContain("Phone");
+  });
+
+  it("draws in a frame the server rendered, which loaded before hydration", async () => {
+    const page = <ChartPreview draft={draft()} look={look()} tab="table" />;
+    const el = document.body.appendChild(document.createElement("div"));
+    el.innerHTML = renderToString(<MemoryRouter>{page}</MemoryRouter>);
+    await settle();
+    await act(async () => {
+      hydrateRoot(el, <MemoryRouter>{page}</MemoryRouter>);
+    });
+    await settle();
+    expect(inFrame()).toContain("31–32");
   });
 
   it("sends no shopper events", async () => {
