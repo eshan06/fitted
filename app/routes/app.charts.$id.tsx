@@ -364,12 +364,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 // An image's upload or discard changes no chart, so the chart isn't read
-// again, and a new chart keeps the handle its loader minted. Nor is it after
-// a duplicate: the copy opens with its own load.
+// again, and a new chart keeps the handle its loader minted. A duplicate's
+// reload still runs: it can be the one that brings in a save landing
+// alongside it, whose own reload the router drops for the newer one.
 export const shouldRevalidate: ShouldRevalidateFunction = (a) =>
   a.formEncType !== "multipart/form-data" &&
   a.formMethod?.toUpperCase() !== "DELETE" &&
-  !(typeof a.json === "object" && a.json && "duplicate" in a.json) &&
   a.defaultShouldRevalidate;
 
 // The Editor board's states: the editor itself, loading, couldn't load, and a
@@ -395,14 +395,14 @@ export default function ChartEditor() {
     setParams(rest, { replace: true });
   }, [params, setParams]);
   // Duplicate's handle holds while this chart stays open, through the
-  // editor's rebuild on each save, so a duplicate retried after a save still
-  // lands on one copy (§5).
+  // editor's rebuild on each save and a reload that failed, so a duplicate
+  // retried after either still lands on one copy (§5).
   const fresh =
     loaded.mode === "edit"
       ? { id: loaded.stored.id, handle: loaded.copyHandle }
       : undefined;
   const [copy, setCopy] = useState(fresh);
-  if (fresh?.id !== copy?.id) setCopy(fresh);
+  if (fresh && fresh.id !== copy?.id) setCopy(fresh);
   if (loaded.mode === "new")
     return (
       <Editor

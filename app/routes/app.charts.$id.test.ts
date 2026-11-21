@@ -437,18 +437,6 @@ describe("duplicating a chart", () => {
     m.duplicateChart.mockRejectedValue(new Error("boom"));
     await expect(post("42", { duplicate: COPY })).rejects.toThrow("boom");
   });
-
-  it("doesn't read the chart again after a duplicate, since the copy opens with its own load", () => {
-    const after = (json: unknown) =>
-      shouldRevalidate({
-        formMethod: "POST",
-        formEncType: "application/json",
-        json,
-        defaultShouldRevalidate: true,
-      } as Parameters<typeof shouldRevalidate>[0]);
-    expect(after({ duplicate: COPY })).toBe(false);
-    expect(after({ chart: chart(), status: "DRAFT" })).toBe(true);
-  });
 });
 
 describe("creating a chart", () => {

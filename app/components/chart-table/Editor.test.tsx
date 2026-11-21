@@ -2219,8 +2219,8 @@ describe("More actions: Duplicate and Copy link", () => {
   it("duplicates the saved chart, waiting while Shopify makes the copy, then opens the copy", async () => {
     let answer!: (v?: unknown) => void;
     const wait = new Promise((r) => (answer = r));
-    const { sent, loader } = await open(
-      [withCopy(), copyOf()],
+    const { sent } = await open(
+      [withCopy(), withCopy(), { ...copyOf(), copyHandle: "c-copy000003" }],
       [{ status: 200, body: { duplicated: "43" }, wait }],
     );
     await act(async () => item("Duplicate").click());
@@ -2238,13 +2238,15 @@ describe("More actions: Duplicate and Copy link", () => {
       "Copy of Women's tops",
     );
     expect(byLabel("Chart status").value).toBe("DRAFT");
-    // The chart isn't read again first: only the copy's own load runs.
-    expect(loader).toHaveBeenCalledTimes(2);
+    // The copy's own Duplicate makes a copy of it, not the chart's again.
+    await act(async () => item("Duplicate").click());
+    await settle();
+    expect(sent.at(-1)).toEqual({ duplicate: "c-copy000003" });
   });
 
   it("says the copy wasn't made, and Try again reuses its handle so a slow first try never makes two", async () => {
     const { sent } = await open(
-      [withCopy(), copyOf()],
+      [withCopy(), withCopy(), copyOf()],
       [
         {
           status: 502,
@@ -2287,7 +2289,7 @@ describe("More actions: Duplicate and Copy link", () => {
     let answer!: (v?: unknown) => void;
     const wait = new Promise((r) => (answer = r));
     const { sent } = await open(
-      [withCopy(), saved(), copyOf()],
+      [withCopy(), saved(), saved(), copyOf()],
       [
         { status: 200, body: { duplicated: "43" }, wait },
         { status: 200, body: { ok: true } },
@@ -2305,9 +2307,61 @@ describe("More actions: Duplicate and Copy link", () => {
     expect(duplicates(sent)).toEqual([{ duplicate: COPY }]);
   });
 
+  it("loads the saved chart when the copy answers while the save's reload is still on its way", async () => {
+    let answer!: (v?: unknown) => void;
+    const wait = new Promise((r) => (answer = r));
+    let reload!: (v: unknown) => void;
+    const reloading = new Promise((r) => (reload = r));
+    // A merchant asked about unsaved edits stays.
+    bridge.saveBar.leaveConfirmation.mockReturnValue(new Promise(() => {}));
+    const { sent } = await open(
+      [withCopy(), reloading, saved(), copyOf()],
+      [
+        { status: 200, body: { duplicated: "43" }, wait },
+        { status: 200, body: { ok: true } },
+      ],
+    );
+    await type(byLabel("XS, Bust"), "30–32");
+    await act(async () => item("Duplicate").click());
+    await click("Save");
+    // The save landed; the copy answers while its reload waits.
+    await act(async () => answer());
+    await settle();
+    // The saved chart loaded, so nothing is unsaved and the copy opens unasked.
+    expect(bridge.saveBar.leaveConfirmation).not.toHaveBeenCalled();
+    expect(at.pathname).toBe("/app/charts/43");
+    expect(document.querySelector("h1")?.textContent).toBe(
+      "Copy of Women's tops",
+    );
+    expect(duplicates(sent)).toEqual([{ duplicate: COPY }]);
+    await act(async () => reload(saved()));
+  });
+
+  it("opens the copy once a save settles the leave check, saying Chart duplicated once", async () => {
+    // The merchant stays, then saves the edits instead.
+    bridge.saveBar.leaveConfirmation.mockReturnValue(new Promise(() => {}));
+    await open(
+      [withCopy(), withCopy(), saved(), copyOf()],
+      [
+        { status: 200, body: { duplicated: "43" } },
+        { status: 200, body: { ok: true } },
+      ],
+    );
+    await type(byLabel("XS, Bust"), "30–32");
+    await act(async () => item("Duplicate").click());
+    await settle();
+    expect(bridge.saveBar.leaveConfirmation).toHaveBeenCalledTimes(1);
+    expect(at.pathname).toBe("/app/charts/42");
+    await click("Save");
+    expect(at.pathname).toBe("/app/charts/43");
+    expect(
+      bridge.toast.show.mock.calls.filter(([t]) => t === "Chart duplicated"),
+    ).toHaveLength(1);
+  });
+
   it("keeps the copy's handle through a save, so a try after a failed one lands on one copy", async () => {
     const { sent } = await open(
-      [withCopy(), saved(), copyOf()],
+      [withCopy(), saved(), saved(), copyOf()],
       [
         { status: 502, body: { error: { code: "shopify", message: "x" } } },
         { status: 200, body: { ok: true } },
@@ -2327,9 +2381,30 @@ describe("More actions: Duplicate and Copy link", () => {
     expect(at.pathname).toBe("/app/charts/43");
   });
 
+  it("keeps the copy's handle through a reload that failed", async () => {
+    const failed = { mode: "error", error: { code: "shopify", message: "x" } };
+    const { sent } = await open(
+      [withCopy(), failed, saved(), saved(), copyOf()],
+      [
+        { status: 200, body: { ok: true } },
+        { status: 200, body: { duplicated: "43" } },
+      ],
+    );
+    await type(byLabel("XS, Bust"), "30–32");
+    await click("Save");
+    expect(document.querySelector("s-banner")?.getAttribute("heading")).toBe(
+      "This chart didn't load",
+    );
+    await click("Try again");
+    await act(async () => item("Duplicate").click());
+    await settle();
+    expect(duplicates(sent)).toEqual([{ duplicate: COPY }]);
+    expect(at.pathname).toBe("/app/charts/43");
+  });
+
   it("opens the copy even when it shares the chart's updatedAt and status", async () => {
     await open(
-      [withCopy(), copyOf("2026-11-19T10:00:00Z")],
+      [withCopy(), withCopy(), copyOf("2026-11-19T10:00:00Z")],
       [{ status: 200, body: { duplicated: "43" } }],
     );
     await act(async () => item("Duplicate").click());
@@ -2341,6 +2416,19 @@ describe("More actions: Duplicate and Copy link", () => {
     expect(document.querySelector<HTMLInputElement>("#name")?.value).toBe(
       "Copy of Women's tops",
     );
+  });
+
+  it("keeps the chart's history note off a copy that shares its updatedAt", async () => {
+    await open(
+      [withCopy(), withCopy(), withCopy(), copyOf("2026-11-19T10:00:00Z")],
+      [{ status: 200, body: { duplicated: "43" } }],
+      "/app/charts/42?history=missed",
+    );
+    expect(missed()).toBe("Saved, but version history missed it");
+    await act(async () => item("Duplicate").click());
+    await settle();
+    expect(at.pathname).toBe("/app/charts/43");
+    expect(missed()).toBeUndefined();
   });
 
   it("greys out Duplicate on a saved chart that fails the checks", async () => {

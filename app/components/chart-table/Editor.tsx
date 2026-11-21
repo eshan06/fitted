@@ -21,6 +21,8 @@ import * as model from "./model";
 import "./editor.css";
 
 const SAVE_BAR = "chart-save-bar";
+// Duplicate's answers already toasted, across the editor's rebuilds.
+const announced = new WeakSet<object>();
 const TABS = {
   table: "Size table",
   measure: "How to measure",
@@ -212,7 +214,8 @@ export function Editor(props: {
   }, [created, missed, navigate, shopify]);
 
   // Duplicate copies the saved chart; the copy opens once it's made, through
-  // the save bar's leave check like any link out.
+  // the save bar's leave check like any link out. A save that settles that
+  // check rebuilds the editor, which opens the copy without a second toast.
   const duplicating = dup.state !== "idle";
   const copy = duplicating ? undefined : dup.data;
   const duplicate = () =>
@@ -222,7 +225,8 @@ export function Editor(props: {
     );
   useEffect(() => {
     if (!copy?.duplicated) return;
-    shopify.toast.show("Chart duplicated");
+    if (!announced.has(copy)) shopify.toast.show("Chart duplicated");
+    announced.add(copy);
     navigate(
       `/app/charts/${copy.duplicated}${copy.historyMissed ? "?history=missed" : ""}`,
     );
