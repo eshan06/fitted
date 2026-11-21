@@ -185,6 +185,24 @@ describe("loading and saving appearance", () => {
     );
   });
 
+  it("signs in again and loads when Shopify revoked the staff member's token (§3)", async () => {
+    // The library's bounce once it cleared the revoked token.
+    const revoked = {
+      graphql: vi.fn(async () => {
+        throw new Response(null, { status: 302 });
+      }),
+    };
+    m.authenticate.mockResolvedValueOnce({
+      admin: revoked,
+      session: { shop: SHOP },
+    });
+    expect((await load()).appearance).toMatchObject({
+      settings: saved(),
+      digest: "d0",
+    });
+    expect(m.authenticate).toHaveBeenCalledTimes(2);
+  });
+
   it("saves the edits and reads them back, keeping the fit finder and other languages", async () => {
     expect(await post({ digest: "d0", edits: edits() })).toEqual({
       status: 200,
@@ -483,7 +501,7 @@ describe("appearance screen", () => {
         message: expect.stringContaining("You need Products access"),
       },
     });
-    // A save then is a failed one, never an error page.
+    // A save then is a failed one, never an error page, until #216 draws its own refusal.
     expect(await post({ digest: "d0", edits: edits() })).toMatchObject({
       status: 502,
       body: { error: { code: "shopify" } },

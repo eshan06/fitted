@@ -58,10 +58,11 @@ export default function Privacy() {
       <h3>Your staff</h3>
       <p>
         When someone on your staff opens Fitted, Shopify sends us their Shopify
-        user ID, first and last name, email address, language, and whether they
-        own the store. We keep these with their sign-in session. Each saved
-        chart version also keeps the first name and last initial of the staff
-        member who saved it, which chart history shows.
+        user ID, first and last name, email address and whether it&rsquo;s
+        verified, language, and whether they own the store or are a
+        collaborator. We keep these with their sign-in session. Each saved chart
+        version also keeps the first name and last initial of the staff member
+        who saved it, which chart history shows.
       </p>
       <h3>What you make in Fitted</h3>
       <p>

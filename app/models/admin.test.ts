@@ -173,7 +173,8 @@ describe("adminGraphql", () => {
       // Every route that treats a failed call alike still catches it.
       expect(r.error).toBeInstanceOf(AdminApiError);
       expect((r.error as AdminApiError).detail).toContain(raw);
-      expect((r.error as Error).message).not.toContain("productsCount");
+      // A resolve job shows it as its reason, so it's plain and names no one.
+      expect((r.error as Error).message).toBe("Shopify refused access");
       expect(graphql).toHaveBeenCalledTimes(1);
     }
   });

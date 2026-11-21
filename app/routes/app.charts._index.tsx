@@ -131,15 +131,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     );
   // Every product leaves the deleted chart, `auto: false` charts included (§6).
   const resolve = () => void startResolve(session.shop, true);
+  const refused = () =>
+    fail(
+      403,
+      "product_access",
+      "Deleting a chart changes which products show a size guide, which needs the Products permission on your staff account. Nothing was deleted. Ask the store owner to give you Products access in Settings › Users, then try again.",
+    );
   let deleting = false;
   try {
     // The resolve job that moves its products runs with the offline token (§13).
-    if (!(await canReadProducts(admin)))
-      return fail(
-        403,
-        "product_access",
-        "Deleting a chart changes which products show a size guide, which needs the Products permission on your staff account. Nothing was deleted. Ask the store owner to give you Products access in Settings › Users, then try again.",
-      );
+    if (!(await canReadProducts(admin))) return refused();
     deleting = true;
     await deleteChart(admin, id);
   } catch (err) {
@@ -147,6 +148,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (!(err instanceof ChartNotFoundError)) {
       if (!(err instanceof AdminApiError)) throw err;
       logShopifyError(session.shop, err);
+      // Shopify refused the staff member's own delete, so nothing landed (§15).
+      if (err instanceof AccessDeniedError) return refused();
       // The delete may have landed with its answer lost: resolving is harmless either way.
       if (deleting) resolve();
       return fail(

@@ -25,12 +25,13 @@ export class AdminApiError extends Error {
 const detail = (err: unknown) =>
   err instanceof Response ? `HTTP ${err.status}` : String(err);
 
-// Shopify refused the staff member: their online token lacks a permission the
-// call needs (§3). Retrying never helps; screens show the staff-without-access
-// message for it (§15), and every other catch treats it as a failed call.
+// Shopify refused the token: a staff member's online one lacks a permission
+// the call needs (§3). Retrying never helps; screens show the staff-without-
+// access message for it (§15), and every other catch treats it as a failed
+// call. Its message is a resolve job's reason too, so it names no staff member.
 export class AccessDeniedError extends AdminApiError {
   constructor(err: unknown) {
-    super("Shopify refused the staff member access", detail(err));
+    super("Shopify refused access", detail(err));
   }
 }
 

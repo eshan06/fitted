@@ -79,6 +79,12 @@ describe("privacy policy", () => {
     expect(policy).toContain("Fitted stores no personal data about shoppers");
   });
 
+  it("names what a staff session keeps, the Session table's columns (§14)", () => {
+    expect(policy).toContain(
+      "user ID, first and last name, email address and whether it’s verified, language, and whether they own the store or are a collaborator",
+    );
+  });
+
   it("says each saved version keeps the name of the staff member who saved it (§3, §14)", () => {
     expect(policy).toContain(
       "Each saved chart version also keeps the first name and last initial of the staff member who saved it",

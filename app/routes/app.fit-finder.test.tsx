@@ -345,6 +345,25 @@ describe("loading and saving the fit finder", () => {
     });
   });
 
+  it("signs in again and loads when Shopify revoked the staff member's token (§3)", async () => {
+    // The library's bounce once it cleared the revoked token.
+    const revoked = {
+      graphql: vi.fn(async () => {
+        throw new Response(null, { status: 302 });
+      }),
+    };
+    m.authenticate.mockResolvedValueOnce({
+      admin: revoked,
+      session: { shop: SHOP },
+    });
+    expect((await load()).fitFinder).toMatchObject({
+      settings: saved(),
+      digest: "d0",
+      hasCharts: true,
+    });
+    expect(m.authenticate).toHaveBeenCalledTimes(2);
+  });
+
   it("loads the settings, the last confirmed plan, the plans page and whether there are charts", async () => {
     const got = await load();
     expect(got.fitFinder).toMatchObject({

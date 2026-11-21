@@ -31,7 +31,7 @@ Scaffolded from Shopify's React Router template (commit 9597d08): React Router 7
 
 Screens read and write through `app/models/*.server.ts` (charts, rules, settings, billing, stats, imports), never with GraphQL inline in a route. Whether the size guide's app embed is on (Home's setup guide) comes from App Bridge `shopify.app.extensions()` in the browser, which needs no extra scope.
 
-States these contracts add that the canvas doesn't draw yet get drawn before they're built: the shareable chart page (§5), the translation Review screen and Translate stopping at its budget (§11), the plan-check banner (§8), Display rules' "rules didn't finish applying" (§13), and Home noting a day that hit the event cap (§12).
+States these contracts add that the canvas doesn't draw yet get drawn before they're built: the shareable chart page (§5), the translation Review screen and Translate stopping at its budget (§11), the plan-check banner (§8), a save Shopify refuses the staff member on the editor, Appearance and Fit finder (§15, #216), Display rules' "rules didn't finish applying" (§13), and Home noting a day that hit the event cap (§12).
 
 ## 3. Auth and sessions
 

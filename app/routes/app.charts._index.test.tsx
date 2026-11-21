@@ -185,6 +185,25 @@ describe("loading the list", () => {
     });
   });
 
+  it("signs in again and lists the charts when Shopify revoked the staff member's token (§3)", async () => {
+    const fresh = { graphql: vi.fn() };
+    m.authenticate
+      .mockResolvedValueOnce({ admin, session: { shop: SHOP } })
+      .mockResolvedValueOnce({ admin: fresh, session: { shop: SHOP } });
+    const chart = stored(1, "ACTIVE", "2026-11-14T10:00:00Z");
+    m.chartPages.mockImplementation((a: unknown) =>
+      a === admin
+        ? (async function* () {
+            yield [];
+            // The library's bounce once it cleared the revoked token.
+            throw new Response(null, { status: 302 });
+          })()
+        : pages([chart]),
+    );
+    expect(await load()).toMatchObject({ rows: [{ id: chart.id }] });
+    expect(m.countChartProducts).toHaveBeenCalledWith(fresh, [chart.id]);
+  });
+
   it("answers a count Shopify refuses the staff member with the no-access state (§15)", async () => {
     m.chartPages.mockReturnValue(
       pages([stored(1, "ACTIVE", "2026-11-14T10:00:00Z")]),
@@ -282,6 +301,23 @@ describe("deleting a chart", () => {
       init: { status: 403 },
     });
     expect(m.deleteChart).not.toHaveBeenCalled();
+    expect(m.startResolve).not.toHaveBeenCalled();
+  });
+
+  it("says so when Shopify refuses the staff member the delete itself (403, §15)", async () => {
+    m.deleteChart.mockRejectedValue(
+      new AccessDeniedError("Access denied for metaobjectDelete field."),
+    );
+    expect(await del(CHART)).toMatchObject({
+      data: {
+        error: {
+          code: "product_access",
+          message: expect.stringContaining("Nothing was deleted."),
+        },
+      },
+      init: { status: 403 },
+    });
+    // Refused, so nothing landed and no product moves.
     expect(m.startResolve).not.toHaveBeenCalled();
   });
 

@@ -180,6 +180,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (err instanceof RulesConflictError) return fail(409, "conflict");
     if (!(err instanceof AdminApiError)) throw err;
     log(shop, err);
+    // Shopify refused the staff member's own save: the drawn refusal (§15).
+    if (err instanceof AccessDeniedError) return fail(403, "product_access");
     return fail(502, "shopify");
   }
 };
