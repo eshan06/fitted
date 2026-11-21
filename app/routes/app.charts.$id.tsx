@@ -70,23 +70,20 @@ const gid = (id: string | undefined) => {
   if (!id || !/^\d{1,20}$/.test(id)) throw notFound();
   return `gid://shopify/Metaobject/${id}`;
 };
-const logShopifyError = (
-  shop: string,
-  err: AdminApiError | SettingsReadWriteError,
-) =>
+const logShopifyError = (shop: string, err: Error & { detail?: string }) =>
   console.log(
     JSON.stringify({
       level: "error",
       msg: err.message,
       shop,
       route: ROUTE,
-      detail: "detail" in err ? err.detail : undefined,
+      detail: err.detail,
     }),
   );
 
 // What the live preview draws with besides the chart, as the storefront
 // reads it: the Appearance settings and the plan (§7, §8).
-async function look(admin: Admin, plan: Plan) {
+async function lookOf(admin: Admin, plan: Plan) {
   const { settings, primaryLocale } = await getSettings(admin);
   return { settings, primaryLocale, plan, words: guideWords };
 }
@@ -106,25 +103,19 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       // The template picker's choice; anything else starts blank (§5).
       const t = new URL(request.url).searchParams.get("template");
       const template = TEMPLATES.find((x) => x === t) ?? "blank";
-      const preview = await look(admin, planAtLoad.plan);
-      return {
-        mode: "new" as const,
-        handle,
-        template,
-        planAtLoad,
-        look: preview,
-      };
+      const look = await lookOf(admin, planAtLoad.plan);
+      return { mode: "new" as const, handle, template, planAtLoad, look };
     }
-    const [stored, preview, counts] = await Promise.all([
+    const [stored, look, counts] = await Promise.all([
       getChart(admin, id),
-      look(admin, planAtLoad.plan),
+      lookOf(admin, planAtLoad.plan),
       countChartProducts(admin, [id]),
     ]);
     return {
       mode: "edit" as const,
       stored,
       planAtLoad,
-      look: { ...preview, products: counts[id] },
+      look: { ...look, products: counts[id] },
     };
   } catch (err) {
     if (err instanceof ChartNotFoundError) throw notFound();

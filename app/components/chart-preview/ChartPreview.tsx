@@ -56,17 +56,11 @@ export function previewGuide(d: Draft, look: Look, image?: string) {
   const guide = parseGuide(
     JSON.stringify({
       chart: { ...content, tables, ...(plan === "pro" && { fit }) },
+      ...s,
       measureImage: image,
-      units: s.units,
-      link: s.link,
-      popup: s.popup,
-      placement: s.placement,
-      colors: s.colors,
-      css: s.css,
       text: s.text[primaryLocale],
       locale: primaryLocale,
       plan,
-      fitFinder: s.fitFinder,
     }),
   );
   // The storefront picks in or cm by the shopper's country; here, the chart's own.
