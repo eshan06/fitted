@@ -86,6 +86,13 @@ describe("the popup's style and phone sheet (§7)", () => {
         "auto 0px 0px",
         "14px 14px 0px 0px",
       ]);
+      // None of the drawer's own rules: no full height, its side shadow, or
+      // its padding.
+      expect(look(dialog, "height", "box-shadow", "--fitted-py")).toEqual([
+        "",
+        "0 24px 64px rgba(0,0,0,.28)",
+        "18px",
+      ]);
     },
   );
 
@@ -145,7 +152,7 @@ describe("the popup's style and phone sheet (§7)", () => {
     ["the drawer", "fitted-drawer", "laptop", ["28px", "24px"]],
     ["a phone's sheet", "", "phone", ["16px", "18px"]],
   ] as const)(
-    "takes the footer and the kept title row to the sides of %s, and past its padding",
+    "takes the footer and the kept title row through the padding of %s, out to its sides only in the drawer and on phones",
     (_, classes, screen, [side, top]) => {
       const { part, look } = popup(`fitted-sticky ${classes}`, screen);
       // happy-dom leaves calc() unworked: -1 times the padding.
