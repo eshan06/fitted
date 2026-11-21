@@ -63,7 +63,9 @@ Version history (#24) is in Postgres (§14). The chart in Shopify is the current
 
 Concurrent edits: a save sends the `updatedAt` the editor loaded; if the chart changed since, the save is refused with "This chart changed since you opened it" and a reload, never a silent overwrite.
 
-Copy link (#127) gives `https://<shop>/apps/fitted/charts/<handle>`, an app proxy page (`app/routes/proxy.charts.$handle.tsx`) in the store's theme layout. The route verifies the proxy signature, checks the handle's format, and returns one fixed Liquid template that looks the Active chart up by handle and prints every value escaped. The route makes no Admin API call, so anonymous visits can't spend the shop's rate limit; a Draft or unknown handle renders the template's not-found state. Outside the extension `$app` doesn't resolve, so the template names the type as `app--<app id>--chart` (confirm in #127). The canvas doesn't draw this page yet, so it gets drawn first.
+Duplicate (#127) makes a Draft copy of the saved chart, named "Copy of" and its name (cut to 100 characters), with no display rules. Its handle is minted when the editor loads and kept while that chart stays open. Unlike other creates, a duplicate that finds a chart already on its handle opens that chart instead of being refused, so a slow first try never makes two.
+
+Copy link gives `https://<shop>/apps/fitted/charts/<handle>` on the myshopify domain, an app proxy page (`app/routes/proxy.charts.$handle.tsx`, #214) in the store's theme layout. The route verifies the proxy signature, checks the handle's format, and returns one fixed Liquid template that looks the Active chart up by handle and prints every value escaped. The route makes no Admin API call, so anonymous visits can't spend the shop's rate limit; a Draft or unknown handle renders the template's not-found state. Outside the extension `$app` doesn't resolve, so the template names the type as `app--<app id>--chart` (confirm in #214). The canvas doesn't draw this page yet, so it gets drawn first; until it ships, the editor's Copy link is greyed out.
 
 ## 6. Display rules
 

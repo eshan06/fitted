@@ -20,6 +20,7 @@ const m = vi.hoisted(() => ({
   countChartProducts: vi.fn(),
   getChart: vi.fn(),
   createChart: vi.fn(),
+  duplicateChart: vi.fn(),
   updateChart: vi.fn(),
   publishChart: vi.fn(),
   unpublishChart: vi.fn(),
@@ -56,6 +57,7 @@ vi.mock("../models/chart.server", async (orig) => ({
   ...(await orig<typeof import("../models/chart.server")>()),
   getChart: m.getChart,
   createChart: m.createChart,
+  duplicateChart: m.duplicateChart,
   updateChart: m.updateChart,
   publishChart: m.publishChart,
   unpublishChart: m.unpublishChart,
@@ -66,6 +68,8 @@ const { action, loader, shouldRevalidate } = await import("./app.charts.$id");
 
 const SHOP = "fitted-dev.myshopify.com";
 const ID = "gid://shopify/Metaobject/42";
+// The handle the editor minted for Duplicate's copy.
+const COPY = "c-copy000001";
 const PLANS =
   "https://admin.shopify.com/store/fitted-dev/charges/fitted-5/pricing_plans";
 const admin = { graphql: vi.fn() };
@@ -193,6 +197,7 @@ describe("loading the editor", () => {
         words: expect.objectContaining({ title: "Size guide" }),
         products: { count: 148, atLeast: false },
       },
+      copyHandle: expect.stringMatching(/^c-[a-z0-9]{10}$/),
     });
     expect(m.getChart).toHaveBeenCalledWith(admin, ID);
   });
@@ -258,6 +263,13 @@ describe("loading the editor", () => {
     expect(m.getChart).not.toHaveBeenCalled();
   });
 
+  it("mints a fresh handle for Duplicate's copy with each load", async () => {
+    const a = (await load("42")) as { copyHandle: string };
+    const b = (await load("42")) as { copyHandle: string };
+    expect(a.copyHandle).toMatch(/^c-[a-z0-9]{10}$/);
+    expect(b.copyHandle).not.toBe(a.copyHandle);
+  });
+
   it("starts a new chart from the picker's template, else blank", async () => {
     const from = async (q: string) =>
       (
@@ -311,8 +323,119 @@ describe("loading the editor", () => {
     m.authenticate.mockRejectedValue(login);
     await expect(load("42")).rejects.toBe(login);
     await expect(save("DRAFT")).rejects.toBe(login);
+    await expect(post("42", { duplicate: COPY })).rejects.toBe(login);
     expect(m.getChart).not.toHaveBeenCalled();
     expect(m.updateChart).not.toHaveBeenCalled();
+    expect(m.duplicateChart).not.toHaveBeenCalled();
+  });
+});
+
+const copied = () => ({
+  ...stored("DRAFT"),
+  id: "gid://shopify/Metaobject/43",
+  handle: COPY,
+  name: "Copy of Women's tops",
+  chart: { ...chart(), name: "Copy of Women's tops" },
+});
+describe("duplicating a chart", () => {
+  it("copies the chart by the minted handle, records the copy's first version for the session's shop, and opens it", async () => {
+    m.duplicateChart.mockResolvedValue(copied());
+    // The editor opens the copy (Editor).
+    expect(await result(post("42", { duplicate: COPY }))).toEqual({
+      status: 200,
+      body: { duplicated: "43" },
+    });
+    expect(m.duplicateChart).toHaveBeenCalledWith(admin, ID, COPY);
+    // No summary: it reads as a first save does (chart-history).
+    expect(m.recordVersion).toHaveBeenCalledWith(
+      SHOP,
+      "gid://shopify/Metaobject/43",
+      copied().chart,
+      "Priya N.",
+    );
+    expect(m.createChart).not.toHaveBeenCalled();
+    expect(m.updateChart).not.toHaveBeenCalled();
+  });
+
+  it("opens the copy saying history missed it when the version write fails", async () => {
+    m.duplicateChart.mockResolvedValue(copied());
+    m.recordVersion.mockResolvedValue(false);
+    expect(await result(post("42", { duplicate: COPY }))).toEqual({
+      status: 200,
+      body: { duplicated: "43", historyMissed: true },
+    });
+  });
+
+  it("opens a copy that fails the checks saying history missed it, recording no version", async () => {
+    // The chart already on the handle, read back invalid.
+    m.duplicateChart.mockResolvedValue({
+      ...copied(),
+      chart: undefined,
+      fieldErrors: { "content.v": "Must be 1" },
+      raw: {},
+    });
+    expect(await result(post("42", { duplicate: COPY }))).toEqual({
+      status: 200,
+      body: { duplicated: "43", historyMissed: true },
+    });
+    expect(m.recordVersion).not.toHaveBeenCalled();
+  });
+
+  it("sends a replayed duplicate to the same copy", async () => {
+    // duplicateChart answers a repeat of its handle with the copy it made (chart.test.ts).
+    m.duplicateChart.mockResolvedValue(copied());
+    const first = await result(post("42", { duplicate: COPY }));
+    expect(await result(post("42", { duplicate: COPY }))).toEqual(first);
+    expect(m.duplicateChart.mock.calls[1]).toEqual(
+      m.duplicateChart.mock.calls[0],
+    );
+  });
+
+  it("says no copy was made when Shopify fails, logging the detail but not returning it (502)", async () => {
+    m.duplicateChart.mockRejectedValue(
+      new AdminApiError("Shopify request failed", "secret detail"),
+    );
+    expect(await result(post("42", { duplicate: COPY }))).toEqual({
+      status: 502,
+      body: {
+        error: {
+          code: "shopify",
+          message: "Shopify didn't respond, so no copy was made.",
+        },
+      },
+    });
+    expect(JSON.parse(logs[0])).toMatchObject({
+      level: "error",
+      shop: SHOP,
+      route: "app.charts.$id",
+      detail: "secret detail",
+    });
+    expect(m.recordVersion).not.toHaveBeenCalled();
+  });
+
+  it("refuses a malformed handle or a chart that fails the checks (422)", async () => {
+    m.duplicateChart.mockRejectedValue(
+      new ChartValidationError({ handle: "Reload the page and try again" }),
+    );
+    expect(await result(post("42", { duplicate: "nope" }))).toEqual({
+      status: 422,
+      body: { fieldErrors: { handle: "Reload the page and try again" } },
+    });
+    expect(m.recordVersion).not.toHaveBeenCalled();
+  });
+
+  it("answers 404 for a malformed id, a new chart's address, or a chart that's gone", async () => {
+    expect((await post("x1", { duplicate: COPY }).catch((e) => e)).status).toBe(
+      404,
+    );
+    // A new chart has nothing saved to copy: the body is a create's, and isn't one.
+    expect((await result(post("new", { duplicate: COPY }))).status).toBe(422);
+    m.duplicateChart.mockRejectedValue(new ChartNotFoundError());
+    expect((await post("42", { duplicate: COPY }).catch((e) => e)).status).toBe(
+      404,
+    );
+    m.duplicateChart.mockRejectedValue(new Error("boom"));
+    await expect(post("42", { duplicate: COPY })).rejects.toThrow("boom");
   });
 });
 

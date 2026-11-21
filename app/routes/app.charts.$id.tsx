@@ -1,6 +1,6 @@
 // The chart editor's reads and saves (ARCHITECTURE §5, §8, §15): load a chart
 // or mint a new chart's handle, with what the live preview draws with (§7,
-// §9), then create, update, publish or unpublish it.
+// §9), then create, update, publish, unpublish or duplicate it.
 import { randomInt } from "node:crypto";
 import { useEffect, useState } from "react";
 import type {
@@ -32,6 +32,7 @@ import {
   countActiveCharts,
   countChartProducts,
   createChart,
+  duplicateChart,
   getChart,
   publishChart,
   unpublishChart,
@@ -81,6 +82,13 @@ const logShopifyError = (shop: string, err: Error & { detail?: string }) =>
     }),
   );
 
+// Minted once per visit and resent on every retry, so a retried create or
+// duplicate lands on one chart (§5).
+const mint = () => {
+  const a = "abcdefghijklmnopqrstuvwxyz0123456789";
+  return `c-${Array.from({ length: 10 }, () => a[randomInt(36)]).join("")}`;
+};
+
 // What the live preview draws with besides the chart, as the storefront
 // reads it: the Appearance settings and the plan (§7, §8).
 async function lookOf(admin: Admin, plan: Plan) {
@@ -97,9 +105,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const planAtLoad = await lastConfirmedPlan(session.shop);
   try {
     if (isNew) {
-      // Minted once per visit and resent on every retry, so a retried create lands on one chart (§5).
-      const a = "abcdefghijklmnopqrstuvwxyz0123456789";
-      const handle = `c-${Array.from({ length: 10 }, () => a[randomInt(36)]).join("")}`;
+      const handle = mint();
       // The template picker's choice; anything else starts blank (§5).
       const t = new URL(request.url).searchParams.get("template");
       const template = TEMPLATES.find((x) => x === t) ?? "blank";
@@ -116,6 +122,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       stored,
       planAtLoad,
       look: { ...look, products: counts[id] },
+      copyHandle: mint(),
     };
   } catch (err) {
     if (err instanceof ChartNotFoundError) throw notFound();
@@ -202,6 +209,33 @@ async function discard(request: Request, admin: Admin, shop: string) {
   }
 }
 
+// Duplicate: a Draft copy of the saved chart, which the editor then opens.
+// The copy's first version reads as a first save does.
+async function duplicate(
+  admin: Admin,
+  shop: string,
+  by: string,
+  id: string,
+  handle: unknown,
+) {
+  try {
+    const copy = await duplicateChart(admin, id, handle);
+    const kept =
+      !!copy.chart && (await recordVersion(shop, copy.id, copy.chart, by));
+    return {
+      duplicated: copy.id.split("/").pop()!,
+      ...(kept ? {} : { historyMissed: true as const }),
+    };
+  } catch (err) {
+    if (err instanceof ChartValidationError)
+      return data({ fieldErrors: err.fieldErrors }, { status: 422 });
+    if (err instanceof ChartNotFoundError) throw notFound();
+    if (!(err instanceof AdminApiError)) throw err;
+    logShopifyError(shop, err);
+    return fail(502, "shopify", "Shopify didn't respond, so no copy was made.");
+  }
+}
+
 export const action = async ({ request, params }: ActionFunctionArgs) => {
   const { admin, session, redirect } = await authenticate.admin(request);
   if (request.headers.get("content-type")?.startsWith("multipart/form-data"))
@@ -210,6 +244,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   const isNew = params.id === "new";
   const id = isNew ? "" : gid(params.id);
   const body = await request.json().catch(() => null);
+  if (!isNew && typeof body === "object" && body && "duplicate" in body)
+    return duplicate(
+      admin,
+      session.shop,
+      staffName(session),
+      id,
+      body.duplicate,
+    );
   try {
     if (typeof body !== "object" || body === null)
       throw new ChartValidationError({ "": "Must be a chart" });
@@ -322,7 +364,9 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 // An image's upload or discard changes no chart, so the chart isn't read
-// again, and a new chart keeps the handle its loader minted.
+// again, and a new chart keeps the handle its loader minted. A duplicate's
+// reload still runs: it can be the one that brings in a save landing
+// alongside it, whose own reload the router drops for the newer one.
 export const shouldRevalidate: ShouldRevalidateFunction = (a) =>
   a.formEncType !== "multipart/form-data" &&
   a.formMethod?.toUpperCase() !== "DELETE" &&
@@ -340,7 +384,8 @@ export default function ChartEditor() {
   // the chart and sets the note in the same render.
   const [missed, setMissed] = useState(false);
   const [params, setParams] = useSearchParams();
-  const at = loaded.mode === "edit" ? loaded.stored.updatedAt : undefined;
+  const s = loaded.mode === "edit" ? loaded.stored : undefined;
+  const at = s && `${s.id}|${s.updatedAt}`;
   useEffect(() => setMissed(false), [at]);
   useEffect(() => {
     if (params.get("history") !== "missed") return;
@@ -349,6 +394,15 @@ export default function ChartEditor() {
     rest.delete("history");
     setParams(rest, { replace: true });
   }, [params, setParams]);
+  // Duplicate's handle holds while this chart stays open, through the
+  // editor's rebuild on each save and a reload that failed, so a duplicate
+  // retried after either still lands on one copy (§5).
+  const fresh =
+    loaded.mode === "edit"
+      ? { id: loaded.stored.id, handle: loaded.copyHandle }
+      : undefined;
+  const [copy, setCopy] = useState(fresh);
+  if (fresh && fresh.id !== copy?.id) setCopy(fresh);
   if (loaded.mode === "new")
     return (
       <Editor
@@ -358,20 +412,21 @@ export default function ChartEditor() {
         look={loaded.look}
       />
     );
-  const s = loaded.mode === "edit" ? loaded.stored : undefined;
   const initial = s?.chart
     ? toDraft(s.chart, s.status)
     : s && storedDraft(s.raw, s.status, s.fieldErrors);
+  // A copy opened from Duplicate can share the chart's updatedAt and status.
   if (s && initial)
     return (
       <Editor
-        key={`${s.updatedAt}|${s.status}`}
+        key={`${s.id}|${s.updatedAt}|${s.status}`}
         initial={initial}
         updatedAt={s.updatedAt}
         invalid={s.fieldErrors}
         historyMissed={missed}
         imageUrl={s.measureImageUrl}
         look={loaded.mode === "edit" ? loaded.look : undefined}
+        copyHandle={copy?.handle}
       />
     );
   const invalid = loaded.mode === "edit" ? loaded.stored.fieldErrors : null;

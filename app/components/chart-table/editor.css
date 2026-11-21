@@ -342,15 +342,61 @@
   display: flex;
   flex-direction: column;
 }
-.editor .menu a {
+.editor .menu a,
+.editor .menu button {
   padding: 8px 10px;
+  border: 0;
   border-radius: 8px;
+  background: transparent;
+  font: inherit;
   font-weight: 400;
   font-size: 0.8125rem;
+  text-align: left;
   color: #202223;
+  cursor: pointer;
 }
-.editor .menu a:hover {
+.editor .menu a:hover,
+.editor .menu button:not(:disabled):hover {
   background: #f1f2f4;
+}
+.editor .menu button:disabled {
+  color: #6d7175;
+  cursor: not-allowed;
+}
+/* Copy link's line on a Draft. */
+.editor .menu button span {
+  display: block;
+  font-size: 0.75rem;
+  color: #5c5f62;
+}
+.editor .menu:has(button span) {
+  min-width: 240px;
+}
+/* Duplicating: the button waits while Shopify makes the copy. */
+.editor .btn2[aria-busy="true"] {
+  gap: 6px;
+  background: #fff;
+  cursor: wait;
+}
+.editor .spin {
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .editor .spin {
+    animation: none;
+  }
+}
+/* The link, already selected, when the browser won't copy it. */
+.editor .confirm .field[readonly] {
+  font-size: 0.8125rem;
+  border-color: #2448a8;
+  box-shadow: 0 0 0 2px #2448a8;
+  background: #e9eef9;
 }
 /* The VersionHistory board. */
 .history .split {
