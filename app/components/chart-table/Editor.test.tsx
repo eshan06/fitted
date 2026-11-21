@@ -12,6 +12,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type ChartInput, validateChart } from "../../models/chart.server";
 import { defaultSettings } from "../../models/settings.server";
+import { toDraft } from "./model";
 
 // The route's server half needs Shopify and the database; the screen doesn't.
 vi.mock("../../shopify.server", () => ({ authenticate: { admin: vi.fn() } }));
@@ -28,6 +29,7 @@ vi.mock("@shopify/app-bridge-react", () => ({
 }));
 const { default: ChartEditor, shouldRevalidate } =
   await import("../../routes/app.charts.$id");
+const { Editor } = await import("./Editor");
 
 (
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -74,6 +76,7 @@ afterEach(() => {
   vi.clearAllMocks();
   act(() => root?.unmount());
   document.body.innerHTML = "";
+  held = undefined;
 });
 
 // The router's address, and its Back (the browser's, in the admin).
@@ -97,6 +100,8 @@ const IMG = {
 let uploads: { status: number; body: unknown }[] = [];
 // While set, a drawing's upload waits for it.
 let hold: Promise<unknown> | undefined;
+// While set, a save or duplicate waits for it.
+let held: Promise<unknown> | undefined;
 // Renders the editor route with a loader and an action that answer in turn.
 async function open(
   loaded: unknown[],
@@ -130,6 +135,7 @@ async function open(
           return Response.json({ discarded: f.get("id") });
         }
         sent.push(await request.json());
+        await held;
         const a = answers.shift() ?? { status: 200, body: { ok: true } };
         if ("redirect" in a) return redirect(a.redirect);
         return Response.json(a.body, { status: a.status });
@@ -2192,4 +2198,207 @@ describe("Media tab", () => {
     await click("Save");
     expect("videoUrl" in validateChart(sent[0].chart).content).toBe(false);
   });
+});
+
+describe("More actions: Duplicate and Copy link", () => {
+  const COPY = "c-copy000001";
+  const withCopy = () => ({ ...stored(), copyHandle: COPY });
+  // The copy, as its own load reads it.
+  const copyOf = () => {
+    const s = stored("2026-11-19T10:09:00Z");
+    s.stored.id = "gid://shopify/Metaobject/43";
+    s.stored.chart.name = "Copy of Women's tops";
+    return s;
+  };
+  const item = (label: string) =>
+    [
+      ...document.querySelectorAll<HTMLButtonElement>("details.more button"),
+    ].find((b) => b.firstChild?.textContent === label)!;
+
+  it("duplicates the saved chart, waiting while Shopify makes the copy, then opens the copy", async () => {
+    let answer!: (v?: unknown) => void;
+    held = new Promise((r) => (answer = r));
+    const { sent, loader } = await open(
+      [withCopy(), copyOf()],
+      [{ status: 200, body: { duplicated: "43" } }],
+    );
+    await act(async () => item("Duplicate").click());
+    await settle();
+    expect(sent).toEqual([{ duplicate: COPY }]);
+    const busy = button("Duplicating");
+    expect(busy.hasAttribute("disabled")).toBe(true);
+    expect(busy.getAttribute("aria-busy")).toBe("true");
+    expect(text()).not.toContain("More actions");
+    await act(async () => answer());
+    await settle();
+    expect(bridge.toast.show).toHaveBeenCalledWith("Chart duplicated");
+    expect(at.pathname).toBe("/app/charts/43");
+    expect(document.querySelector("h1")?.textContent).toBe(
+      "Copy of Women's tops",
+    );
+    expect(byLabel("Chart status").value).toBe("DRAFT");
+    // The chart isn't read again first: only the copy's own load runs.
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
+
+  it("says the copy wasn't made, and Try again reuses its handle so a slow first try never makes two", async () => {
+    const { sent } = await open(
+      [withCopy(), copyOf()],
+      [
+        {
+          status: 502,
+          body: {
+            error: {
+              code: "shopify",
+              message: "Shopify didn't respond, so no copy was made.",
+            },
+          },
+        },
+        { status: 200, body: { duplicated: "43", historyMissed: true } },
+      ],
+    );
+    await act(async () => item("Duplicate").click());
+    await settle();
+    // Word for word as drawn on the canvas's Editor board.
+    expect(
+      document
+        .querySelector('s-banner[tone="critical"]')
+        ?.getAttribute("heading"),
+    ).toBe("Women's tops wasn't duplicated");
+    expect(text()).toContain("Shopify didn't respond, so no copy was made.");
+    expect(at.pathname).toBe("/app/charts/42");
+    expect(bridge.toast.show).not.toHaveBeenCalled();
+    await click("Try again");
+    expect(sent).toEqual([{ duplicate: COPY }, { duplicate: COPY }]);
+    expect(at.pathname).toBe("/app/charts/43");
+    expect(missed()).toBe("Saved, but version history missed it");
+  });
+
+  it("greys out Duplicate on a saved chart that fails the checks", async () => {
+    const raw = chart();
+    raw.content.tables[0].rows[0].cells.bust = [32, 31];
+    await open([
+      {
+        mode: "edit",
+        stored: {
+          id: "gid://shopify/Metaobject/42",
+          status: "DRAFT",
+          updatedAt: "2026-11-19T10:00:00Z",
+          fieldErrors: {
+            "content.tables.0.rows.0.cells.bust":
+              "Use a range from low to high",
+          },
+          raw,
+        },
+        copyHandle: COPY,
+      },
+    ]);
+    expect(item("Duplicate").disabled).toBe(true);
+  });
+
+  it("greys out Copy link until the chart's page exists (#214)", async () => {
+    await open([withCopy()]);
+    expect(item("Copy link").disabled).toBe(true);
+    expect(item("Copy link").textContent).toBe("Copy link");
+    expect(item("Duplicate").disabled).toBe(false);
+  });
+
+  // Copy link's drawn states, for the editor once the route passes the link.
+  const LINK =
+    "https://fitted-dev.myshopify.com/apps/fitted/charts/c-abc123def4";
+  let clipboard: PropertyDescriptor | undefined;
+  beforeEach(() => {
+    clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+  });
+  afterEach(() => {
+    if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
+    else Reflect.deleteProperty(navigator, "clipboard");
+  });
+  const useClipboard = (value: unknown) =>
+    Object.defineProperty(navigator, "clipboard", {
+      value,
+      configurable: true,
+    });
+  async function share(status: "ACTIVE" | "DRAFT") {
+    const Stub = createRoutesStub([
+      {
+        path: "/app/charts/:id",
+        Component: () => (
+          <Editor
+            initial={toDraft(chart(), status)}
+            updatedAt="2026-11-19T10:00:00Z"
+            copyHandle={COPY}
+            link={LINK}
+          />
+        ),
+      },
+    ]);
+    const div = document.body.appendChild(document.createElement("div"));
+    root = createRoot(div);
+    await act(async () =>
+      root!.render(<Stub initialEntries={["/app/charts/42"]} />),
+    );
+    await settle();
+  }
+
+  it("copies the chart's link, closes the menu and says so", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    useClipboard({ writeText });
+    await share("ACTIVE");
+    const menu = document.querySelector("details.more")!;
+    menu.setAttribute("open", "");
+    expect(item("Copy link").textContent).toBe("Copy link");
+    await act(async () => item("Copy link").click());
+    await settle();
+    expect(writeText).toHaveBeenCalledWith(LINK);
+    expect(bridge.toast.show).toHaveBeenCalledWith("Link copied");
+    expect(menu.hasAttribute("open")).toBe(false);
+    expect(document.querySelector("dialog")).toBeNull();
+  });
+
+  it("says on a Draft that the link works once the chart is published, and copies it as usual", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    useClipboard({ writeText });
+    await share("DRAFT");
+    expect(item("Copy link").querySelector("span")?.textContent).toBe(
+      "Works once the chart is published",
+    );
+    await act(async () => item("Copy link").click());
+    await settle();
+    expect(writeText).toHaveBeenCalledWith(LINK);
+    expect(bridge.toast.show).toHaveBeenCalledWith("Link copied");
+  });
+
+  it.each([
+    ["refuses", { writeText: () => Promise.reject(new Error("denied")) }],
+    ["has no clipboard", undefined],
+  ])(
+    "shows the link, selected, to copy by hand when the browser %s",
+    async (_, value) => {
+      useClipboard(value);
+      await share("ACTIVE");
+      await act(async () => item("Copy link").click());
+      await settle();
+      const dialog = document.querySelector("dialog")!;
+      expect(dialog.open).toBe(true);
+      expect(dialog.querySelector("h2")?.textContent).toBe("Copy this link");
+      expect(dialog.textContent).toContain(
+        "Your browser didn't let Fitted copy it. Select the link and copy it yourself.",
+      );
+      expect(dialog.querySelector("label")?.textContent).toBe(
+        "Link to Women's tops",
+      );
+      const field = dialog.querySelector("input")!;
+      expect(field.value).toBe(LINK);
+      expect(field.readOnly).toBe(true);
+      expect(document.activeElement).toBe(field);
+      expect([field.selectionStart, field.selectionEnd]).toEqual([
+        0,
+        LINK.length,
+      ]);
+      expect(bridge.toast.show).not.toHaveBeenCalled();
+      await click("Done");
+      expect(document.querySelector("dialog")).toBeNull();
+    },
+  );
 });

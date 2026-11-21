@@ -8,6 +8,7 @@ import {
   countChartProducts,
   createChart,
   deleteChart,
+  duplicateChart,
   getChart,
   listCharts,
   productCoverage,
@@ -691,6 +692,115 @@ describe("chart reads and writes", () => {
       ChartValidationError,
     );
     expect(shop.opNames()).toEqual([]);
+  });
+
+  describe("Duplicate", () => {
+    const COPY = "c-copy000001";
+    it("copies the saved chart as a Draft named Copy of, keeping the rest and leaving the chart as it was", async () => {
+      const input = {
+        ...chart(),
+        measureImage: "gid://shopify/MediaImage/12",
+        importNote: "Check units",
+      };
+      const source = await createChart(shop.admin, HANDLE, input);
+      await publishChart(shop.admin, source.id);
+      const copy = await duplicateChart(shop.admin, source.id, COPY);
+      expect(copy).toMatchObject({
+        handle: COPY,
+        status: "DRAFT",
+        name: "Copy of Women's tops",
+      });
+      expect(copy.id).not.toBe(source.id);
+      expect(copy.chart).toEqual({
+        ...validateChart(input),
+        name: "Copy of Women's tops",
+      });
+      expect(await getChart(shop.admin, source.id)).toMatchObject({
+        status: "ACTIVE",
+        chart: validateChart(input),
+      });
+    });
+
+    it("cuts the copy's name to 100 characters, never through an emoji", async () => {
+      const top = String.fromCodePoint(0x1f45a);
+      const a = await createChart(shop.admin, HANDLE, {
+        ...chart(),
+        name: `${"a".repeat(91)}${top}`,
+      });
+      // "Copy of " and 91 letters leave room for half the emoji only.
+      expect((await duplicateChart(shop.admin, a.id, COPY)).name).toBe(
+        `Copy of ${"a".repeat(91)}`,
+      );
+      const b = await createChart(shop.admin, "c-abc123def5", {
+        ...chart(),
+        name: "b".repeat(100),
+      });
+      expect(
+        (await duplicateChart(shop.admin, b.id, "c-copy000002")).name,
+      ).toBe(`Copy of ${"b".repeat(92)}`);
+    });
+
+    it("reuses the copy a slow first try made, even when the chart saved since", async () => {
+      const source = await createChart(shop.admin, HANDLE, chart());
+      const first = await duplicateChart(shop.admin, source.id, COPY);
+      expect((await duplicateChart(shop.admin, source.id, COPY)).id).toBe(
+        first.id,
+      );
+      const { updatedAt } = await getChart(shop.admin, source.id);
+      await updateChart(
+        shop.admin,
+        source.id,
+        { ...chart(), name: "Tops" },
+        updatedAt,
+      );
+      expect(await duplicateChart(shop.admin, source.id, COPY)).toMatchObject({
+        id: first.id,
+        name: "Copy of Women's tops",
+      });
+      // The chart's create and one copy's.
+      expect(shop.recs.size).toBe(2);
+      expect(shop.opNames().filter((o) => o === "ChartCreate")).toHaveLength(2);
+    });
+
+    it("refuses a malformed handle before calling Shopify, and a saved chart that fails the checks without writing", async () => {
+      for (const handle of ["c-short", "i-1-0", 7, undefined]) {
+        const err = await duplicateChart(
+          shop.admin,
+          "gid://shopify/Metaobject/1",
+          handle,
+        ).catch((e) => e);
+        expect(err).toBeInstanceOf(ChartValidationError);
+        expect(err.fieldErrors).toHaveProperty("handle");
+      }
+      expect(shop.opNames()).toEqual([]);
+      shop.recs.set("gid://shopify/Metaobject/99", {
+        id: "gid://shopify/Metaobject/99",
+        handle: "c-broken0000",
+        type: CHART,
+        t: 50,
+        status: "DRAFT",
+        values: { name: "Broken", template: "tops", content: '{"v":2}' },
+      });
+      const err = await duplicateChart(
+        shop.admin,
+        "gid://shopify/Metaobject/99",
+        COPY,
+      ).catch((e) => e);
+      expect(err).toBeInstanceOf(ChartValidationError);
+      expect(err.fieldErrors).toHaveProperty(["content.v"]);
+      expect(shop.opNames()).not.toContain("ChartCreate");
+    });
+
+    it("answers not found for a chart that's gone or isn't a chart", async () => {
+      for (const id of [
+        "gid://shopify/Metaobject/77",
+        "gid://shopify/Product/1",
+      ])
+        await expect(duplicateChart(shop.admin, id, COPY)).rejects.toThrow(
+          ChartNotFoundError,
+        );
+      expect(shop.recs.size).toBe(0);
+    });
   });
 
   it("lists charts, keeping one that fails validation with its errors", async () => {

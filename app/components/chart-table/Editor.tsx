@@ -58,6 +58,8 @@ type Answer = {
   historyMissed?: true;
   /** A new chart's id, once it's created. */
   created?: string;
+  /** Duplicate's copy, once it's made. */
+  duplicated?: string;
 };
 
 export function Editor(props: {
@@ -77,12 +79,22 @@ export function Editor(props: {
   imageUrl?: string;
   /** What the live preview draws with besides the draft. */
   look?: Look;
+  /** The handle Duplicate's copy lands on. */
+  copyHandle?: string;
+  /**
+   * The chart's shareable page (§5). Until that page ships (#214), the route
+   * passes none, so Copy link is greyed out.
+   */
+  link?: string;
 }) {
-  const { invalid } = props;
+  const { invalid, link } = props;
   // A reload mints a new handle (the loader), but the visit keeps its first,
-  // so a create retried after one still lands on one chart (§5).
+  // so a create or duplicate retried after one still lands on one chart (§5).
   const [handle] = useState(props.handle);
+  const [copyHandle] = useState(props.copyHandle);
   const fetcher = useFetcher<Answer>();
+  const dup = useFetcher<Answer>();
+  const [linkBox, setLinkBox] = useState(false);
   const revalidator = useRevalidator();
   const navigate = useNavigate();
   const shopify = useAppBridge();
@@ -194,6 +206,32 @@ export function Editor(props: {
       live = false;
     };
   }, [created, missed, navigate, shopify]);
+
+  // Duplicate copies the saved chart; the copy opens once it's made, through
+  // the save bar's leave check like any link out.
+  const duplicating = dup.state !== "idle";
+  const copy = duplicating ? undefined : dup.data;
+  const duplicate = () =>
+    dup.submit(
+      { duplicate: copyHandle ?? null },
+      { method: "post", encType: "application/json" },
+    );
+  useEffect(() => {
+    if (!copy?.duplicated) return;
+    shopify.toast.show("Chart duplicated");
+    navigate(
+      `/app/charts/${copy.duplicated}${copy.historyMissed ? "?history=missed" : ""}`,
+    );
+  }, [copy, navigate, shopify]);
+  // The admin's frame may refuse the clipboard; then the link opens, selected,
+  // in a box to copy by hand.
+  const copyLink = () =>
+    Promise.resolve()
+      .then(() => navigator.clipboard.writeText(link!))
+      .then(
+        () => shopify.toast.show("Link copied"),
+        () => setLinkBox(true),
+      );
 
   const save = (d = draft) => {
     setDraft(d);
@@ -481,6 +519,17 @@ export function Editor(props: {
             </s-paragraph>
           </s-banner>
         ))}
+        {copy && !copy.duplicated && (
+          <s-banner
+            tone="critical"
+            heading={`${initial.name} wasn't duplicated`}
+          >
+            <s-paragraph>
+              Shopify didn&apos;t respond, so no copy was made.
+            </s-paragraph>
+            {action("Try again", duplicate)}
+          </s-banner>
+        )}
         <div className="row">
           <div>
             <Link to="/app/charts">Size charts</Link>
@@ -501,14 +550,105 @@ export function Editor(props: {
               )}
             </div>
           </div>
-          {/* Copy link and Duplicate join it with #127. */}
-          {!handle && (
-            <details className="more">
-              <summary className="btn2">More actions</summary>
-              <div className="menu">
-                <Link to="history">Version history</Link>
+          {!handle &&
+            (duplicating ? (
+              <button type="button" className="btn2" disabled aria-busy="true">
+                <svg
+                  className="spin"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  strokeWidth="2.6"
+                  strokeLinecap="round"
+                  aria-hidden="true"
+                >
+                  <circle cx="12" cy="12" r="8.5" stroke="#E1E3E5" />
+                  <path d="M12 3.5a8.5 8.5 0 0 1 8.5 8.5" stroke="#202223" />
+                </svg>
+                Duplicating
+              </button>
+            ) : (
+              <details className="more">
+                <summary className="btn2">More actions</summary>
+                <div className="menu">
+                  <Link to="history">Version history</Link>
+                  <button
+                    type="button"
+                    disabled={!link}
+                    onClick={(e) => {
+                      e.currentTarget
+                        .closest("details")
+                        ?.removeAttribute("open");
+                      void copyLink();
+                    }}
+                  >
+                    Copy link
+                    {link && initial.status === "DRAFT" && (
+                      <span>Works once the chart is published</span>
+                    )}
+                  </button>
+                  {/* A chart that fails the checks can't be copied until it's fixed. */}
+                  <button
+                    type="button"
+                    disabled={!!invalid}
+                    onClick={duplicate}
+                  >
+                    Duplicate
+                  </button>
+                </div>
+              </details>
+            ))}
+          {linkBox && (
+            <dialog
+              className="confirm"
+              aria-labelledby="link-heading"
+              ref={(el) => {
+                if (!el || el.open) return;
+                el.showModal();
+                const field = el.querySelector("input");
+                field?.focus();
+                field?.select();
+              }}
+              onClose={() => setLinkBox(false)}
+            >
+              <div className="head">
+                <h2 id="link-heading">Copy this link</h2>
+                <button
+                  type="button"
+                  aria-label="Close"
+                  onClick={() => setLinkBox(false)}
+                >
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 20 20"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M5 5l10 10M15 5L5 15"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    />
+                  </svg>
+                </button>
               </div>
-            </details>
+              <div className="body">
+                <p>
+                  Your browser didn&apos;t let Fitted copy it. Select the link
+                  and copy it yourself.
+                </p>
+                <label>
+                  Link to {initial.name}
+                  <input className="field" readOnly value={link} />
+                </label>
+              </div>
+              <div className="foot">
+                <s-button variant="primary" onClick={() => setLinkBox(false)}>
+                  Done
+                </s-button>
+              </div>
+            </dialog>
           )}
         </div>
         <section className="card" aria-label="Chart content">

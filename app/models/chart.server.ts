@@ -362,7 +362,15 @@ export class ChartNotFoundError extends Error {
     super("Chart not found");
   }
 }
-export class ChartConflictError extends Error {}
+export class ChartConflictError extends Error {
+  /** For a create: the chart that already holds the handle. */
+  constructor(
+    message: string,
+    readonly existing?: StoredChart,
+  ) {
+    super(message);
+  }
+}
 
 export type ChartStatus = "ACTIVE" | "DRAFT";
 // A stored chart that fails validation keeps its row, with fieldErrors and its
@@ -616,14 +624,18 @@ export async function getChart(admin: Admin, id: unknown) {
   return fromNode(n);
 }
 
+function checkHandle(handle: unknown): asserts handle is string {
+  if (typeof handle !== "string" || !HANDLE.test(handle))
+    throw new ChartValidationError({ handle: "Reload the page and try again" });
+}
+
 // Created as a Draft by handle, so a retried create lands on the same chart.
 export async function createChart(
   admin: Admin,
   handle: unknown,
   input: unknown,
 ) {
-  if (typeof handle !== "string" || !HANDLE.test(handle))
-    throw new ChartValidationError({ handle: "Reload the page and try again" });
+  checkHandle(handle);
   const chart = validateChart(input);
   const key = { type: TYPE, handle };
   const { metaobjectByHandle: existing } = await adminGraphql<{
@@ -643,7 +655,10 @@ export async function createChart(
     // Compared as stored JSON, so keys holding undefined don't count.
     if (isDeepStrictEqual(stored.chart, JSON.parse(JSON.stringify(chart))))
       return stored;
-    throw new ChartConflictError("Another chart already uses this handle");
+    throw new ChartConflictError(
+      "Another chart already uses this handle",
+      stored,
+    );
   }
   const data = await adminGraphql<{
     metaobjectUpsert: { metaobject: Node };
@@ -667,6 +682,30 @@ export async function createChart(
     { retry: true },
   );
   return fromNode(data.metaobjectUpsert.metaobject);
+}
+
+// The Editor board's Duplicate: a Draft copy of the saved chart, named "Copy
+// of" and its name, so it never counts toward Free's limit (§8). The editor
+// mints the handle once per visit, so Try again finds the copy a slow first
+// try made, even when the chart saved again in between.
+export async function duplicateChart(
+  admin: Admin,
+  id: unknown,
+  handle: unknown,
+) {
+  checkHandle(handle);
+  const source = await getChart(admin, id);
+  if (!source.chart) throw new ChartValidationError(source.fieldErrors);
+  const s = `Copy of ${source.chart.name}`;
+  // At most 100 UTF-16 units (§5), never half of an emoji.
+  const name =
+    s.length <= 100 ? s : s.slice(0, s.codePointAt(99)! > 0xffff ? 99 : 100);
+  try {
+    return await createChart(admin, handle, { ...source.chart, name });
+  } catch (err) {
+    if (err instanceof ChartConflictError && err.existing) return err.existing;
+    throw err;
+  }
 }
 
 // ponytail: read-then-write, and updatedAt has whole-second precision, so two
