@@ -68,6 +68,10 @@ function setup(block: HTMLElement, load: Load) {
   if (!shown) return;
   const page = place === "main" && !popup;
   if (page) block.dataset.page = "";
+  const colors = (el: HTMLElement, c: Record<string, string>) => {
+    for (const [k, v] of Object.entries(c))
+      el.style.setProperty(`--fitted-${k}`, v);
+  };
   // The styles go in once, from any guide that prints them: markup from
   // before they moved into the snippet has none, so it leaves them to the next.
   const reveal = () => {
@@ -78,17 +82,18 @@ function setup(block: HTMLElement, load: Load) {
       document.head.append(styles(fitted, g));
     link.style.display = "";
   };
-  // The merchant's words and icon, else the extension's word and the ruler.
+  // The Button style's hover fills with the theme's colors, whatever the
+  // popup's, read again as the pointer comes, as a theme can change them.
+  link.addEventListener("pointerenter", () => colors(link, themeColors(block)));
+  // The merchant's words, else the extension's.
   const words = link.querySelector("span");
   if (words && g.label) words.textContent = g.label;
-  if (g.icon === "none") link.querySelector("svg")?.remove();
   const heading = dialog.querySelector(".fitted-title");
   if (heading && g.header) heading.textContent = g.header;
   if (g.rtl) dialog.dir = "rtl";
   // Colors and the font, read again on each open, as a theme can change them.
   const paint = () => {
-    for (const [k, v] of Object.entries(g.colors ?? themeColors(block)))
-      block.style.setProperty(`--fitted-${k}`, v);
+    colors(block, g.colors ?? themeColors(block));
     if (!g.font) return;
     // The theme's font stands in while the upload loads, or if it can't.
     const theme = getComputedStyle(block).fontFamily;

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { readFileSync } from "node:fs";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseGuide, render } from "./guide";
 import { tableCss } from "./guide-css";
 
@@ -135,7 +135,6 @@ describe("parseGuide", () => {
     const g = parseGuide(
       data({
         text: { label: "Fit guide", header: "Find your fit", noFit: "None." },
-        link: { style: "text", icon: "none" },
         popup: { rtl: true, font: { fileUrl: font } },
         colors: {
           mode: "custom",
@@ -149,7 +148,6 @@ describe("parseGuide", () => {
     expect(g).toMatchObject({
       label: "Fit guide",
       header: "Find your fit",
-      icon: "none",
       rtl: true,
       font,
       colors: { text: "#202223", accent: "#B3301C", bg: "#fffaf0" },
@@ -161,7 +159,6 @@ describe("parseGuide", () => {
     const none = {
       label: "",
       header: "",
-      icon: "ruler",
       rtl: false,
       font: "",
       colors: null,
@@ -172,7 +169,6 @@ describe("parseGuide", () => {
       expect(parseGuide(data(s))).toMatchObject(none);
     bad({
       text: { label: "Fit\nguide", header: "x".repeat(201) },
-      link: { icon: "star" },
       popup: { rtl: "true", font: { fileUrl: "https://evil.example/a.woff2" } },
       colors: {
         mode: "custom",
@@ -549,6 +545,113 @@ describe("render", () => {
       `${evil} (in)`,
     );
     expect(root.textContent).toContain(evil);
+  });
+});
+
+// "Keep the table header and close button visible while scrolling" (§7), in
+// a popup the snippet marks fitted-sticky. happy-dom lays nothing out, so the
+// sizes render reads are set by hand.
+describe("the kept title row and table headers", () => {
+  const size = (el: unknown, key: string, value: number) =>
+    Object.defineProperty(el, key, { configurable: true, value });
+  // The popup as the snippet prints it, its title row 90px tall.
+  const popup = (classes = "fitted-dialog fitted-sticky") => {
+    document.body.innerHTML = `<dialog class="${classes}" open><div class="fitted-panel"><div class="fitted-head"></div><div class="fitted-body"></div></div></dialog>`;
+    const dialog = document.querySelector<HTMLElement>("dialog")!;
+    const head = dialog.querySelector<HTMLElement>(".fitted-head")!;
+    size(head, "offsetHeight", 90);
+    return { dialog, head, body: head.nextElementSibling as HTMLElement };
+  };
+  // The ResizeObserver render starts: what it calls and what it watches.
+  let observer: { call: () => void; watched: Element[] } | undefined;
+  beforeEach(() => {
+    observer = undefined;
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(call: () => void) {
+          observer = { call, watched: [] };
+        }
+        observe(el: Element) {
+          observer!.watched.push(el);
+        }
+      },
+    );
+  });
+  afterEach(() => vi.unstubAllGlobals());
+  const scroll = (dialog: HTMLElement, top: number) => {
+    size(dialog, "scrollTop", top);
+    dialog.dispatchEvent(new Event("scroll"));
+  };
+
+  it("measures the title row for the tables' headers to stay under, and keeps the header of a table that fits", () => {
+    const { dialog, head, body } = popup();
+    show(data(), body);
+    expect(dialog.style.getPropertyValue("--fitted-top")).toBe("90px");
+    expect(body.querySelector(".fitted-scroll")?.classList).toContain(
+      "fitted-flat",
+    );
+    expect(observer?.watched).toEqual([head, body]);
+  });
+
+  it("leaves a table wider than the guide its own sideways scroll, and checks again as the popup changes size", () => {
+    const { dialog, head, body } = popup();
+    show(data(), body);
+    const box = body.querySelector<HTMLElement>(".fitted-scroll")!;
+    size(box.firstChild, "offsetWidth", 700);
+    size(box, "clientWidth", 560);
+    size(head, "offsetHeight", 134);
+    observer!.call();
+    expect(box.classList).not.toContain("fitted-flat");
+    expect(dialog.style.getPropertyValue("--fitted-top")).toBe("134px");
+    // A phone turned on its side: now the table fits.
+    size(box, "clientWidth", 720);
+    observer!.call();
+    expect(box.classList).toContain("fitted-flat");
+  });
+
+  it("checks the tables a switch draws anew", () => {
+    const { body } = popup();
+    show(data({ units: { default: "in", toggle: true } }), body);
+    const flat = () =>
+      body.querySelector(".fitted-scroll")?.classList.contains("fitted-flat");
+    expect(flat()).toBe(true);
+    // Tables drawn from here on are wider than their boxes.
+    const width = vi
+      .spyOn(HTMLElement.prototype, "offsetWidth", "get")
+      .mockReturnValue(700);
+    body.querySelector<HTMLElement>('[data-fitted-sys="cm"]')!.click();
+    width.mockRestore();
+    expect(flat()).toBe(false);
+  });
+
+  it("notes when the guide has scrolled, and when it's back at the top", () => {
+    const { dialog, body } = popup();
+    show(data(), body);
+    expect(dialog.hasAttribute("data-fitted-scrolled")).toBe(false);
+    scroll(dialog, 120);
+    expect(dialog.hasAttribute("data-fitted-scrolled")).toBe(true);
+    scroll(dialog, 0);
+    expect(dialog.hasAttribute("data-fitted-scrolled")).toBe(false);
+  });
+
+  it("keeps nothing with the setting off, as in the admin preview", () => {
+    const { dialog, body } = popup("fitted-dialog");
+    show(data(), body);
+    scroll(dialog, 120);
+    expect(dialog.style.getPropertyValue("--fitted-top")).toBe("");
+    expect(dialog.hasAttribute("data-fitted-scrolled")).toBe(false);
+    expect(body.querySelector(".fitted-flat")).toBeNull();
+    expect(observer).toBeUndefined();
+  });
+
+  it("still measures on each draw in a browser without ResizeObserver", () => {
+    vi.stubGlobal("ResizeObserver", undefined);
+    const { dialog, body } = popup();
+    show(data(), body);
+    expect(dialog.style.getPropertyValue("--fitted-top")).toBe("90px");
+    scroll(dialog, 40);
+    expect(dialog.hasAttribute("data-fitted-scrolled")).toBe(true);
   });
 });
 

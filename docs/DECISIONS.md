@@ -2,6 +2,10 @@
 
 Dated entries, newest first. Grep for the area you touch; never read front to back.
 
+## 2026-11-20 Storefront: settings picked from a list pick markup in Liquid
+
+The guide snippet compares the icon, link style, popup style, phone sheet, Opens from, logo and kept header with the words the settings model allows and prints fixed markup and classes, never a setting's value, so loader.js gains no bytes and nothing flashes before it runs. Free text (label, header, colors, font, CSS) still reaches the page only through `| json`. With the drawings the owner approved three proposals: the opening takes about a quarter second, the drawer always opens from the right, and the logo comes from Shopify's brand settings. ARCHITECTURE §9.
+
 ## 2026-11-20 Storefront: the guide's styles ride in the snippet, not loader.js
 
 `snippets/guide.liquid` prints Fitted's CSS for the link, the popup and its loading and error states (3.4 KB) as text in an inert `<template>`, and loader.js copies it into its one `<style>`, ahead of the font and the merchant's CSS as before. That took loader.js from 9,944 to about 6,600 of the 10,000 bytes the theme check allows with nothing changing on the page, and a test holds it to 9,000. Moving the popup's code into guide.js instead would leave the loading and error states unstyled while guide.js loads. The cost: each guide's markup carries the CSS (about 1 KB gzipped per page) that cached loader.js carried before. ARCHITECTURE §9.

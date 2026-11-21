@@ -1,6 +1,7 @@
 {
   "size_guide": {
     "title": "Size guide",
+    "logo": "{{ shop }} logo",
     "close": "Close size guide",
     "loading": "Loading the size chart…",
     "error": "The size chart didn't load",
