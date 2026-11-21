@@ -1107,8 +1107,12 @@ export function render(root: HTMLElement, g: Guide) {
     // didn't give on this page.
     const update = (tell = true) => {
       const a = read();
+      // With nothing answered nothing is kept, so the next page's loader has
+      // no answers to load guide.js for.
+      const any = Object.values(a).some((v) => v !== undefined);
       try {
-        if (key) sessionStorage.setItem(key, JSON.stringify(a));
+        if (key && any) sessionStorage.setItem(key, JSON.stringify(a));
+        else if (key) sessionStorage.removeItem(key);
       } catch {
         // No storage: the answers last until the page goes.
       }

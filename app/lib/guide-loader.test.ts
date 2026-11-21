@@ -926,6 +926,28 @@ describe("Find my size on the product page", () => {
     }
   });
 
+  it("hides the line with the app block's link while the embed's tab or placed link stands in", async () => {
+    keep();
+    // The embed's styles (blocks/embed.liquid), as it prints them.
+    const [tabStyle, afterStyle] = read("blocks/embed.liquid").match(
+      /<style>[\s\S]*?<\/style>/g,
+    )!;
+    const shows = () =>
+      getComputedStyle(document.querySelector(".fitted-fits")!).display !==
+      "none";
+    document.body.innerHTML = `${tabStyle}${block(pro())}`;
+    await tick();
+    expect(shows()).toBe(false);
+    const json = pro({ placement: { selector: ".late" } });
+    document.body.innerHTML = `${afterStyle}${block(json)}${block(json, "Linen Wrap Top", contact, "after")}`;
+    await tick();
+    // Nothing matches yet, so the app block's link and its line stay.
+    expect(shows()).toBe(true);
+    document.body.insertAdjacentHTML("afterbegin", '<div class="late"></div>');
+    await tick();
+    expect(shows()).toBe(false);
+  });
+
   it("opens the Find my size link on Find my size", async () => {
     document.body.innerHTML = block(
       pro({ popup: { fitOnly: true } }),

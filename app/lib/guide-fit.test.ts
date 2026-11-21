@@ -1447,6 +1447,15 @@ describe("the fit line", () => {
     expect(says(blank)).toBeNull();
   });
 
+  it("keeps nothing for a guide opened or emptied without answers, so no page loads guide.js early for it", () => {
+    const root = open(data());
+    expect(sessionStorage).toHaveLength(0);
+    pick(root, "q2", "m");
+    expect(sessionStorage).toHaveLength(1);
+    pick(root, "q2", "");
+    expect(sessionStorage).toHaveLength(0);
+  });
+
   it("follows Show the result on the product page button, on unless turned off", () => {
     keep({ q2: "m", q3: "regular" });
     const off = page(data({}, { fitFinder: { onButton: false } }));

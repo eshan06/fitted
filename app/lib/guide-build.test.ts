@@ -343,8 +343,8 @@ describe("size guide Liquid", () => {
     // What stands in for the app block's link: guide-loader.test.ts runs these.
     const hide = embed.match(/<style>[\s\S]*?<\/style>/g);
     expect(hide).toEqual([
-      "<style>.fitted-guide[data-page]>.fitted-link{display:none!important}</style>",
-      "<style>body:has(.fitted-guide[data-placed]) .fitted-guide[data-page]>.fitted-link{display:none!important}</style>",
+      "<style>.fitted-guide[data-page]>:is(.fitted-link,.fitted-fits){display:none!important}</style>",
+      "<style>body:has(.fitted-guide[data-placed]) .fitted-guide[data-page]>:is(.fitted-link,.fitted-fits){display:none!important}</style>",
     ]);
     expect(embed.indexOf(hide![0])).toBeGreaterThan(
       embed.indexOf("if s.link.style == 'tab' -%}"),
