@@ -237,7 +237,6 @@ describe("size guide Liquid", () => {
       words: { "t1.m.size": "Moyen", tips: "Measure snugly." },
       label: "Guide des tailles",
       header: "Tailles",
-      icon: "none",
       rtl: true,
       colors: null,
       css: ".fitted-link { letter-spacing: .1em }",
@@ -249,12 +248,33 @@ describe("size guide Liquid", () => {
   });
 
   it("prints the guide's words escaped", () => {
-    // Shopify's t escapes translations; the product title goes through
-    // escape; place and title_id are the block's and embed's own words.
+    // Shopify's t escapes translations and the values it fills in, unless
+    // the key ends in _html, which none here does; the product title goes
+    // through escape; image_url gives the logo's address on Shopify's CDN, and
+    // its width is a number;
+    // place and title_id are the block's and embed's own words.
     for (const out of [block, embed, guide].flatMap(outputs))
       expect(out).toMatch(
-        /^'size_guide\.\w+' \| t$|^[\w.]+ \| escape$|^'(guide|loader)\.js' \| asset_url$|^title_id$|^place$/,
+        /^'size_guide\.\w+(?<!_html)' \| t(: \w+: [\w.]+)?$|^[\w.]+ \| escape$|^'(guide|loader)\.js' \| asset_url$|^shop\.brand\.logo \| image_url: height: 64$|^shop\.brand\.logo\.aspect_ratio \| times: 32 \| round$|^title_id$|^place$/,
       );
+  });
+
+  it("picks the link's and popup's look from the settings by fixed words, never printing a setting (§7)", () => {
+    // Each setting picked from a list is compared with a word the settings
+    // model allows, and decides only which fixed markup prints.
+    const picks = tags(guide).filter((t) => /\bs\.(link|popup)\./.test(t));
+    expect(picks).toEqual([
+      "elsif s.link.style == 'button'",
+      "unless s.link.icon == 'none'",
+      "case s.link.icon",
+      "if s.popup.style == 'drawer'",
+      "if s.popup.sheetOnPhone == false",
+      "if s.popup.openFrom == 'right'",
+      "elsif s.popup.openFrom == 'fade'",
+      "unless s.popup.sticky == false",
+      "if shop.brand.logo and s.popup.logo != false",
+    ]);
+    expect(outputs(guide).filter((o) => /\bs\./.test(o))).toEqual([]);
   });
 
   it("has a translation for every word it uses, and none it doesn't", () => {

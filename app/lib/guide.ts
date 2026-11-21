@@ -34,10 +34,10 @@ export type Guide = {
   toggle: boolean; // settings.units.toggle: the shopper may switch units
   country: string; // the shopper's, which picks the size system shown first
   locale: string;
-  // The Appearance settings (§7); "" or null where the extension's or the theme's apply.
+  // The Appearance settings (§7); "" or null where the extension's or the
+  // theme's apply. The snippet applies those picked from a list.
   label: string; // the link's text
   header: string; // the popup's title
-  icon: "ruler" | "none";
   rtl: boolean;
   font: string; // an uploaded font's URL
   colors: { text: string; accent: string; bg: string } | null;
@@ -153,12 +153,11 @@ export function parseGuide(json: string | null | undefined): Guide | null {
     return null;
   const at = (k: string) =>
     (isObj(d[k]) ? d[k] : {}) as Record<string, unknown>;
-  const [units, popup, colors, text, link, place] = [
+  const [units, popup, colors, text, place] = [
     "units",
     "popup",
     "colors",
     "text",
-    "link",
     "placement",
   ].map(at);
   const font = isObj(popup.font) ? popup.font.fileUrl : "";
@@ -181,7 +180,6 @@ export function parseGuide(json: string | null | undefined): Guide | null {
     locale: canonical(d.locale),
     label: line(text.label),
     header: line(text.header),
-    icon: link.icon === "none" ? "none" : "ruler",
     rtl: popup.rtl === true,
     font: isStr(font) && FONT_URL.test(font) ? font : "",
     colors:
@@ -647,11 +645,29 @@ export function render(root: HTMLElement, g: Guide) {
         el.dispatchEvent(new Event(type, { bubbles: true }));
     } else if (el && !el.checked) el.click();
   };
+  // "Keep the table header and close button visible while scrolling" (§7),
+  // in a popup the snippet marks fitted-sticky: how tall the title row is,
+  // for the tables' headers to stay under it; whether the guide has
+  // scrolled; and which tables fit the guide (fitted-flat), as only their
+  // headers can stay. Again as the popup scrolls, opens or changes size.
+  const sticky = root.closest<HTMLElement>(".fitted-sticky");
+  const head = sticky?.querySelector<HTMLElement>(".fitted-head");
+  const keep = () => {
+    if (!sticky || !head) return;
+    sticky.style.setProperty("--fitted-top", `${head.offsetHeight}px`);
+    sticky.toggleAttribute("data-scrolled", sticky.scrollTop > 0);
+    for (const box of part.querySelectorAll<HTMLElement>(".fitted-scroll"))
+      box.classList.toggle(
+        "fitted-flat",
+        (box.firstChild as HTMLElement).offsetWidth <= box.clientWidth,
+      );
+  };
   const draw = () => {
     across.clear();
     const kids = [...g.tables.flatMap(table), note("tips")];
     part.replaceChildren(...kids.filter((k): k is Node => !!k));
     choose(pick);
+    keep();
   };
   const seg = (
     name: string,
@@ -1231,6 +1247,14 @@ export function render(root: HTMLElement, g: Guide) {
     seg("sections", "fitted-tab", names, "chart", t, "fitted-tabs");
   root.replaceChildren(...[tabs, sized, finder].filter((k) => !!k));
   draw();
+  if (sticky && head) {
+    sticky.addEventListener("scroll", keep, { passive: true });
+    if (typeof ResizeObserver === "function") {
+      const resized = new ResizeObserver(keep);
+      resized.observe(head);
+      resized.observe(root);
+    }
+  }
   // "Show only the Find my size link" (§7): Liquid words the link Find my
   // size, and every open starts there.
   const popup = isObj(g.raw.popup) ? g.raw.popup : {};

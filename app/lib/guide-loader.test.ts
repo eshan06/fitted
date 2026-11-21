@@ -13,11 +13,104 @@ const en = JSON.parse(read("locales/en.default.json")).size_guide;
 const escape = (s: string) =>
   s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
-// The guide snippet's Liquid with Shopify's part played by plain
-// substitutions, so the loader runs against the markup that ships. `t`
-// escapes, as Shopify's does. contact is the store's Contact page, or null
-// when it has none; place is where the block or embed put it; fitOnly is the
-// snippet's fit_only, for Show only the Find my size link.
+// Liquid as Shopify runs it, for the tags guide.liquid uses: if, elsif, else,
+// unless, case and when, and for over a range. Conditions test a value or
+// compare it with a literal, joined by "and"; vars stands in for Shopify's
+// objects and out for its outputs and render. Comments and assigns print
+// nothing, and the dashes trim the whitespace beside them.
+function liquid(
+  src: string,
+  vars: Record<string, unknown>,
+  out: (expr: string) => string,
+) {
+  const parts = src.split(/(\{%-?[\s\S]*?-?%\}|\{\{-?[\s\S]*?-?\}\})/);
+  for (let i = 1; i < parts.length; i += 2) {
+    if (/^\{[%{]-/.test(parts[i])) parts[i - 1] = parts[i - 1].trimEnd();
+    if (/-[%}]\}$/.test(parts[i])) parts[i + 1] = parts[i + 1].trimStart();
+  }
+  const get = (path: string) =>
+    path
+      .replace(/\['([^']*)'\]/g, ".$1")
+      .split(".")
+      .reduce<unknown>((o, k) => (o as Record<string, unknown>)?.[k], vars);
+  const value = (t: string) =>
+    /^'.*'$/.test(t)
+      ? t.slice(1, -1)
+      : t === "true" || (t !== "false" && get(t));
+  // Liquid's truth: anything but nil and false.
+  const truth = (v: unknown) => v !== undefined && v !== null && v !== false;
+  const test = (cond: string) =>
+    cond.split(" and ").every((c) => {
+      const [l, op, r] = c.trim().split(/\s+(==|!=)\s+/);
+      return op ? (value(l) === value(r)) === (op === "==") : truth(value(l));
+    });
+  const named = (tag: string) => /^(\w+)\s*([\s\S]*)$/.exec(tag) ?? [];
+  let i = 0;
+  // Runs up to one of the tags in ends and returns its output and that tag;
+  // a branch Liquid skips prints nothing and asks out for nothing.
+  const run = (ends: string[], live = true): [string, string] => {
+    let html = "";
+    while (i < parts.length) {
+      const p = parts[i++];
+      const tag = /^\{%-?\s*([\s\S]*?)\s*-?%\}$/.exec(p)?.[1];
+      const expr = /^\{\{-?\s*([\s\S]*?)\s*-?\}\}$/.exec(p)?.[1];
+      if (tag === undefined) {
+        if (live) html += expr === undefined ? p : out(expr);
+        continue;
+      }
+      const [, name, arg] = named(tag);
+      if (ends.includes(name)) return [html, tag];
+      // Each branch: the condition it runs on, then what it runs to.
+      const branches = (pass: boolean, until: string[], next: typeof test) => {
+        let done = false;
+        for (;;) {
+          const take = pass && !done;
+          const [inner, stop] = run(until, live && take);
+          if (take) [html, done] = [html + inner, true];
+          const [, kind, rest] = named(stop);
+          if (kind !== "elsif" && kind !== "when" && kind !== "else") return;
+          pass = kind === "else" || next(rest);
+        }
+      };
+      if (name === "comment") run(["endcomment"], false);
+      else if (name === "if" || name === "unless")
+        branches(
+          test(arg) === (name === "if"),
+          ["elsif", "else", "endif", "endunless"],
+          test,
+        );
+      else if (name === "case") {
+        const v = value(arg);
+        const [, first] = run(["when", "else", "endcase"], false);
+        if (first !== "endcase") {
+          const [, kind, rest] = named(first);
+          branches(
+            kind === "else" || value(rest) === v,
+            ["when", "else", "endcase"],
+            (lit) => value(lit) === v,
+          );
+        }
+      } else if (name === "for") {
+        const [, a, b] = /\((\d+)\.\.(\d+)\)/.exec(arg)!.map(Number);
+        const start = i;
+        for (let n = a; n <= Math.max(a, b); n++) {
+          i = start;
+          const [inner] = run(["endfor"], live && n <= b);
+          html += inner;
+        }
+      } else if (name === "render" && live) html += out(tag);
+    }
+    return [html, ""];
+  };
+  return run([])[0];
+}
+
+// The guide snippet run as Shopify would, with the settings the data prints,
+// so the loader runs against the markup that ships. `t` escapes, as
+// Shopify's does. contact is the store's Contact page, or null when it has
+// none; place is where the block or embed put it; fitOnly is the snippet's
+// fit_only, for Show only the Find my size link; logo is the store's brand
+// logo, if it has one.
 function block(
   json: string,
   product = "Linen Wrap Top",
@@ -27,46 +120,48 @@ function block(
   },
   place: "main" | "featured" | "tab" | "after" = "main",
   fitOnly = false,
+  logo = "",
 ) {
-  let html = read("snippets/guide.liquid")
-    .replace(/\{%-? comment -?%\}[\s\S]*?\{%-? endcomment -?%\}/g, "")
-    .replace(
-      /\{%-? if pages\.contact\.url -?%\}([\s\S]*?)\{%-? endif -?%\}/,
-      (_, inner: string) => (contact ? inner : ""),
-    )
-    .replace(
-      /\{%-? if fit_only -?%\}([\s\S]*?)\{%-? else -?%\}([\s\S]*?)\{%-? endif -?%\}/g,
-      (_, fit: string, guide: string) => (fitOnly ? fit : guide),
-    )
-    .replace(
-      /\{%-? if place == 'tab' -?%\}([\s\S]*?)\{%-? endif -?%\}/g,
-      (_, inner: string) => (place === "tab" ? inner : ""),
-    )
-    .replace(
-      /\{%-? render 'guide-data'.*?%\}/,
-      () => `<script type="application/json" data-fitted>${json}</script>`,
-    );
-  const loop =
-    /\{%-? for \w+ in \((\d+)\.\.(\d+)\) -?%\}((?:(?!\{%-? for )[\s\S])*?)\{%-? endfor -?%\}/;
-  for (let m; (m = loop.exec(html));)
-    html = html.replace(m[0], m[3].repeat(Number(m[2]) - Number(m[1]) + 1));
-  return html
-    .replace(/\{%[\s\S]*?%\}/g, "")
-    .replace(/\{\{-? (.*?) -?\}\}/g, (_, expr: string) => {
-      const key = /^'size_guide\.(\w+)' \| t$/.exec(expr)?.[1];
-      if (key) return escape(en[key]);
-      if (expr === "'guide.js' | asset_url")
-        return "//cdn.example/assets/guide.js";
-      if (expr === "p.title | escape") return escape(product);
-      if (expr === "pages.contact.url | escape") return escape(contact!.url);
-      if (expr === "pages.contact.title | escape")
-        return escape(contact!.title);
-      if (expr === "title_id") return "fitted-title-1";
-      if (expr === "place") return place;
-      if (expr === "chart.system.id | escape") return "1301";
-      if (expr === "p.id | escape") return "8812";
-      throw new Error(`No test value for {{ ${expr} }}`);
-    });
+  let s: unknown = {};
+  try {
+    s = JSON.parse(json);
+  } catch {
+    // Data that isn't JSON: no settings either.
+  }
+  const plan = (s as { plan?: unknown }).plan;
+  const vars = {
+    s,
+    place,
+    fit_only: fitOnly,
+    pages: { contact },
+    // Liquid's nil for a store without a logo, as "" would be true.
+    shop: {
+      metafields: { $app: { plan: { value: plan } } },
+      brand: { logo: logo || undefined },
+    },
+  };
+  return liquid(read("snippets/guide.liquid"), vars, (expr) => {
+    const key = /^'size_guide\.(\w+)' \| t$/.exec(expr)?.[1];
+    if (key) return escape(en[key]);
+    if (expr === "'size_guide.logo' | t: shop: shop.name")
+      return escape(en.logo.replace("{{ shop }}", "North & Linen Co."));
+    if (expr === "shop.brand.logo | image_url: height: 64")
+      return `${logo}&height=64`;
+    if (expr === "shop.brand.logo.aspect_ratio | times: 32 | round")
+      return "128";
+    if (expr.startsWith("render 'guide-data'"))
+      return `<script type="application/json" data-fitted>${json}</script>`;
+    if (expr === "'guide.js' | asset_url")
+      return "//cdn.example/assets/guide.js";
+    if (expr === "p.title | escape") return escape(product);
+    if (expr === "pages.contact.url | escape") return escape(contact!.url);
+    if (expr === "pages.contact.title | escape") return escape(contact!.title);
+    if (expr === "title_id") return "fitted-title-1";
+    if (expr === "place") return place;
+    if (expr === "chart.system.id | escape") return "1301";
+    if (expr === "p.id | escape") return "8812";
+    throw new Error(`No test value for {{ ${expr} }}`);
+  });
 }
 
 const chart = {
@@ -440,6 +535,136 @@ describe("loader", () => {
     );
     expect(dialog.dir).toBe("rtl");
     expect(link.closest("[dir]")).toBeNull();
+  });
+
+  // Each icon's first line, as the Storefront board draws it.
+  it.each([
+    ["the ruler when none is set", undefined, "M3 15.5 15.5 3l5.5 5.5L8.5 21z"],
+    ["the ruler", "ruler", "M3 15.5 15.5 3l5.5 5.5L8.5 21z"],
+    [
+      "the hanger",
+      "hanger",
+      "M9.5 6.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5v.7",
+    ],
+    ["the tape measure", "tape", "M15.5 15h6v3h-6"],
+    [
+      "the ruler for an icon the settings don't allow",
+      "star",
+      "M3 15.5 15.5 3l5.5 5.5L8.5 21z",
+    ],
+  ])("draws %s in the link, in the link's own color", async (_, icon, d) => {
+    const { link } = await mount(
+      withSettings({ link: { style: "text", icon } }),
+    );
+    const svgs = link.querySelectorAll("svg");
+    expect(svgs).toHaveLength(1);
+    expect(svgs[0].getAttribute("stroke")).toBe("currentColor");
+    expect(svgs[0].querySelector("path")?.getAttribute("d")).toBe(d);
+  });
+
+  it("makes the link an outlined button with the Button style, and leaves the floating tab its own look", async () => {
+    const json = withSettings({
+      link: { style: "button", icon: "ruler" },
+      placement: { floatingTab: true },
+    });
+    document.body.innerHTML =
+      block(json) + block(json, undefined, undefined, "tab");
+    await tick();
+    const [link, tab] = document.querySelectorAll(".fitted-link");
+    expect(link.className).toBe("fitted-link fitted-button");
+    expect(tab.className).toBe("fitted-link fitted-tab");
+    const { link: text } = await mount(
+      withSettings({ link: { style: "text" } }),
+    );
+    expect(text.className).toBe("fitted-link");
+  });
+
+  it("gives the link the theme's colors, for the Button style's hover, whatever the popup's", async () => {
+    const theme =
+      "background-color: rgb(18, 18, 18); color: rgb(240, 240, 240)";
+    const custom = { text: "#202223", accent: "#b3301c", bg: "#fffaf0" };
+    const json = withSettings({
+      link: { style: "button" },
+      colors: { ...custom, mode: "custom", background: custom.bg },
+    });
+    document.body.innerHTML = `<div style="${theme}">${block(json)}</div>`;
+    await tick();
+    const root = document.querySelector<HTMLElement>(".fitted-guide")!;
+    const link = root.querySelector<HTMLElement>(".fitted-link")!;
+    const ink = "rgb(240, 240, 240)";
+    const own = { text: ink, accent: ink, bg: "rgb(18, 18, 18)" };
+    expect(painted(link)).toEqual(own);
+    link.click();
+    expect(painted(root)).toEqual(custom);
+    expect(painted(link)).toEqual(own);
+  });
+
+  it.each([
+    ["as set by default when nothing is set", undefined, "fitted-sticky"],
+    [
+      "as the defaults set it",
+      { style: "center", sheetOnPhone: true, openFrom: "bottom", sticky: true },
+      "fitted-sticky",
+    ],
+    [
+      "as a drawer from the right, without the phones' sheet or the kept header",
+      {
+        style: "drawer",
+        sheetOnPhone: false,
+        openFrom: "right",
+        sticky: false,
+      },
+      "fitted-drawer fitted-nosheet fitted-right",
+    ],
+    ["to fade in", { openFrom: "fade" }, "fitted-fade fitted-sticky"],
+    [
+      "only by words the settings allow",
+      { style: "Drawer", sheetOnPhone: "false", openFrom: "left" },
+      "fitted-sticky",
+    ],
+  ])("marks the popup %s", async (_, popup, classes) => {
+    const { dialog } = await mount(withSettings({ popup }));
+    expect(dialog.className).toBe(`fitted-dialog ${classes}`);
+  });
+
+  const logo = "//shop.example/cdn/shop/files/logo.png?v=1";
+  it("shows the store's logo from its brand settings above the title, 32 px tall, loaded only once the guide shows", async () => {
+    document.body.innerHTML = block(
+      valid,
+      undefined,
+      undefined,
+      "main",
+      false,
+      logo,
+    );
+    await tick();
+    const img = document.querySelector<HTMLImageElement>(".fitted-head img")!;
+    expect(img.className).toBe("fitted-logo");
+    expect(img.getAttribute("src")).toBe(`${logo}&height=64`);
+    expect(img.alt).toBe("North & Linen Co. logo");
+    expect([img.getAttribute("width"), img.getAttribute("height")]).toEqual([
+      "128",
+      "32",
+    ]);
+    expect(img.getAttribute("loading")).toBe("lazy");
+    expect(img.nextElementSibling?.className).toBe("fitted-title");
+  });
+
+  it.each([
+    ["the setting is off", { logo: false }, logo],
+    ["the store has no logo", { logo: true }, ""],
+  ])("shows no logo when %s", async (_, popup, brand) => {
+    const json = withSettings({ popup });
+    document.body.innerHTML = block(
+      json,
+      undefined,
+      undefined,
+      "main",
+      false,
+      brand,
+    );
+    await tick();
+    expect(document.querySelector(".fitted-dialog img")).toBeNull();
   });
 
   it("paints the merchant's colors on the guide when it opens", async () => {

@@ -9,19 +9,31 @@
 // them. A browser without color-mix() (Safari before 16.2) drops those
 // shades: lines, tint and the alert's fill go, and text keeps the main color,
 // so every color still reads. PURE lets loader.js, which bundles guide.ts for
-// parseGuide, drop tableCss.
+// parseGuide, drop tableCss. The snippet marks the dialog with the popup
+// settings' classes: fitted-drawer, fitted-nosheet (no bottom sheet on
+// phones), fitted-right or fitted-fade (how it opens) and fitted-sticky. Each
+// layout sets its padding in --fitted-py and --fitted-px, and in
+// --fitted-fx how far the footer and a kept title row reach into the sides.
 export const css =
   ".fitted-guide{--fitted-bg:#fff;--fitted-text:#161616;--fitted-accent:#2448a8}" +
   ".fitted-link{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 2px;border:0;background:none;color:inherit;font:inherit;font-weight:600;text-decoration:underline;text-underline-offset:4px;cursor:pointer}" +
-  ".fitted-dialog{--fitted-muted:color-mix(in srgb,var(--fitted-text) 84%,var(--fitted-bg));--fitted-line:color-mix(in srgb,var(--fitted-text) 16%,var(--fitted-bg));--fitted-faint:color-mix(in srgb,var(--fitted-text) 10%,var(--fitted-bg));--fitted-tint:color-mix(in srgb,var(--fitted-accent) 10%,var(--fitted-bg));--fitted-alert:color-mix(in srgb,#d72c0d 8%,var(--fitted-bg));--fitted-alert-line:color-mix(in srgb,#d72c0d 40%,var(--fitted-bg));box-sizing:border-box;width:calc(100% - 32px);max-width:640px;max-height:calc(100% - 80px);margin:40px auto auto;padding:0;border:0;border-radius:0;background:var(--fitted-bg);color:var(--fitted-text);font-family:var(--fitted-font);box-shadow:0 24px 64px rgba(0,0,0,.28);overflow:auto;text-align:start;line-height:1.5}" +
+  // Link style Button: outlined in the theme's text color, and filled with it
+  // on hover, with the theme's colors the loader sets on the link.
+  ".fitted-button{padding:0 16px;border:1px solid;border-radius:2px;text-decoration:none}" +
+  ".fitted-button:hover{background:var(--fitted-text);color:var(--fitted-bg)}" +
+  ".fitted-dialog{--fitted-py:28px;--fitted-px:32px;--fitted-fx:0px;--fitted-muted:color-mix(in srgb,var(--fitted-text) 84%,var(--fitted-bg));--fitted-line:color-mix(in srgb,var(--fitted-text) 16%,var(--fitted-bg));--fitted-faint:color-mix(in srgb,var(--fitted-text) 10%,var(--fitted-bg));--fitted-tint:color-mix(in srgb,var(--fitted-accent) 10%,var(--fitted-bg));--fitted-alert:color-mix(in srgb,#d72c0d 8%,var(--fitted-bg));--fitted-alert-line:color-mix(in srgb,#d72c0d 40%,var(--fitted-bg));box-sizing:border-box;width:calc(100% - 32px);max-width:640px;max-height:calc(100% - 80px);margin:40px auto auto;padding:0;border:0;border-radius:0;background:var(--fitted-bg);color:var(--fitted-text);font-family:var(--fitted-font);box-shadow:0 24px 64px rgba(0,0,0,.28);overflow:auto;text-align:start;line-height:1.5}" +
   ".fitted-dialog::backdrop{background:rgba(22,22,22,.55)}" +
   "html:has(.fitted-dialog[open]){overflow:hidden}" +
   ".fitted-dialog *{box-sizing:border-box}" +
   ".fitted-dialog [hidden]{display:none!important}" +
   ".fitted-dialog :focus-visible{outline:2px solid var(--fitted-accent);outline-offset:2px}" +
-  ".fitted-panel{display:flex;flex-direction:column;gap:18px;padding:28px 32px}" +
+  // The panel fills a popup with a set height (the drawer, a phone's card),
+  // so its footer sits at the bottom however short the chart.
+  ".fitted-panel{display:flex;flex-direction:column;gap:18px;min-height:100%;padding:var(--fitted-py) var(--fitted-px)}" +
   ".fitted-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}" +
-  ".fitted-body{display:flex;flex-direction:column;gap:14px}" +
+  ".fitted-body{display:flex;flex-direction:column;flex-grow:1;gap:14px}" +
+  // The store's logo from Shopify's brand settings, above the title.
+  ".fitted-logo{display:block;width:auto;max-width:100%;height:32px;margin-bottom:12px;object-fit:contain}" +
   ".fitted-dialog .fitted-title{margin:0;font-size:28px;font-weight:600;letter-spacing:-.01em;line-height:1.2}" +
   ".fitted-dialog .fitted-sub{margin:4px 0 0;font-size:15px;color:var(--fitted-muted)}" +
   ".fitted-dialog .fitted-h3{margin:0;font-size:20px;font-weight:600;line-height:1.3}" +
@@ -37,16 +49,43 @@ export const css =
   ".fitted-help a{color:var(--fitted-accent);text-underline-offset:3px}" +
   ".fitted-sk{display:block;height:12px;background:var(--fitted-faint)}" +
   ".fitted-skrow{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:16px;padding:14px 12px;border-bottom:1px solid var(--fitted-faint)}" +
-  // Phones: a bottom sheet, with full-width error buttons below the contact line.
+  // Side drawer: full height at the right.
+  "@media (min-width:601px){" +
+  ".fitted-drawer{--fitted-py:24px;--fitted-px:28px;--fitted-fx:28px;width:480px;max-width:100%;height:100%;max-height:100%;margin:0 0 0 auto;box-shadow:-16px 0 48px rgba(0,0,0,.24)}" +
+  "}" +
+  // Phones: a bottom sheet, with full-width error buttons below the contact
+  // line. With the sheet off, the popup style instead: a card with the page
+  // showing round it, or a drawer leaving a strip of the page to tap.
   "@media (max-width:600px){" +
-  ".fitted-dialog{width:100%;max-width:none;max-height:92vh;max-height:92dvh;margin:auto 0 0;border-radius:14px 14px 0 0}" +
-  ".fitted-panel{gap:14px;padding:18px 16px}" +
+  ".fitted-dialog{--fitted-py:18px;--fitted-px:16px;--fitted-fx:16px}" +
+  ".fitted-dialog:not(.fitted-nosheet){width:100%;max-width:none;max-height:92vh;max-height:92dvh;margin:auto 0 0;border-radius:14px 14px 0 0}" +
+  ".fitted-panel{gap:14px}" +
   ".fitted-actions{flex-direction:column;order:1}" +
+  ".fitted-nosheet{--fitted-py:16px;width:calc(100% - 24px);height:calc(100% - 84px);margin:48px auto 36px;box-shadow:0 24px 64px rgba(0,0,0,.32)}" +
+  ".fitted-nosheet.fitted-drawer{width:calc(100% - 46px);height:100%;max-height:100%;margin:0 0 0 auto;box-shadow:-12px 0 32px rgba(0,0,0,.28)}" +
+  ".fitted-nosheet .fitted-title{font-size:26px}" +
+  "}" +
+  // Opening, in about a quarter second: from the bottom, from the right or
+  // fading in, as Opens from says; the drawer always from the right and the
+  // phone's sheet from the bottom. At once for shoppers who ask for less motion.
+  "@keyframes fitted-up{from{transform:translateY(120%)}}" +
+  "@keyframes fitted-in{from{transform:translateX(130%)}}" +
+  "@keyframes fitted-fade{from{opacity:0}}" +
+  "@media (prefers-reduced-motion:no-preference){" +
+  ".fitted-dialog[open]{animation:fitted-up .25s ease-out}" +
+  ".fitted-dialog[open]::backdrop{animation:fitted-fade .25s ease-out}" +
+  ".fitted-right[open]{animation-name:fitted-in}" +
+  ".fitted-fade[open]{animation-name:fitted-fade}" +
+  ".fitted-drawer[open]{animation-name:fitted-in}" +
+  "}" +
+  "@media (prefers-reduced-motion:no-preference) and (max-width:600px){" +
+  ".fitted-dialog:not(.fitted-nosheet)[open]{animation-name:fitted-up}" +
   "}";
 
 export const tableCss = /* @__PURE__ */ [
   ".fitted-scroll{overflow-x:auto}",
-  ".fitted-table{width:100%;min-width:420px;margin:0;border-collapse:collapse;font-size:15px;font-variant-numeric:tabular-nums}",
+  // Separate borders, so a kept header's lines stay with it.
+  ".fitted-table{width:100%;min-width:420px;margin:0;border-collapse:separate;border-spacing:0;font-size:15px;font-variant-numeric:tabular-nums}",
   ".fitted-table th,.fitted-table td{padding:7px 12px;border:0;border-bottom:1px solid var(--fitted-line);background:none;color:inherit;font-weight:inherit;text-align:start;vertical-align:middle;white-space:nowrap}",
   ".fitted-table thead th{padding-top:10px;padding-bottom:10px;border-top:2px solid var(--fitted-text);border-bottom-color:var(--fitted-text);font-size:13px;font-weight:600}",
   ".fitted-table tbody th{font-weight:600}",
@@ -61,7 +100,7 @@ export const tableCss = /* @__PURE__ */ [
   ".fitted-dialog .fitted-seg button{min-width:48px;min-height:34px;padding:0 12px;border:0;border-radius:0;background:var(--fitted-bg);color:var(--fitted-text);font-size:14px;font-weight:600}",
   ".fitted-dialog .fitted-seg [aria-pressed=true]{background:var(--fitted-text);color:var(--fitted-bg)}",
   // The footer stays at the bottom of the guide as the tables scroll.
-  ".fitted-foot{position:sticky;bottom:0;z-index:1;display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;margin-bottom:-28px;padding:16px 0 28px;border-top:2px solid var(--fitted-text);background:var(--fitted-bg)}",
+  ".fitted-foot{position:sticky;bottom:0;z-index:1;display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;margin:auto calc(-1*var(--fitted-fx)) calc(-1*var(--fitted-py));padding:16px var(--fitted-fx) var(--fitted-py);border-top:2px solid var(--fitted-text);background:var(--fitted-bg)}",
   ".fitted-foot strong{font-size:16px;font-weight:600}",
   ".fitted-foot strong span{color:var(--fitted-accent)}",
   ".fitted-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}",
@@ -105,6 +144,17 @@ export const tableCss = /* @__PURE__ */ [
   // The fit line under the link on the product page, in the theme's colors.
   ".fitted-fits{margin:0;font-size:14px;color:color-mix(in srgb,var(--fitted-text) 84%,var(--fitted-bg))}",
   ".fitted-fits strong{color:var(--fitted-accent);font-weight:600}",
+  // "Keep the table header and close button visible while scrolling" (§7):
+  // the title row stays on top, edged once the guide scrolls, and each
+  // table's header under it, --fitted-top below the guide's top. render
+  // marks fitted-flat a table that fits the guide; a wider one keeps its own
+  // sideways scroll, where its header can't stay. Focus never lands under
+  // the two (a header row is 43px tall).
+  ".fitted-sticky{scroll-padding-top:calc(var(--fitted-top) + 43px)}",
+  ".fitted-sticky .fitted-head{position:sticky;top:0;z-index:2;margin:calc(-1*var(--fitted-py)) calc(-1*var(--fitted-fx)) -12px;padding:var(--fitted-py) var(--fitted-fx) 12px;background:var(--fitted-bg)}",
+  ".fitted-sticky[data-scrolled] .fitted-head{box-shadow:0 1px var(--fitted-line),0 6px 12px -8px rgba(22,22,22,.35)}",
+  ".fitted-sticky .fitted-flat{overflow:visible}",
+  ".fitted-sticky .fitted-flat thead th{position:sticky;top:var(--fitted-top);z-index:1;background:var(--fitted-bg)}",
   // Phones: tighter tables and tabs, larger switches, and fields iOS won't
   // zoom into.
   "@media (max-width:600px){",
@@ -114,6 +164,5 @@ export const tableCss = /* @__PURE__ */ [
   ".fitted-table th,.fitted-table td{padding-left:8px;padding-right:8px}",
   ".fitted-bar{justify-content:flex-start}",
   ".fitted-dialog .fitted-seg button{min-width:44px;min-height:44px;padding:0 8px}",
-  ".fitted-foot{margin-bottom:-18px;padding-bottom:18px}",
   "}",
 ].join("");
