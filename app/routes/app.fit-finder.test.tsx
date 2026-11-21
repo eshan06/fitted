@@ -10,6 +10,7 @@ import { defaultSettings, type Settings } from "../models/settings.server";
 const m = vi.hoisted(() => ({
   authenticate: vi.fn(),
   getPlan: vi.fn(),
+  lastConfirmedPlan: vi.fn(),
   findUnique: vi.fn(),
 }));
 vi.mock("../shopify.server", () => ({
@@ -21,6 +22,7 @@ vi.mock("../db.server", () => ({
 vi.mock("../models/billing.server", async (orig) => ({
   ...(await orig<typeof import("../models/billing.server")>()),
   getPlan: m.getPlan,
+  lastConfirmedPlan: m.lastConfirmedPlan,
 }));
 // The save bar is App Bridge's; here it renders its buttons in place.
 vi.mock("@shopify/app-bridge-react", () => ({
@@ -32,6 +34,7 @@ vi.mock("@shopify/shopify-app-react-router/react", () => ({
 }));
 const { default: FitFinder, action, loader } = await import("./app.fit-finder");
 const shell = await import("./app");
+const followUp = await import("./app.plan-check");
 
 (
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -255,7 +258,12 @@ beforeEach(() => {
     session: { shop: SHOP },
   }));
   m.getPlan.mockResolvedValue({ plan: "standard", checkFailed: false });
+  lastConfirmed("standard");
 });
+// The plan the screen loads with: the last one a check confirmed (#193).
+// The live line's recount still reads getPlan.
+const lastConfirmed = (plan: string) =>
+  m.lastConfirmedPlan.mockResolvedValue({ plan, yearly: false, at: null });
 let root: ReturnType<typeof createRoot> | undefined;
 afterEach(() => {
   vi.useRealTimers();
@@ -272,6 +280,7 @@ const request = (body?: unknown) =>
   });
 const load = async () => {
   const r = (await loader({ request: request() } as LoaderFunctionArgs)) as {
+    planAtLoad: unknown;
     fitFinder: Promise<unknown>;
     storeUrl: string;
   };
@@ -321,7 +330,7 @@ describe("loading and saving the fit finder", () => {
     });
   });
 
-  it("loads the settings, the plan, the plans page and whether there are charts", async () => {
+  it("loads the settings, the last confirmed plan, the plans page and whether there are charts", async () => {
     const got = await load();
     expect(got.fitFinder).toMatchObject({
       settings: saved(),
@@ -332,7 +341,14 @@ describe("loading and saving the fit finder", () => {
       hasCharts: true,
     });
     expect(got.storeUrl).toBe(`https://${SHOP}`);
-    expect(m.getPlan).toHaveBeenCalledWith(SHOP);
+    // For the shell, which reloads the screen if the check settles on another.
+    expect(got.planAtLoad).toEqual({
+      plan: "standard",
+      yearly: false,
+      at: null,
+    });
+    expect(m.lastConfirmedPlan).toHaveBeenCalledExactlyOnceWith(SHOP);
+    expect(m.getPlan).not.toHaveBeenCalled();
   });
 
   it("saves the fit finder and its no-fit words, keeping appearance and other languages", async () => {
@@ -527,12 +543,12 @@ describe("fit finder screen", () => {
     expect(upgrade.hasAttribute("variant")).toBe(false);
     act(() => root!.unmount());
 
-    m.getPlan.mockResolvedValue({ plan: "free", checkFailed: false });
+    lastConfirmed("free");
     await open();
     expect(banners()).toEqual([UPGRADE.replace("Standard", "Free")]);
     act(() => root!.unmount());
 
-    m.getPlan.mockResolvedValue({ plan: "pro", checkFailed: false });
+    lastConfirmed("pro");
     await open();
     expect(banners()).toEqual([]);
     expect(text()).toContain("Fit finder type");
@@ -638,6 +654,7 @@ const databaseDown = async () => {
     typeof import("../models/billing.server")
   >("../models/billing.server");
   m.getPlan.mockImplementation(billing.getPlan);
+  m.lastConfirmedPlan.mockImplementation(billing.lastConfirmedPlan);
   m.findUnique.mockRejectedValue(new Error("Can't reach database server"));
   return billing;
 };
@@ -690,15 +707,105 @@ describe("when the database can't give the plan", () => {
     await type(noFit(), "Mine");
 
     const reads = m.getPlan.mock.calls.length;
+    const screenReads = m.lastConfirmedPlan.mock.calls.length;
     await click(planBanner()!.querySelector("s-button") as HTMLElement);
-    // The re-check, then the shell's and the screen's loads again.
+    // The re-check, then the shell's check and the screen's load again: the
+    // screen reads the last confirmed plan, and the shell the banner's date.
     expect(m.getPlan.mock.calls.slice(reads)).toEqual([
       [SHOP, { recheck: true }],
+      [SHOP],
+    ]);
+    expect(m.lastConfirmedPlan.mock.calls.slice(screenReads)).toEqual([
       [SHOP],
       [SHOP],
     ]);
     expect(planBanner()).not.toBeNull();
     expect(text()).not.toContain("didn't load");
+    expect(noFit().value).toBe("Mine");
+    expect(saveBar()).not.toBeNull();
+  });
+});
+
+// What React Router does at entry.server.tsx's streamTimeout: whatever a
+// loader streams that's still pending then is rejected, so its Await shows
+// the error.
+const STREAM_LIMIT = 5_000;
+const streamed = async (loaded: Promise<object>) =>
+  Object.fromEntries(
+    Object.entries(await loaded).map(([key, value]) => [
+      key,
+      value instanceof Promise
+        ? Promise.race([
+            value,
+            new Promise((_, reject) =>
+              setTimeout(
+                () => reject(new Error("Server Timeout")),
+                STREAM_LIMIT,
+              ),
+            ),
+          ])
+        : value,
+    ]),
+  );
+
+// Regression (#193): a plan check slower than the stream (a slow Partner API,
+// or a welcome-link re-check waiting out the 10-second gap) held the screen's
+// data past it, so it showed its load error.
+describe("when the plan check outlasts the stream", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("keeps the screen and its edits on the last confirmed plan, then shows the plan the check settles on", async () => {
+    // Only setTimeout: React schedules on setImmediate.
+    vi.useFakeTimers({ toFake: ["setTimeout"], shouldAdvanceTime: true });
+    // Shopify answers after 6 seconds; the plan is cached from then on.
+    const pro = { plan: "pro", yearly: false, checkFailed: false };
+    m.getPlan.mockReturnValue(
+      new Promise((resolve) =>
+        setTimeout(() => {
+          m.getPlan.mockResolvedValue(pro);
+          m.lastConfirmedPlan.mockResolvedValue({ ...pro, at: new Date() });
+          resolve(pro);
+        }, 6_000),
+      ),
+    );
+    // The shell's follow-up, through App Bridge's fetch.
+    vi.stubGlobal("fetch", async (url: string) =>
+      followUp.loader({
+        request: new Request(new URL(url, "https://fitted.test")),
+      } as LoaderFunctionArgs),
+    );
+    const Stub = createRoutesStub([
+      {
+        path: "/app",
+        Component: shell.default,
+        HydrateFallback: () => null,
+        loader: (args) => streamed(shell.loader(args as LoaderFunctionArgs)),
+        action: (args) => shell.action(args as ActionFunctionArgs),
+        shouldRevalidate: shell.shouldRevalidate,
+        children: [
+          {
+            path: "fit-finder",
+            Component: FitFinder,
+            loader: (args) => streamed(loader(args as LoaderFunctionArgs)),
+            action: (args) => action(args as ActionFunctionArgs),
+          },
+        ],
+      },
+    ]);
+    const div = document.body.appendChild(document.createElement("div"));
+    root = createRoot(div);
+    await act(async () =>
+      root!.render(<Stub initialEntries={["/app/fit-finder"]} />),
+    );
+
+    await act(() => vi.advanceTimersByTimeAsync(STREAM_LIMIT));
+    expect(banners()).toEqual([UPGRADE]);
+    await type(noFit(), "Mine");
+
+    await act(() => vi.advanceTimersByTimeAsync(1_000));
+    await settle();
+    expect(banners()).toEqual([]);
+    expect(text()).toContain("Fit finder type");
     expect(noFit().value).toBe("Mine");
     expect(saveBar()).not.toBeNull();
   });
@@ -1114,7 +1221,7 @@ describe("a chart's ease and stretch", () => {
   });
 
   it("says on Pro how many products show the picked chart, in place of the upgrade", async () => {
-    m.getPlan.mockResolvedValue({ plan: "pro", checkFailed: false });
+    lastConfirmed("pro");
     store.products = { [TOPS]: 148, [BOTTOMS]: 1 };
     await open();
     const live = () => document.querySelector(".live")!.textContent;
@@ -1146,7 +1253,7 @@ describe("a chart's ease and stretch", () => {
 
   // Regression (#142): a chart on no products read "the 0 products".
   it("says on Pro when no product shows the picked chart, linking Display rules", async () => {
-    m.getPlan.mockResolvedValue({ plan: "pro", checkFailed: false });
+    lastConfirmed("pro");
     store.products = { [BOTTOMS]: 1 };
     await open();
     const live = document.querySelector(".live")!;
@@ -1167,7 +1274,8 @@ describe("a chart's ease and stretch", () => {
   const countFails = async () => {
     // Only setTimeout, its retries' clock: React schedules on setImmediate.
     vi.useFakeTimers({ toFake: ["setTimeout"], shouldAdvanceTime: true });
-    m.getPlan.mockResolvedValue({ plan: "pro", checkFailed: false });
+    lastConfirmed("pro");
+    m.getPlan.mockResolvedValue({ plan: "pro", checkFailed: false }); // the recount's
     store.products = { [TOPS]: 148 };
     store.countsDown = true;
   };
@@ -1755,7 +1863,7 @@ describe("the question editor", () => {
 
   it("opens on a chart with questions, and on Pro calls only those live", async () => {
     store.charts.reverse(); // the bare chart first
-    m.getPlan.mockResolvedValue({ plan: "pro", checkFailed: false });
+    lastConfirmed("pro");
     store.products = { [TOPS]: 148, [KIDS]: 5 };
     await open();
     expect(labelled("Recommend sizes from").value).toBe(TOPS);

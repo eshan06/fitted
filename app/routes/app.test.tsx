@@ -8,6 +8,7 @@ import { Await, Link, createRoutesStub, useLoaderData } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App, { action, loader, shouldRevalidate } from "./app";
 import Import from "./app.import";
+import { loader as followUp } from "./app.plan-check";
 
 const m = vi.hoisted(() => ({
   admin: vi.fn(),
@@ -81,12 +82,13 @@ describe("admin shell", () => {
   });
 
   // React Router rejects what's still pending at entry.server.tsx's streamTimeout.
-  it("shows a check still running after 4 seconds as not answered, with the cached plan", async () => {
+  it("hands a check still running after 4 seconds on to the follow-up, with the last confirmed plan", async () => {
     vi.useFakeTimers();
     try {
       m.getPlan.mockReturnValue(new Promise(() => {})); // Shopify hangs
       m.lastConfirmedPlan.mockResolvedValue({
         plan: "pro",
+        yearly: true,
         at: new Date("2026-11-16T10:00:00Z"),
       });
       let check: unknown;
@@ -97,8 +99,10 @@ describe("admin shell", () => {
       await vi.advanceTimersByTimeAsync(1);
       expect(check).toEqual({
         plan: "pro",
+        yearly: true,
         checkFailed: true,
         confirmed: "Nov 16, 2026",
+        pending: true,
       });
     } finally {
       vi.useRealTimers();
@@ -111,6 +115,7 @@ describe("admin shell", () => {
 
     await expect((await load()).plan).resolves.toEqual({
       plan: "standard",
+      yearly: null,
       checkFailed: true,
       confirmed: null,
     });
@@ -122,6 +127,7 @@ describe("admin shell", () => {
 
     await expect((await load()).plan).resolves.toEqual({
       plan: "free",
+      yearly: null,
       checkFailed: true,
       confirmed: null,
     });
@@ -327,6 +333,287 @@ describe("the shell's screen", () => {
     expect(banner(el)?.textContent).toContain(
       "Shopify didn't answer. Until it does, you keep Free and nothing is switched off.",
     );
+  });
+});
+
+// #193: a screen loads with the last confirmed plan, and the shell settles a
+// check slower than the stream after load.
+describe("settling a check after load", () => {
+  let root: ReturnType<typeof createRoot> | undefined;
+  afterEach(() => {
+    act(() => root?.unmount());
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+  type Shown = { plan: string; yearly: boolean | null };
+  const at = (plan: string, yearly: boolean | null = false) => ({
+    plan,
+    yearly,
+  });
+  let screenLoads = 0;
+  // The shell over a screen that loads with plans[0], then plans[1] once reloaded.
+  const show = async (...plans: Shown[]) => {
+    screenLoads = 0;
+    const Stub = createRoutesStub([
+      {
+        path: "/app",
+        Component: App,
+        loader: (args) => loader(args as LoaderFunctionArgs),
+        action: (args) => action(args as ActionFunctionArgs),
+        shouldRevalidate,
+        children: [
+          {
+            index: true,
+            loader: () => ({
+              planAtLoad: plans[Math.min(screenLoads++, plans.length - 1)],
+            }),
+            Component: () => (
+              <s-page heading="Home">
+                {`On ${useLoaderData<{ planAtLoad: Shown }>().planAtLoad.plan}`}
+                <Link to="/app?again">Load again</Link>
+              </s-page>
+            ),
+          },
+        ],
+      },
+    ]);
+    const el = document.createElement("div");
+    document.body.replaceChildren(el);
+    root = createRoot(el);
+    await act(async () => root!.render(<Stub initialEntries={["/app"]} />));
+    await settle();
+    return el;
+  };
+  const settle = () => act(() => new Promise((r) => setTimeout(r, 10)));
+  const banner = (el: Element) =>
+    el.querySelector('s-banner[heading="Couldn\'t check your plan"]');
+  const wait = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
+  // Shopify answers after `ms`; App Bridge's fetch reaches the follow-up.
+  const slowCheck = (state: object, ms = 6_000) => {
+    vi.useFakeTimers({ toFake: ["setTimeout"], shouldAdvanceTime: true });
+    m.getPlan.mockReturnValue(
+      new Promise((resolve) => setTimeout(() => resolve(state), ms)),
+    );
+    const fetch = vi.fn(async (url: string) =>
+      followUp({
+        request: new Request(new URL(url, "https://fitted.test")),
+      } as LoaderFunctionArgs),
+    );
+    vi.stubGlobal("fetch", fetch);
+    return fetch;
+  };
+
+  it("asks again after load for a check still running, and leaves a screen on its plan as it is", async () => {
+    const fetch = slowCheck({
+      plan: "standard",
+      yearly: false,
+      checkFailed: false,
+    });
+    m.lastConfirmedPlan.mockResolvedValue({ plan: "standard", at: null });
+    const el = await show(at("standard"));
+
+    await wait(4_000);
+    expect(fetch).toHaveBeenCalledExactlyOnceWith("/app/plan-check");
+    await wait(2_000);
+    expect(banner(el)).toBeNull();
+    expect(el.textContent).toContain("On standard");
+    expect(screenLoads).toBe(1);
+  });
+
+  it("shows the banner once the check it asked again for fails", async () => {
+    slowCheck({ plan: "standard", checkFailed: true });
+    m.lastConfirmedPlan.mockResolvedValue({
+      plan: "standard",
+      at: new Date("2026-11-17T09:00:00Z"),
+    });
+    const el = await show(at("standard"));
+
+    await wait(4_000);
+    expect(banner(el)).toBeNull(); // not while it's still checking
+    await wait(2_000);
+    expect(banner(el)?.textContent).toContain(
+      "Shopify didn't answer. Until it does, you keep Standard (last confirmed Nov 17, 2026) and nothing is switched off.",
+    );
+    expect(el.textContent).toContain("On standard");
+    expect(screenLoads).toBe(1);
+  });
+
+  it("reloads a screen that loaded with another plan once the check settles", async () => {
+    slowCheck({ plan: "pro", yearly: false, checkFailed: false });
+    m.lastConfirmedPlan.mockResolvedValue({ plan: "free", at: null });
+    const el = await show(at("free"), at("pro"));
+
+    await wait(6_000);
+    await settle();
+    expect(screenLoads).toBe(2);
+    expect(el.textContent).toContain("On pro");
+    expect(banner(el)).toBeNull();
+  });
+
+  it.each([
+    ["fails", () => Promise.reject(new TypeError("offline")), 0],
+    // Never read as the plan, whatever its body says.
+    [
+      "answers with an error",
+      async () =>
+        Response.json(
+          { plan: "free", yearly: null, checkFailed: false },
+          { status: 500 },
+        ),
+      0,
+    ],
+    ["takes over 30 seconds", () => new Promise(() => {}), 30_000],
+  ])(
+    "shows the banner on the last confirmed plan when the follow-up %s",
+    async (_, answer, late) => {
+      slowCheck({ plan: "pro", checkFailed: false }, 120_000);
+      vi.stubGlobal("fetch", answer);
+      m.lastConfirmedPlan.mockResolvedValue({
+        plan: "pro",
+        yearly: false,
+        at: new Date("2026-11-16T10:00:00Z"),
+      });
+      const el = await show(at("pro"));
+
+      await wait(4_000);
+      if (late) {
+        await wait(late - 1_000);
+        expect(banner(el)).toBeNull(); // still waiting for it
+        await wait(1_000);
+      }
+      await settle();
+      expect(banner(el)?.textContent).toContain(
+        "you keep Pro (last confirmed Nov 16, 2026) and nothing is switched off.",
+      );
+      expect(screenLoads).toBe(1);
+    },
+  );
+
+  it("drops a follow-up's answer once the next load brings its own check", async () => {
+    slowCheck({ plan: "standard", yearly: false, checkFailed: true });
+    m.lastConfirmedPlan.mockResolvedValue({ plan: "standard", at: null });
+    const el = await show(at("standard"));
+    await wait(6_000);
+    expect(banner(el)).not.toBeNull();
+
+    // Try again: Shopify answers this time, and the loads that follow say so.
+    m.getPlan.mockResolvedValue({
+      plan: "standard",
+      yearly: false,
+      checkFailed: false,
+    });
+    await act(async () =>
+      (banner(el)!.querySelector("s-button") as HTMLElement).click(),
+    );
+    await settle();
+    expect(banner(el)).toBeNull();
+  });
+
+  it("keeps a later load's answer when an earlier load's lands after it", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout"], shouldAdvanceTime: true });
+    m.getPlan.mockReturnValue(new Promise(() => {})); // every load outlasts the stream
+    m.lastConfirmedPlan.mockResolvedValue({ plan: "standard", at: null });
+    const answers: ((r: Response) => void)[] = [];
+    vi.stubGlobal("fetch", () => new Promise((r) => answers.push(r)));
+    const reply = (checkFailed: boolean) =>
+      new Response(
+        JSON.stringify({ plan: "standard", yearly: false, checkFailed }),
+      );
+    const el = await show(at("standard"));
+    await wait(4_000);
+    await act(async () => el.querySelector("a")!.click());
+    await wait(4_000);
+    expect(answers).toHaveLength(2);
+
+    await act(async () => answers[1](reply(true)));
+    await settle();
+    expect(banner(el)).not.toBeNull();
+    await act(async () => answers[0](reply(false)));
+    await settle();
+    expect(banner(el)).not.toBeNull();
+  });
+
+  it("reloads a screen at once when a check inside the stream confirms another plan or price", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    m.getPlan.mockResolvedValue({
+      plan: "pro",
+      yearly: true,
+      checkFailed: false,
+    });
+    let el = await show(at("free"), at("pro", true));
+    expect(screenLoads).toBe(2);
+    expect(el.textContent).toContain("On pro");
+    act(() => root?.unmount());
+
+    // Monthly to yearly changes Home's price.
+    el = await show(at("pro", false), at("pro", true));
+    expect(screenLoads).toBe(2);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("leaves a screen on Free as it is whatever its billing period, which Free never shows", async () => {
+    m.getPlan.mockResolvedValue({
+      plan: "free",
+      yearly: false,
+      checkFailed: false,
+    });
+    await show(at("free", null)); // a first install, never checked
+    expect(screenLoads).toBe(1);
+  });
+});
+
+describe("the plan check's follow-up", () => {
+  const ask = (url = "https://fitted.test/app/plan-check") =>
+    followUp({ request: new Request(url) } as LoaderFunctionArgs);
+
+  it("waits for the session's shop's check, joining one already running, and answers with its plan", async () => {
+    let answer: (state: object) => void = () => {};
+    m.getPlan.mockReturnValue(new Promise((r) => (answer = r)));
+    const asked = ask();
+    let answered = false;
+    void asked.then(() => (answered = true));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(answered).toBe(false);
+
+    answer({ plan: "pro", yearly: true, checkFailed: false });
+    const res = await asked;
+    await expect(res.json()).resolves.toEqual({
+      plan: "pro",
+      yearly: true,
+      checkFailed: false,
+    });
+    // One shop's plan as of now: never kept by a cache.
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+    expect(m.admin).toHaveBeenCalledOnce();
+    expect(m.getPlan).toHaveBeenCalledExactlyOnceWith(SHOP); // never a re-check
+  });
+
+  it("passes the library's login redirect on and reads no plan", async () => {
+    const login = new Response(null, {
+      status: 302,
+      headers: { Location: "/auth/login" },
+    });
+    m.admin.mockRejectedValue(login);
+
+    await expect(ask()).rejects.toBe(login);
+    expect(m.getPlan).not.toHaveBeenCalled();
+  });
+
+  it("goes by the session's shop, never one in the address", async () => {
+    await ask("https://fitted.test/app/plan-check?shop=other.myshopify.com");
+    expect(m.getPlan).toHaveBeenCalledExactlyOnceWith(SHOP);
+  });
+
+  it("answers a repeat the same way, as a plain check each time", async () => {
+    m.getPlan.mockResolvedValue({
+      plan: "standard",
+      yearly: false,
+      checkFailed: true,
+    });
+
+    const first = await (await ask()).json();
+    await expect((await ask()).json()).resolves.toEqual(first);
+    expect(m.getPlan.mock.calls).toEqual([[SHOP], [SHOP]]);
   });
 });
 

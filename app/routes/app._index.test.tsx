@@ -13,6 +13,7 @@ const m = vi.hoisted(() => ({
   countChartProducts: vi.fn(),
   productCoverage: vi.fn(),
   getPlan: vi.fn(),
+  lastConfirmedPlan: vi.fn(),
   pricingPlansUrl: vi.fn(),
   resolveIfStale: vi.fn(),
   extensions: vi.fn(),
@@ -43,11 +44,13 @@ vi.mock("../models/admin.server", async (orig) => ({
 vi.mock("../models/billing.server", async (orig) => ({
   ...(await orig<typeof import("../models/billing.server")>()),
   getPlan: m.getPlan,
+  lastConfirmedPlan: m.lastConfirmedPlan,
 }));
 const bridge = { app: { extensions: m.extensions } };
 vi.mock("@shopify/app-bridge-react", () => ({ useAppBridge: () => bridge }));
 const { default: Home, loader } = await import("./app._index");
 const shell = await import("./app");
+const followUp = await import("./app.plan-check");
 type Data = Awaited<Awaited<ReturnType<typeof loader>>["home"]>;
 type Ok = Extract<Data, { plan: unknown }>;
 
@@ -90,6 +93,11 @@ beforeEach(() => {
     yearly: false,
     checkFailed: false,
   });
+  m.lastConfirmedPlan.mockResolvedValue({
+    plan: "standard",
+    yearly: false,
+    at: null,
+  });
   m.pricingPlansUrl.mockResolvedValue(PLANS);
   m.resolveIfStale.mockResolvedValue(undefined);
   m.productCoverage.mockResolvedValue({
@@ -116,8 +124,12 @@ const THEME_ON = [
   },
 ];
 
+// The plan Home loads with: the last one a check confirmed (#193).
+const lastConfirmed = (plan: string, yearly: boolean | null = false) =>
+  m.lastConfirmedPlan.mockResolvedValue({ plan, yearly, at: null });
+
 describe("loading Home", () => {
-  it("reads the charts, counts, plan and coverage for the session's shop", async () => {
+  it("reads the charts, counts, last confirmed plan and coverage for the session's shop", async () => {
     m.chartPages.mockReturnValue(
       pages(
         [
@@ -132,8 +144,10 @@ describe("loading Home", () => {
         [stored(3, "ACTIVE", { chart: { importNote: "" } as never })],
       ),
     );
-    const { home, storeUrl } = await load();
+    const { home, storeUrl, planAtLoad } = await load();
     expect(storeUrl).toBe(`https://${SHOP}`);
+    // For the shell, which reloads Home if the plan check settles on another.
+    expect(planAtLoad).toEqual({ plan: "standard", yearly: false, at: null });
     expect(await home).toEqual({
       plan: "standard",
       yearly: false,
@@ -166,7 +180,9 @@ describe("loading Home", () => {
       },
     });
     expect(m.authenticate).toHaveBeenCalledOnce();
-    expect(m.getPlan).toHaveBeenCalledWith(SHOP);
+    // Never the check itself, which the shell streams and settles.
+    expect(m.lastConfirmedPlan).toHaveBeenCalledExactlyOnceWith(SHOP);
+    expect(m.getPlan).not.toHaveBeenCalled();
     expect(m.pricingPlansUrl).toHaveBeenCalledWith(admin, SHOP);
     expect(m.productCoverage).toHaveBeenCalledWith(admin);
     expect(m.resolveIfStale).toHaveBeenCalledExactlyOnceWith(SHOP);
@@ -185,30 +201,30 @@ describe("loading Home", () => {
   it("gives Free its limit of 3 published charts, and no other plan", async () => {
     const three = () =>
       pages([1, 2, 3, 4].map((n) => stored(n, n < 4 ? "ACTIVE" : "DRAFT")));
-    m.getPlan.mockResolvedValue({ plan: "free", checkFailed: false });
+    lastConfirmed("free");
     m.chartPages.mockReturnValue(three());
     expect(await (await load()).home).toMatchObject({ active: 3, limit: 3 });
 
     m.chartPages.mockReturnValue(pages([stored(1, "ACTIVE")]));
     expect(await (await load()).home).toMatchObject({ active: 1, limit: 3 });
 
-    m.getPlan.mockResolvedValue({ plan: "standard", checkFailed: false });
+    lastConfirmed("standard");
     m.chartPages.mockReturnValue(three());
     expect(await (await load()).home).toMatchObject({ limit: null });
   });
 
   it("flags Free past its limit after a downgrade, with every chart still live", async () => {
-    m.getPlan.mockResolvedValue({ plan: "free", checkFailed: false });
+    lastConfirmed("free");
     m.chartPages.mockReturnValue(
       pages([1, 2, 3, 4, 5].map((n) => stored(n, "ACTIVE"))),
     );
     expect(await (await load()).home).toMatchObject({ active: 5, limit: 3 });
   });
 
-  it("passes on whether the plan is billed yearly, as the plan check read it", async () => {
+  it("passes on whether the plan is billed yearly, as the last check read it", async () => {
     m.chartPages.mockReturnValue(pages([stored(1, "ACTIVE")]));
     for (const yearly of [true, false, null]) {
-      m.getPlan.mockResolvedValue({ plan: "pro", yearly, checkFailed: false });
+      lastConfirmed("pro", yearly);
       expect(await (await load()).home).toMatchObject({ plan: "pro", yearly });
     }
   });
@@ -247,7 +263,7 @@ describe("loading Home", () => {
     m.chartPages.mockReturnValue(charts());
     expect(await (await load()).home).toMatchObject({ fitLive: false });
 
-    m.getPlan.mockResolvedValue({ plan: "pro", checkFailed: false });
+    lastConfirmed("pro");
     m.chartPages.mockReturnValue(charts());
     expect(await (await load()).home).toMatchObject({ fitLive: true });
 
@@ -735,6 +751,7 @@ describe("when the database can't give the plan", () => {
       typeof import("../models/billing.server")
     >("../models/billing.server");
     m.getPlan.mockImplementation(billing.getPlan);
+    m.lastConfirmedPlan.mockImplementation(billing.lastConfirmedPlan);
     m.findUnique.mockRejectedValue(new Error("Can't reach database server"));
     m.chartPages.mockImplementation(() => pages([stored(1, "ACTIVE")]));
     const Stub = createRoutesStub([
@@ -777,15 +794,116 @@ describe("when the database can't give the plan", () => {
       's-banner[heading="Couldn\'t check your plan"] s-button',
     ) as HTMLElement;
     const reads = m.getPlan.mock.calls.length;
+    const homeReads = m.lastConfirmedPlan.mock.calls.length;
     await act(async () => retry.click());
     await act(() => new Promise((r) => setTimeout(r, 10)));
-    // The re-check, then the shell's and Home's loads again.
+    // The re-check, then the shell's check and Home's load again: Home reads
+    // the last confirmed plan, and the shell the banner's date.
     expect(m.getPlan.mock.calls.slice(reads)).toEqual([
       [SHOP, { recheck: true }],
+      [SHOP],
+    ]);
+    expect(m.lastConfirmedPlan.mock.calls.slice(homeReads)).toEqual([
       [SHOP],
       [SHOP],
     ]);
     expect(headings()).toEqual(shown);
+    expect(el.textContent).toContain("Chart 1");
+  });
+});
+
+// What React Router does at entry.server.tsx's streamTimeout: whatever a
+// loader streams that's still pending then is rejected, so its Await shows
+// the error.
+const STREAM_LIMIT = 5_000;
+const streamed = async (loaded: Promise<object>) =>
+  Object.fromEntries(
+    Object.entries(await loaded).map(([key, value]) => [
+      key,
+      value instanceof Promise
+        ? Promise.race([
+            value,
+            new Promise((_, reject) =>
+              setTimeout(
+                () => reject(new Error("Server Timeout")),
+                STREAM_LIMIT,
+              ),
+            ),
+          ])
+        : value,
+    ]),
+  );
+
+// Regression (#193): a plan check slower than the stream (a slow Partner API,
+// or a welcome-link re-check waiting out the 10-second gap) held Home's data
+// past it, so Home showed its load error.
+describe("when the plan check outlasts the stream", () => {
+  let root: ReturnType<typeof createRoot> | undefined;
+  afterEach(() => {
+    act(() => root?.unmount());
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("shows Home on the last confirmed plan, then on the plan the check settles on", async () => {
+    // Only setTimeout: React schedules on setImmediate.
+    vi.useFakeTimers({ toFake: ["setTimeout"], shouldAdvanceTime: true });
+    m.chartPages.mockImplementation(() => pages([stored(1, "ACTIVE")]));
+    m.lastConfirmedPlan.mockResolvedValue({
+      plan: "free",
+      yearly: false,
+      at: null,
+    });
+    // Shopify answers after 6 seconds; the plan is cached from then on.
+    const pro = { plan: "pro", yearly: false, checkFailed: false };
+    m.getPlan.mockReturnValue(
+      new Promise((resolve) =>
+        setTimeout(() => {
+          m.getPlan.mockResolvedValue(pro);
+          m.lastConfirmedPlan.mockResolvedValue({ ...pro, at: new Date() });
+          resolve(pro);
+        }, 6_000),
+      ),
+    );
+    // The shell's follow-up, through App Bridge's fetch.
+    vi.stubGlobal("fetch", async (url: string) =>
+      followUp.loader({
+        request: new Request(new URL(url, "https://fitted.test")),
+      } as LoaderFunctionArgs),
+    );
+    const Stub = createRoutesStub([
+      {
+        path: "/app",
+        Component: shell.default,
+        HydrateFallback: () => null,
+        loader: (args) => streamed(shell.loader(args as LoaderFunctionArgs)),
+        action: (args) => shell.action(args as ActionFunctionArgs),
+        shouldRevalidate: shell.shouldRevalidate,
+        children: [
+          {
+            index: true,
+            Component: Home,
+            loader: (args) => streamed(loader(args as LoaderFunctionArgs)),
+          },
+        ],
+      },
+    ]);
+    const el = document.createElement("div");
+    document.body.replaceChildren(el);
+    root = createRoot(el);
+    await act(async () => root!.render(<Stub initialEntries={["/app"]} />));
+    const headings = () =>
+      [...el.querySelectorAll("s-banner")].map((b) =>
+        b.getAttribute("heading"),
+      );
+
+    await act(() => vi.advanceTimersByTimeAsync(STREAM_LIMIT));
+    expect(headings()).toEqual(["Free plan: 1 of 3 published charts"]);
+    expect(el.textContent).toContain("Chart 1");
+
+    await act(() => vi.advanceTimersByTimeAsync(1_000));
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+    expect(headings()).toEqual(["Pro plan, $15 a month. No order fees."]);
     expect(el.textContent).toContain("Chart 1");
   });
 });

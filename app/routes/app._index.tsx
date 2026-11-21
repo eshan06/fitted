@@ -20,8 +20,9 @@ import {
 import {
   canShowFitFinder,
   FREE_ACTIVE_CHARTS,
-  getPlan,
+  lastConfirmedPlan,
   type Plan,
+  type PlanState,
 } from "../models/billing.server";
 import { resolveIfStale } from "../models/rules.server";
 
@@ -53,17 +54,20 @@ export type HomeData =
   | { error: { code: string; message: string } };
 
 // ponytail: reads every chart and counts each one's products on every load; page it if stores keep hundreds.
-async function loadHome(admin: Admin, shop: string): Promise<HomeData> {
+async function loadHome(
+  admin: Admin,
+  shop: string,
+  { plan, yearly }: Pick<PlanState, "plan" | "yearly">,
+): Promise<HomeData> {
   try {
     const charts: StoredChart[] = [];
     for await (const page of chartPages(admin)) charts.push(...page);
-    const [counts, coverage, { plan, yearly }, plansUrl] = await Promise.all([
+    const [counts, coverage, plansUrl] = await Promise.all([
       countChartProducts(
         admin,
         charts.map((c) => c.id),
       ),
       productCoverage(admin),
-      getPlan(shop),
       pricingPlansUrl(admin, shop),
     ]);
     const live = charts.filter((c) => c.status === "ACTIVE");
@@ -112,13 +116,17 @@ async function loadHome(admin: Admin, shop: string): Promise<HomeData> {
   }
 }
 
-// Streamed, so Home shows its loading state while Shopify answers.
+// Streamed, so Home shows its loading state while Shopify answers. On the last
+// confirmed plan, so a slow plan check never holds the stream; the shell
+// reloads Home if the check settles on another (app.tsx).
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   void resolveIfStale(session.shop); // the daily reconcile (§6); never rejects
+  const planAtLoad = await lastConfirmedPlan(session.shop);
   return {
     storeUrl: `https://${session.shop}`,
-    home: loadHome(admin, session.shop),
+    planAtLoad,
+    home: loadHome(admin, session.shop, planAtLoad),
   };
 };
 

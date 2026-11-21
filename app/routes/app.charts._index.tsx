@@ -24,7 +24,11 @@ import {
   type StoredChart,
   type Template,
 } from "../models/chart.server";
-import { FREE_ACTIVE_CHARTS, getPlan } from "../models/billing.server";
+import {
+  FREE_ACTIVE_CHARTS,
+  lastConfirmedPlan,
+  type Plan,
+} from "../models/billing.server";
 import { startResolve } from "../models/rules.server";
 import { templateCard } from "../data/templates";
 
@@ -53,17 +57,18 @@ export type ChartList =
   | { error: { code: string; message: string } };
 
 // ponytail: reads every chart and its count on each load; page the list if stores keep hundreds.
-async function loadList(admin: Admin, shop: string): Promise<ChartList> {
+async function loadList(
+  admin: Admin,
+  shop: string,
+  plan: Plan,
+): Promise<ChartList> {
   try {
     const charts: StoredChart[] = [];
     for await (const page of chartPages(admin)) charts.push(...page);
-    const [counts, { plan }] = await Promise.all([
-      countChartProducts(
-        admin,
-        charts.map((c) => c.id),
-      ),
-      getPlan(shop),
-    ]);
+    const counts = await countChartProducts(
+      admin,
+      charts.map((c) => c.id),
+    );
     const active = charts.filter((c) => c.status === "ACTIVE").length;
     const rows = charts
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
@@ -88,10 +93,16 @@ async function loadList(admin: Admin, shop: string): Promise<ChartList> {
   }
 }
 
-// Streamed, so the list shows its loading state while Shopify answers.
+// Streamed, so the list shows its loading state while Shopify answers. On the
+// last confirmed plan, so a slow plan check never holds the stream; the shell
+// reloads the list if the check settles on another (app.tsx).
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
-  return { list: loadList(admin, session.shop) };
+  const planAtLoad = await lastConfirmedPlan(session.shop);
+  return {
+    planAtLoad,
+    list: loadList(admin, session.shop, planAtLoad.plan),
+  };
 };
 
 const fail = (status: number, code: string, message: string) =>

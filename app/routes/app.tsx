@@ -12,6 +12,8 @@ import {
   redirect,
   useFetcher,
   useLoaderData,
+  useMatches,
+  useRevalidator,
   useRouteError,
 } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
@@ -25,33 +27,37 @@ import {
   type PlanState,
 } from "../models/billing.server";
 
-// The banner names the plan, never its price.
-export type PlanCheck = Omit<PlanState, "yearly"> & {
+// The banner names the plan, never its price; PlanSettle compares `yearly`
+// with a screen's. `pending`: the check outlasted the stream, so PlanSettle
+// asks for it again after load.
+export type PlanCheck = PlanState & {
   confirmed: string | null;
+  pending?: true;
 };
 
 // The plan for every admin load (ARCHITECTURE §8), streamed so a slow check
-// never holds up the screen. A screen can read it from here instead of calling
-// getPlan in its own loader; gated actions call getPlan themselves.
+// never holds up the screen. Screens load with the last confirmed plan instead
+// and PlanSettle reloads one that loaded with another; gated actions call
+// getPlan themselves.
 async function planCheck(shop: string): Promise<PlanCheck> {
   let state: PlanState | null = null;
   try {
-    // A check still running when the stream must close (entry.server.tsx)
-    // shows as not answered; the check itself carries on.
+    // A check still running when the stream must close (entry.server.tsx) is
+    // asked for again after load; the check itself carries on.
     state = await Promise.race([getPlan(shop), sleep(SHOW_WITHIN_MS)]);
     if (state && !state.checkFailed) return { ...state, confirmed: null };
     const last = await lastConfirmedPlan(shop);
-    return {
-      plan: state?.plan ?? last.plan,
-      checkFailed: true,
-      confirmed:
-        last.at?.toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-          timeZone: "UTC",
-        }) ?? null,
-    };
+    const confirmed =
+      last.at?.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        timeZone: "UTC",
+      }) ?? null;
+    if (state) return { ...state, confirmed };
+    // Shown as not answered only if the follow-up gets no answer.
+    const { plan, yearly } = last;
+    return { plan, yearly, checkFailed: true, confirmed, pending: true };
   } catch (error) {
     console.log(
       JSON.stringify({
@@ -63,10 +69,13 @@ async function planCheck(shop: string): Promise<PlanCheck> {
       }),
     );
     // The billing module's rule for a plan it can't confirm: Free.
-    return { plan: state?.plan ?? "free", checkFailed: true, confirmed: null };
+    const { plan = "free", yearly = null } = state ?? {};
+    return { plan, yearly, checkFailed: true, confirmed: null };
   }
 }
 const SHOW_WITHIN_MS = 4_000; // under entry.server.tsx's 5-second streamTimeout
+// Past a check's slowest: the 10-second gap, then three 5-second calls.
+const FOLLOW_UP_WITHIN_MS = 30_000;
 const sleep = (ms: number) =>
   new Promise<null>((resolve) => setTimeout(() => resolve(null), ms));
 
@@ -118,12 +127,62 @@ export default function App() {
       <Suspense fallback={null}>
         {/* Only past the stream's limit, which planCheck stays under. */}
         <Await resolve={plan} errorElement={null}>
-          {(check) => <PlanCheckBanner {...check} />}
+          {(check) => <PlanSettle check={check} />}
         </Await>
       </Suspense>
       <Outlet />
     </AppProvider>
   );
+}
+
+// After load: a check still running is asked for again, then a failed one
+// shows the banner, and a screen that loaded with another plan reloads. A
+// screen that renders by plan loads with the last confirmed one and returns it
+// as `planAtLoad`, so a slow check never holds its stream.
+function PlanSettle({ check: streamed }: { check: PlanCheck }) {
+  // The follow-up's answer, for the check it followed up.
+  const [answer, setAnswer] = useState<{ to: PlanCheck; check: PlanCheck }>();
+  const check = answer?.to === streamed ? answer.check : streamed;
+  useEffect(() => {
+    if (!streamed.pending) return;
+    // An answer for an earlier load, landing after a later one's, is dropped.
+    let current = true;
+    // Plain fetch (App Bridge adds the session token): a failed fetcher would
+    // take the screen to the error page.
+    const asked = fetch("/app/plan-check")
+      .then((r) => (r.ok ? (r.json() as Promise<PlanState>) : null))
+      .catch(() => null);
+    void Promise.race([asked, sleep(FOLLOW_UP_WITHIN_MS)]).then((state) => {
+      // No answer in time: not answered, on the last confirmed plan.
+      const settled = state
+        ? { ...state, confirmed: streamed.confirmed }
+        : { ...streamed, pending: undefined };
+      if (current) setAnswer({ to: streamed, check: settled });
+    });
+    return () => {
+      current = false;
+    };
+  }, [streamed]);
+
+  const { revalidate } = useRevalidator();
+  const matches = useMatches();
+  const stale =
+    !check.checkFailed &&
+    matches.some(({ loaderData }) => {
+      const shown = (
+        loaderData as { planAtLoad?: Omit<PlanState, "checkFailed"> } | null
+      )?.planAtLoad;
+      // Free has no price, so its billing period never shows.
+      return (
+        shown &&
+        (shown.plan !== check.plan ||
+          (check.plan !== "free" && shown.yearly !== check.yearly))
+      );
+    });
+  useEffect(() => {
+    if (stale) void revalidate();
+  }, [stale, revalidate]);
+  return check.pending ? null : <PlanCheckBanner {...check} />;
 }
 
 const PLAN_NAMES: Record<Plan, string> = {

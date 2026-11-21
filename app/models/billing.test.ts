@@ -135,10 +135,11 @@ describe("plan gates", () => {
 });
 
 describe("lastConfirmedPlan", () => {
-  it("gives the session's shop's last confirmed plan and when, or Free and null", async () => {
-    findUnique.mockResolvedValueOnce(row("standard", 90));
+  it("gives the session's shop's last confirmed plan, its interval and when, or Free and null", async () => {
+    findUnique.mockResolvedValueOnce(row("standard", 90, "standard", true));
     await expect(billing.lastConfirmedPlan(shop)).resolves.toEqual({
       plan: "standard",
+      yearly: true,
       at: new Date(now.getTime() - 90 * 60_000),
     });
     expect(findUnique).toHaveBeenCalledWith({ where: { shop } });
@@ -146,8 +147,67 @@ describe("lastConfirmedPlan", () => {
     findUnique.mockResolvedValueOnce(null); // never confirmed, or uninstalled
     await expect(billing.lastConfirmedPlan(shop)).resolves.toEqual({
       plan: "free",
+      yearly: null,
       at: null,
     });
+  });
+
+  // What a screen loads with (#193): a check slower than the stream never holds it.
+  it("never waits on a check that's due or running, and starts none", async () => {
+    findUnique.mockResolvedValue(row("standard", 6));
+    fetchMock.mockReturnValue(new Promise(() => {})); // Shopify hangs
+    void billing.getPlan(shop);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledOnce();
+
+    await expect(billing.lastConfirmedPlan(shop)).resolves.toEqual({
+      plan: "standard",
+      yearly: false,
+      at: new Date(now.getTime() - 6 * 60_000),
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the plan last read or confirmed, with no date, when the database can't be read", async () => {
+    findUnique.mockResolvedValueOnce(row("pro", 1, "pro", true));
+    await billing.getPlan(shop);
+
+    findUnique.mockRejectedValue(new Error("Can't reach database server"));
+    await expect(billing.lastConfirmedPlan(shop)).resolves.toEqual({
+      plan: "pro",
+      yearly: true,
+      at: null,
+    });
+    await expect(billing.lastConfirmedPlan(otherShop)).resolves.toEqual({
+      plan: "free",
+      yearly: null,
+      at: null,
+    });
+    const logged = vi.mocked(console.log).mock.calls.map(([line]) => line);
+    expect(JSON.parse(logged[0])).toEqual({
+      level: "error",
+      msg: "Plan read failed", // no check ran
+      shop,
+      route: "billing",
+      error: "Error: Can't reach database server",
+    });
+    expect(logged).toHaveLength(2);
+  });
+
+  // A screen's load is often a shop's first read after a restart.
+  it("remembers what it read for when the database later can't be read", async () => {
+    findUnique.mockResolvedValueOnce(row("standard", 90, "standard", true));
+    await billing.lastConfirmedPlan(shop);
+
+    findUnique.mockRejectedValue(new Error("Can't reach database server"));
+    await expect(billing.lastConfirmedPlan(shop)).resolves.toMatchObject({
+      plan: "standard",
+      yearly: true,
+    });
+    await expect(billing.getPlan(shop)).resolves.toEqual(
+      failed("standard", true),
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
