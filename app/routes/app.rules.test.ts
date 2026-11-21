@@ -414,17 +414,6 @@ describe("saving display rules", () => {
     expect(m.startResolve).not.toHaveBeenCalled();
   });
 
-  it("says so when Shopify refuses the staff member the save itself (403, §15)", async () => {
-    m.saveRules.mockRejectedValue(
-      new AccessDeniedError("Access denied for metafieldsSet field."),
-    );
-    expect(await result(post({ rules: rules(), digest: "d1" }))).toEqual({
-      status: 403,
-      body: answer("product_access"),
-    });
-    expect(m.startResolve).not.toHaveBeenCalled();
-  });
-
   it("passes the library's login redirect on without saving", async () => {
     const login = new Response(null, { status: 401 });
     m.authenticate.mockRejectedValue(login);

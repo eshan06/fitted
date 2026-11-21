@@ -304,23 +304,6 @@ describe("deleting a chart", () => {
     expect(m.startResolve).not.toHaveBeenCalled();
   });
 
-  it("says so when Shopify refuses the staff member the delete itself (403, §15)", async () => {
-    m.deleteChart.mockRejectedValue(
-      new AccessDeniedError("Access denied for metaobjectDelete field."),
-    );
-    expect(await del(CHART)).toMatchObject({
-      data: {
-        error: {
-          code: "product_access",
-          message: expect.stringContaining("Nothing was deleted."),
-        },
-      },
-      init: { status: 403 },
-    });
-    // Refused, so nothing landed and no product moves.
-    expect(m.startResolve).not.toHaveBeenCalled();
-  });
-
   // A failed delete may have landed with its answer lost, so it still resolves.
   it.each([
     ["the access check", () => m.canReadProducts, 0],

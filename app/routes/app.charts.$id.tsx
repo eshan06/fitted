@@ -295,21 +295,18 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         },
         { status: http },
       );
-    const refused = () =>
-      still(
-        403,
-        "product_access",
-        "Publishing or unpublishing a chart changes which products show it, which needs the Products permission on your staff account. Ask the store owner to give you Products access in Settings › Users, then save again.",
-      );
     try {
       // The status moves products onto or off the chart, which the resolve job does with the offline token (§13).
-      if (!(await canReadProducts(admin))) return refused();
+      if (!(await canReadProducts(admin)))
+        return still(
+          403,
+          "product_access",
+          "Publishing or unpublishing a chart changes which products show it, which needs the Products permission on your staff account. Ask the store owner to give you Products access in Settings › Users, then save again.",
+        );
       await (status === "ACTIVE" ? publishChart : unpublishChart)(admin, id);
     } catch (err) {
       if (!(err instanceof AdminApiError)) throw err;
       logShopifyError(session.shop, err);
-      // Shopify refused the staff member's own status change (§15).
-      if (err instanceof AccessDeniedError) return refused();
       return still(502, "status", "Change its status and save again.");
     }
     // Every product follows, `auto: false` charts included (§6).

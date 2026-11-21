@@ -540,29 +540,6 @@ describe("saving a chart", () => {
     expect(m.startResolve).not.toHaveBeenCalled();
   });
 
-  it("says so when Shopify refuses the staff member the publish itself (403, §15)", async () => {
-    m.publishChart.mockRejectedValue(
-      new AccessDeniedError("Access denied for metaobjectUpdate field."),
-    );
-    m.updateChart.mockResolvedValue({
-      ...stored("DRAFT"),
-      updatedAt: "2026-11-19T00:00:09Z",
-    });
-    expect(await result(save("ACTIVE"))).toMatchObject({
-      status: 403,
-      body: {
-        error: {
-          code: "product_access",
-          message: expect.stringMatching(
-            /^Your edits were saved, but the chart is still a Draft\. /,
-          ),
-        },
-        updatedAt: "2026-11-19T00:00:09Z",
-      },
-    });
-    expect(m.startResolve).not.toHaveBeenCalled();
-  });
-
   it("says the status didn't change when product access can't be checked (502)", async () => {
     m.canReadProducts.mockRejectedValueOnce(
       new AdminApiError("Shopify request failed", "raw detail"),
