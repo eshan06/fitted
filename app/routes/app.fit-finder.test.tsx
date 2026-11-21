@@ -754,16 +754,19 @@ const streamed = async (loaded: Promise<object>) =>
 describe("when the plan check outlasts the stream", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("keeps the screen and its edits on the last confirmed plan, then shows the plan the check settles on", async () => {
+  // The screen in the shell on Standard, the last confirmed plan, while
+  // Shopify takes 6 seconds to answer Pro; `settled` runs as it answers.
+  async function openWhileChecking(settled = () => {}) {
     // Only setTimeout: React schedules on setImmediate.
     vi.useFakeTimers({ toFake: ["setTimeout"], shouldAdvanceTime: true });
-    // Shopify answers after 6 seconds; the plan is cached from then on.
+    // The plan is cached from then on.
     const pro = { plan: "pro", yearly: false, checkFailed: false };
     m.getPlan.mockReturnValue(
       new Promise((resolve) =>
         setTimeout(() => {
           m.getPlan.mockResolvedValue(pro);
           m.lastConfirmedPlan.mockResolvedValue({ ...pro, at: new Date() });
+          settled();
           resolve(pro);
         }, 6_000),
       ),
@@ -797,17 +800,107 @@ describe("when the plan check outlasts the stream", () => {
     await act(async () =>
       root!.render(<Stub initialEntries={["/app/fit-finder"]} />),
     );
-
     await act(() => vi.advanceTimersByTimeAsync(STREAM_LIMIT));
     expect(banners()).toEqual([UPGRADE]);
-    await type(noFit(), "Mine");
-
+  }
+  // Past the check's answer, then the screen's reload with its retries.
+  const reloaded = async () => {
     await act(() => vi.advanceTimersByTimeAsync(1_000));
     await settle();
+    await act(() => vi.advanceTimersByTimeAsync(STREAM_LIMIT + 1_000));
+    await settle();
+  };
+  // Two ways the reload fails: Shopify errors (after its retries), or the
+  // stream gives up on it. Each returns the fix.
+  const failures = {
+    fails: () => {
+      store.chartsDown = true;
+      return () => (store.chartsDown = false);
+    },
+    "outlasts the stream": () => {
+      const answer = store.admin.graphql.getMockImplementation()!;
+      store.admin.graphql.mockImplementation(async (...call) => {
+        await new Promise((r) => setTimeout(r, STREAM_LIMIT + 500));
+        return answer(...call);
+      });
+      return () => store.admin.graphql.mockImplementation(answer);
+    },
+  };
+
+  it("keeps the screen and its edits on the last confirmed plan, then shows the plan the check settles on", async () => {
+    await openWhileChecking();
+    await type(noFit(), "Mine");
+
+    await reloaded();
     expect(banners()).toEqual([]);
     expect(text()).toContain("Fit finder type");
     expect(noFit().value).toBe("Mine");
     expect(saveBar()).not.toBeNull();
+  });
+
+  // Regression (#208): the screen's reload for the new plan replaced the
+  // editor, unsaved edits and all, when it failed or brought another save.
+  it.each(Object.keys(failures))(
+    "keeps the edits when the reload for the new plan %s, and shows the plan once they're saved",
+    async (how) => {
+      let fix = () => {};
+      await openWhileChecking(() => {
+        fix = failures[how as keyof typeof failures]();
+      });
+      await type(noFit(), "Mine");
+
+      await reloaded();
+      expect(text()).not.toContain("didn't load");
+      expect(noFit().value).toBe("Mine");
+      expect(saveBar()).not.toBeNull();
+
+      fix();
+      await click("Save");
+      expect(store.value!.text.en.noFit).toBe("Mine");
+      expect(banners()).toEqual([]);
+      expect(text()).toContain("Fit finder type");
+      expect(noFit().value).toBe("Mine");
+      expect(saveBar()).toBeNull();
+    },
+  );
+
+  it("says the failed reload once the held edits are discarded", async () => {
+    await openWhileChecking(() => (store.chartsDown = true));
+    await type(noFit(), "Mine");
+    await reloaded();
+    expect(noFit().value).toBe("Mine");
+
+    await click("Discard");
+    expect(banners()).toContain("Your fit finder settings didn't load");
+    expect(noFit()).toBeNull();
+    expect(saveBar()).toBeNull();
+  });
+
+  it("keeps the edits when the reload brings another save, so saving asks to reload", async () => {
+    await openWhileChecking(() => {
+      store.digest = "other-tab"; // another tab saved
+      store.value = {
+        ...saved(),
+        fitFinder: { ...saved().fitFinder, type: "custom" },
+      };
+    });
+    await type(noFit(), "Mine");
+
+    await reloaded();
+    expect(noFit().value).toBe("Mine");
+    expect(labelled("Advanced").checked).toBe(true);
+    expect(saveBar()).not.toBeNull();
+
+    await click("Save");
+    expect(banners()).toContain(
+      "Fit finder settings changed since you opened them",
+    );
+    expect(noFit().value).toBe("Mine");
+    await click("Reload latest");
+    expect(banners()).toEqual([]);
+    expect(noFit().value).toBe(saved().text.en.noFit);
+    expect(labelled("Custom").checked).toBe(true);
+    expect(saveBar()).toBeNull();
   });
 });
 

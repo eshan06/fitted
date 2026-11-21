@@ -2,7 +2,7 @@
 // through App Bridge's save bar: its settings to `$app.settings`, and each
 // chart's ease and stretch to that chart's `content.fit`. Set up on any plan;
 // it goes live on Pro.
-import { Suspense, useState, type ReactNode } from "react";
+import { Suspense, useEffect, useState, type ReactNode } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import {
   Await,
@@ -309,23 +309,44 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 };
 
+const editorKey = (f: Ok) =>
+  [f.digest, ...f.charts.map((c) => c.updatedAt)].join();
+// A stream that gives up reads as a failed load, not through Await's
+// errorElement, which would draw a held editor anew without its edits. One per
+// load: a promise made in a render that suspends is dropped with that render.
+const settledLoads = new WeakMap<Screen["fitFinder"], Screen["fitFinder"]>();
+const settled = (load: Screen["fitFinder"]) => {
+  if (!settledLoads.has(load))
+    settledLoads.set(
+      load,
+      load.catch(() => ({ error: { code: "load", message: "" } })),
+    );
+  return settledLoads.get(load)!;
+};
+
 // The FitFinder board's states: loading, couldn't load, no charts yet, set up.
 export default function FitFinder() {
   const { fitFinder, storeUrl } = useLoaderData() as Screen;
+  // The editor's data while it holds unsaved edits. A reload that fails, or
+  // brings another save, never replaces them (#208): the editor stays, and a
+  // save meets the conflict check. A reload of the same data still passes,
+  // with its plan.
+  const [held, hold] = useState<Ok | null>(null);
+  const editor = (f: Ok) => (
+    <Editor key={editorKey(f)} loaded={f} storeUrl={storeUrl} onHold={hold} />
+  );
   return (
     <Suspense fallback={<Page body={<Loading />} />}>
-      <Await resolve={fitFinder} errorElement={<Page body={<LoadError />} />}>
+      <Await resolve={settled(fitFinder)}>
         {(f) =>
-          "error" in f ? (
+          held && ("error" in f || editorKey(f) !== editorKey(held)) ? (
+            editor(held)
+          ) : "error" in f ? (
             <Page body={<LoadError />} />
           ) : !f.hasCharts ? (
             <Page body={<Empty />} />
           ) : (
-            <Editor
-              key={[f.digest, ...f.charts.map((c) => c.updatedAt)].join()}
-              loaded={f}
-              storeUrl={storeUrl}
-            />
+            editor(f)
           )
         }
       </Await>
@@ -482,7 +503,15 @@ const errorLine = (id: string, words: string) => (
   </p>
 );
 
-function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
+function Editor({
+  loaded,
+  storeUrl,
+  onHold,
+}: {
+  loaded: Ok;
+  storeUrl: string;
+  onHold: (held: Ok | null) => void;
+}) {
   const fetcher = useFetcher<Answer>();
   const revalidator = useRevalidator();
   const [initial] = useState<Draft>(() => ({
@@ -519,6 +548,12 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
   const errors = notice?.fieldErrors ?? {};
   const marked = Object.keys(errors);
   const code = notice?.error?.code;
+  // Held from the first edit until it's saved or discarded, or Reload latest
+  // drops it.
+  const [reloading, setReloading] = useState(false);
+  const changed = JSON.stringify(draft) !== JSON.stringify(initial);
+  const unsaved = saving || (changed && !answer?.ok && !reloading);
+  useEffect(() => onHold(unsaved ? loaded : null), [unsaved, loaded, onHold]);
   const held = notice?.saved;
   const holds = (k: string) =>
     (held && (k === "settings" ? held.settings : held.charts.includes(k))) ||
@@ -626,7 +661,10 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
     <>
       {code === "conflict" ? (
         <Banner copy={COPY.conflict}>
-          {button("Reload latest", () => revalidator.revalidate())}
+          {button("Reload latest", () => {
+            setReloading(true);
+            revalidator.revalidate();
+          })}
           {button("Cancel", dismiss)}
         </Banner>
       ) : code && held && done.length > 0 && left.length > 0 ? (
@@ -683,10 +721,7 @@ function Editor({ loaded, storeUrl }: { loaded: Ok; storeUrl: string }) {
 
   return (
     <>
-      <SaveBar
-        id="fit-finder-save-bar"
-        open={saving || JSON.stringify(draft) !== JSON.stringify(initial)}
-      >
+      <SaveBar id="fit-finder-save-bar" open={saving || changed}>
         <button
           variant="primary"
           onClick={save}
