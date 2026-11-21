@@ -655,7 +655,7 @@ export function render(root: HTMLElement, g: Guide) {
   const keep = () => {
     if (!sticky || !head) return;
     sticky.style.setProperty("--fitted-top", `${head.offsetHeight}px`);
-    sticky.toggleAttribute("data-scrolled", sticky.scrollTop > 0);
+    sticky.toggleAttribute("data-fitted-scrolled", sticky.scrollTop > 0);
     for (const box of part.querySelectorAll<HTMLElement>(".fitted-scroll"))
       box.classList.toggle(
         "fitted-flat",

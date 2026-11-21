@@ -49,8 +49,9 @@ export const css =
   ".fitted-help a{color:var(--fitted-accent);text-underline-offset:3px}" +
   ".fitted-sk{display:block;height:12px;background:var(--fitted-faint)}" +
   ".fitted-skrow{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:16px;padding:14px 12px;border-bottom:1px solid var(--fitted-faint)}" +
-  // Side drawer: full height at the right.
-  "@media (min-width:601px){" +
+  // Side drawer: full height at the right, on any screen the phones' rules
+  // below leave out.
+  "@media not all and (max-width:600px){" +
   ".fitted-drawer{--fitted-py:24px;--fitted-px:28px;--fitted-fx:28px;width:480px;max-width:100%;height:100%;max-height:100%;margin:0 0 0 auto;box-shadow:-16px 0 48px rgba(0,0,0,.24)}" +
   "}" +
   // Phones: a bottom sheet, with full-width error buttons below the contact
@@ -141,6 +142,12 @@ export const tableCss = /* @__PURE__ */ [
   ".fitted-dialog .fitted-others [aria-pressed=true]{padding:0 13px;border:2px solid var(--fitted-accent);color:var(--fitted-accent)}",
   ".fitted-act{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px}",
   ".fitted-dialog .fitted-act a{font-size:13px;color:var(--fitted-accent);text-underline-offset:3px}",
+  // The drawer's tables take its whole width, which a classic scroll bar cuts
+  // below 420px, with 8px at their cells' sides, as drawn.
+  "@media not all and (max-width:600px){",
+  ".fitted-drawer .fitted-table{min-width:0}",
+  ".fitted-drawer .fitted-table th,.fitted-drawer .fitted-table td{padding-left:8px;padding-right:8px}",
+  "}",
   // The fit line under the link on the product page, in the theme's colors.
   ".fitted-fits{margin:0;font-size:14px;color:color-mix(in srgb,var(--fitted-text) 84%,var(--fitted-bg))}",
   ".fitted-fits strong{color:var(--fitted-accent);font-weight:600}",
@@ -152,7 +159,7 @@ export const tableCss = /* @__PURE__ */ [
   // the two (a header row is 43px tall).
   ".fitted-sticky{scroll-padding-top:calc(var(--fitted-top) + 43px)}",
   ".fitted-sticky .fitted-head{position:sticky;top:0;z-index:2;margin:calc(-1*var(--fitted-py)) calc(-1*var(--fitted-fx)) -12px;padding:var(--fitted-py) var(--fitted-fx) 12px;background:var(--fitted-bg)}",
-  ".fitted-sticky[data-scrolled] .fitted-head{box-shadow:0 1px var(--fitted-line),0 6px 12px -8px rgba(22,22,22,.35)}",
+  ".fitted-sticky[data-fitted-scrolled] .fitted-head{box-shadow:0 1px var(--fitted-line),0 6px 12px -8px rgba(22,22,22,.35)}",
   ".fitted-sticky .fitted-flat{overflow:visible}",
   ".fitted-sticky .fitted-flat thead th{position:sticky;top:var(--fitted-top);z-index:1;background:var(--fitted-bg)}",
   // Phones: tighter tables and tabs, larger switches, and fields iOS won't

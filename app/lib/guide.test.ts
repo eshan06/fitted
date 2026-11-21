@@ -628,11 +628,11 @@ describe("the kept title row and table headers", () => {
   it("notes when the guide has scrolled, and when it's back at the top", () => {
     const { dialog, body } = popup();
     show(data(), body);
-    expect(dialog.hasAttribute("data-scrolled")).toBe(false);
+    expect(dialog.hasAttribute("data-fitted-scrolled")).toBe(false);
     scroll(dialog, 120);
-    expect(dialog.hasAttribute("data-scrolled")).toBe(true);
+    expect(dialog.hasAttribute("data-fitted-scrolled")).toBe(true);
     scroll(dialog, 0);
-    expect(dialog.hasAttribute("data-scrolled")).toBe(false);
+    expect(dialog.hasAttribute("data-fitted-scrolled")).toBe(false);
   });
 
   it("keeps nothing with the setting off, as in the admin preview", () => {
@@ -640,7 +640,7 @@ describe("the kept title row and table headers", () => {
     show(data(), body);
     scroll(dialog, 120);
     expect(dialog.style.getPropertyValue("--fitted-top")).toBe("");
-    expect(dialog.hasAttribute("data-scrolled")).toBe(false);
+    expect(dialog.hasAttribute("data-fitted-scrolled")).toBe(false);
     expect(body.querySelector(".fitted-flat")).toBeNull();
     expect(observer).toBeUndefined();
   });
@@ -651,7 +651,7 @@ describe("the kept title row and table headers", () => {
     show(data(), body);
     expect(dialog.style.getPropertyValue("--fitted-top")).toBe("90px");
     scroll(dialog, 40);
-    expect(dialog.hasAttribute("data-scrolled")).toBe(true);
+    expect(dialog.hasAttribute("data-fitted-scrolled")).toBe(true);
   });
 });
 

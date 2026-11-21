@@ -14,6 +14,8 @@ const dom = (
 const SCREENS = {
   laptop: { width: 1280, height: 800 },
   phone: { width: 390, height: 844 },
+  // Some zoom levels give a width between whole pixels.
+  between: { width: 600.5, height: 800 },
 };
 afterEach(() => {
   dom.setViewport({ width: 1024, height: 768 });
@@ -58,6 +60,23 @@ describe("the popup's style and phone sheet (§7)", () => {
     ]);
   });
 
+  it("puts the drawer at the right at any width the phones' rules leave out, fractions of a pixel included", () => {
+    const { dialog, look } = popup("fitted-drawer", "between");
+    expect(look(dialog, "width", "margin")).toEqual([
+      "480px",
+      "0px 0px 0px auto",
+    ]);
+  });
+
+  it("lets a table take the drawer's whole width, which a classic scroll bar cuts below 420px", () => {
+    const { part, look } = popup("fitted-drawer");
+    expect(look(part("fitted-table"), "min-width")).toEqual(["0"]);
+    // As drawn, the drawer's cells keep 8px at their sides.
+    expect(
+      look(part("fitted-table").querySelector("th")!, "padding-left"),
+    ).toEqual(["8px"]);
+  });
+
   it.each(["", "fitted-drawer"])(
     "shows phones the bottom sheet whatever the popup style (%s)",
     (classes) => {
@@ -71,11 +90,17 @@ describe("the popup's style and phone sheet (§7)", () => {
   );
 
   it("shows phones a card with the page round it when the sheet is off", () => {
-    const { dialog, look } = popup("fitted-nosheet", "phone");
+    const { dialog, look, part } = popup("fitted-nosheet", "phone");
     expect(look(dialog, "width", "height", "margin")).toEqual([
       "calc(100% - 24px)",
       "calc(100% - 84px)",
       "48px auto 36px",
+    ]);
+    // Its title is 26px, as drawn; the sheet's stays 28px.
+    expect(look(part("fitted-title"), "font-size")).toEqual(["26px"]);
+    const sheet = popup("", "phone");
+    expect(sheet.look(sheet.part("fitted-title"), "font-size")).toEqual([
+      "28px",
     ]);
     // The phones' sheet off changes nothing on a laptop.
     const wide = popup("fitted-nosheet");
@@ -112,6 +137,26 @@ describe("the popup's style and phone sheet (§7)", () => {
       expect(look(dialog, "--fitted-py", "--fitted-px", "--fitted-fx")).toEqual(
         pads,
       );
+    },
+  );
+
+  it.each([
+    ["the centered popup", "", "laptop", ["0px", "28px"]],
+    ["the drawer", "fitted-drawer", "laptop", ["28px", "24px"]],
+    ["a phone's sheet", "", "phone", ["16px", "18px"]],
+  ] as const)(
+    "takes the footer and the kept title row to the sides of %s, and past its padding",
+    (_, classes, screen, [side, top]) => {
+      const { part, look } = popup(`fitted-sticky ${classes}`, screen);
+      // happy-dom leaves calc() unworked: -1 times the padding.
+      const less = (n: string) => `calc(-1*${n})`;
+      expect(look(part("fitted-foot"), "margin-left", "padding-left")).toEqual([
+        less(side),
+        side,
+      ]);
+      expect(
+        look(part("fitted-head"), "margin-left", "margin-top", "padding-top"),
+      ).toEqual([less(side), less(top), top]);
     },
   );
 
@@ -195,6 +240,8 @@ describe("the kept title row and table header (§7)", () => {
     ]);
     expect(look(part("fitted-scroll"), "overflow")).toEqual(["visible"]);
     expect(look(th, "position", "top")).toEqual(["sticky", "90px"]);
+    // Separate borders, which stay with a kept header as collapsed ones don't.
+    expect(look(part("fitted-table"), "border-collapse")).toEqual(["separate"]);
     // Focus never lands under the two.
     expect(look(dialog, "scroll-padding-top")).toEqual(["calc(90px + 43px)"]);
   });
@@ -222,7 +269,7 @@ describe("the kept title row and table header (§7)", () => {
     );
     // A fresh popup: happy-dom keeps the styles it read for an element.
     const scrolled = popup("fitted-sticky");
-    scrolled.dialog.toggleAttribute("data-scrolled", true);
+    scrolled.dialog.toggleAttribute("data-fitted-scrolled", true);
     expect(
       scrolled.look(scrolled.part("fitted-head"), "box-shadow")[0],
     ).toMatch(/^0 1px var\(--fitted-line\)|^0 1px color-mix/);

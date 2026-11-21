@@ -579,7 +579,7 @@ describe("loader", () => {
     expect(text.className).toBe("fitted-link");
   });
 
-  it("gives the link the theme's colors, for the Button style's hover, whatever the popup's", async () => {
+  it("gives the link the theme's colors as the pointer comes, for the Button style's hover, whatever the popup's", async () => {
     const theme =
       "background-color: rgb(18, 18, 18); color: rgb(240, 240, 240)";
     const custom = { text: "#202223", accent: "#b3301c", bg: "#fffaf0" };
@@ -591,12 +591,23 @@ describe("loader", () => {
     await tick();
     const root = document.querySelector<HTMLElement>(".fitted-guide")!;
     const link = root.querySelector<HTMLElement>(".fitted-link")!;
+    const hover = () => link.dispatchEvent(new Event("pointerenter"));
+    hover();
     const ink = "rgb(240, 240, 240)";
     const own = { text: ink, accent: ink, bg: "rgb(18, 18, 18)" };
     expect(painted(link)).toEqual(own);
     link.click();
     expect(painted(root)).toEqual(custom);
     expect(painted(link)).toEqual(own);
+    // The theme switches to light, as a dark-mode toggle would.
+    (document.body.firstElementChild as HTMLElement).style.cssText =
+      "background-color: rgb(250, 250, 250); color: rgb(18, 18, 18)";
+    hover();
+    expect(painted(link)).toEqual({
+      text: "rgb(18, 18, 18)",
+      accent: "#2448a8",
+      bg: "rgb(250, 250, 250)",
+    });
   });
 
   it.each([

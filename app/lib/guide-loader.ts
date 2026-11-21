@@ -74,17 +74,17 @@ function setup(block: HTMLElement, load: Load) {
   };
   // The styles go in once, from any guide that prints them: markup from
   // before they moved into the snippet has none, so it leaves them to the next.
-  // The link keeps the theme's colors, whatever the popup's, for the Button
-  // style's hover.
   const reveal = () => {
     const fitted = document.querySelector<HTMLTemplateElement>(
       "template[data-fitted-css]",
     );
     if (fitted && !document.getElementById("fitted-css"))
       document.head.append(styles(fitted, g));
-    colors(link, themeColors(block));
     link.style.display = "";
   };
+  // The Button style's hover fills with the theme's colors, whatever the
+  // popup's, read again as the pointer comes, as a theme can change them.
+  link.addEventListener("pointerenter", () => colors(link, themeColors(block)));
   // The merchant's words, else the extension's.
   const words = link.querySelector("span");
   if (words && g.label) words.textContent = g.label;
