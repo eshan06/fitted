@@ -147,6 +147,7 @@ beforeEach(() => {
   );
 });
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });
@@ -874,9 +875,27 @@ describe("discarding an image the editor let go", () => {
     // Nor can its issue time be moved on: the sig covers it.
     const now = String(Math.floor(Date.now() / 1000));
     const moved = await drop({ id: FILE, sig: sig.replace(/^\d+/, now) });
-    vi.useRealTimers();
-    expect(moved.status).toBe(403);
+    expect(moved).toMatchObject({
+      status: 403,
+      body: { error: { code: "not_fitted" } },
+    });
     expect(admin.graphql).not.toHaveBeenCalled();
+  });
+
+  it("deletes nothing when the charts can't be read, logging why (502)", async () => {
+    const sig = await sigFor();
+    admin.graphql.mockResolvedValue(Response.json({ errors: [{}] }));
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    const answer = drop({ id: FILE, sig });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await answer).toEqual({
+      status: 502,
+      body: {
+        error: { code: "shopify", message: "Shopify didn't delete the image." },
+      },
+    });
+    expect(deletes()).toHaveLength(0);
+    expect(JSON.parse(logs.at(-1)!)).toMatchObject({ shop: SHOP });
   });
 
   it("never deletes an image a chart has saved, on any page of charts (409)", async () => {
