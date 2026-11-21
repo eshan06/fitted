@@ -31,6 +31,8 @@ import {
 } from "../models/billing.server";
 import { startResolve } from "../models/rules.server";
 import { templateCard } from "../data/templates";
+import { TemplatePicker } from "../components/chart-table/TemplatePicker";
+import "../components/chart-table/editor.css";
 
 const ROUTE = "app.charts._index";
 const logShopifyError = (shop: string, err: AdminApiError) =>
@@ -207,6 +209,7 @@ const SR_ONLY = {
 
 export default function SizeCharts() {
   const { list } = useLoaderData<typeof loader>();
+  const [picking, setPicking] = useState(false);
   const [exp, setExp] = useState<Export>({ state: "idle", count: 0 });
   const busy = exp.state === "busy";
   // A ref, so two clicks before the next render still start one export.
@@ -221,9 +224,14 @@ export default function SizeCharts() {
   };
   return (
     <s-page heading="Size charts">
-      <s-button slot="primary-action" variant="primary" href="/app/charts/new">
+      <s-button
+        slot="primary-action"
+        variant="primary"
+        onClick={() => setPicking(true)}
+      >
         New chart
       </s-button>
+      {picking && <TemplatePicker onClose={() => setPicking(false)} />}
       {/* Only over a list of charts, as drawn: not while loading, empty or failed. */}
       <Suspense fallback={null}>
         <Await resolve={list} errorElement={<></>}>
@@ -278,7 +286,13 @@ export default function SizeCharts() {
         )}
         <Suspense fallback={<Loading />}>
           <Await resolve={list} errorElement={<LoadError />}>
-            {(l) => ("error" in l ? <LoadError /> : <Charts {...l} />)}
+            {(l) =>
+              "error" in l ? (
+                <LoadError />
+              ) : (
+                <Charts {...l} onNew={() => setPicking(true)} />
+              )
+            }
           </Await>
         </Suspense>
       </s-stack>
@@ -436,7 +450,11 @@ function DeleteChart({
   );
 }
 
-export function Charts({ rows, limit }: Extract<ChartList, { rows: unknown }>) {
+export function Charts({
+  rows,
+  limit,
+  onNew,
+}: Extract<ChartList, { rows: unknown }> & { onNew: () => void }) {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("all");
   const [target, setTarget] = useState<Row | null>(null);
@@ -466,7 +484,7 @@ export function Charts({ rows, limit }: Extract<ChartList, { rows: unknown }>) {
             <s-button variant="primary" href="/app/import">
               Import from Kiwi
             </s-button>
-            <s-button href="/app/charts/new">New chart</s-button>
+            <s-button onClick={onNew}>New chart</s-button>
           </s-stack>
           <s-paragraph color="subdued">
             <em>Measure twice, publish once.</em>
