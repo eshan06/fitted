@@ -308,10 +308,10 @@ describe("loading display rules", () => {
   it("answers 403 saying so when Shopify refuses the staff member the charts or rules (§15)", async () => {
     const denied = () =>
       new AccessDeniedError("Access denied for metaobjects field.");
-    async function* refused(): AsyncGenerator<never> {
+    m.chartPages.mockImplementationOnce(async function* () {
+      yield [];
       throw denied();
-    }
-    m.chartPages.mockImplementationOnce(refused);
+    });
     m.getRules.mockRejectedValueOnce(denied());
     for (let i = 0; i < 2; i++)
       expect(await result(load())).toEqual({
