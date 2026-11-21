@@ -1,7 +1,7 @@
 // The Editor board (Fitted canvas): name, template, status, and the tabs: the
 // size tables with their tools, units and notes, How to measure, Fit tips and
-// Media, saved through App Bridge's save bar. A later step adds the live
-// preview.
+// Media, saved through App Bridge's save bar, with the live preview beside
+// them.
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
   Link,
@@ -15,6 +15,7 @@ import type { FieldErrors, Template } from "../../models/chart.server";
 import { ChartTable } from "./ChartTable";
 import { PasteDialog } from "./PasteDialog";
 import { MeasureTab, useMeasureImage } from "./MeasureTab";
+import { ChartPreview, type Look } from "../chart-preview/ChartPreview";
 import { VIDEO_ERROR, videoSite } from "../../lib/video";
 import * as model from "./model";
 import "./editor.css";
@@ -74,8 +75,13 @@ export function Editor(props: {
   historyMissed?: boolean;
   /** The stored How to measure image's address. */
   imageUrl?: string;
+  /** What the live preview draws with besides the draft. */
+  look?: Look;
 }) {
-  const { handle, invalid } = props;
+  const { invalid } = props;
+  // A reload mints a new handle (the loader), but the visit keeps its first,
+  // so a create retried after one still lands on one chart (§5).
+  const [handle] = useState(props.handle);
   const fetcher = useFetcher<Answer>();
   const revalidator = useRevalidator();
   const navigate = useNavigate();
@@ -407,7 +413,7 @@ export function Editor(props: {
           Discard
         </button>
       </SaveBar>
-      <div className="editor">
+      <div className="editor split">
         {((props.historyMissed && !answer) || answer?.historyMissed) && (
           <s-banner
             tone="warning"
@@ -833,6 +839,14 @@ export function Editor(props: {
           )}
           {drawing.input}
         </section>
+        {props.look && (
+          <ChartPreview
+            draft={draft}
+            look={props.look}
+            image={drawing.url}
+            tab={tab}
+          />
+        )}
       </div>
     </s-page>
   );

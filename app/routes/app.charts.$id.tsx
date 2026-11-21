@@ -1,5 +1,6 @@
 // The chart editor's reads and saves (ARCHITECTURE §5, §8, §15): load a chart
-// or mint a new chart's handle, then create, update, publish or unpublish it.
+// or mint a new chart's handle, with what the live preview draws with (§7,
+// §9), then create, update, publish or unpublish it.
 import { randomInt } from "node:crypto";
 import { useEffect, useState } from "react";
 import type {
@@ -29,6 +30,7 @@ import {
   ChartValidationError,
   TEMPLATES,
   countActiveCharts,
+  countChartProducts,
   createChart,
   getChart,
   publishChart,
@@ -40,8 +42,12 @@ import {
   FREE_ACTIVE_CHARTS,
   canPublishChart,
   getPlan,
+  lastConfirmedPlan,
+  type Plan,
 } from "../models/billing.server";
+import { SettingsReadWriteError, getSettings } from "../models/settings.server";
 import { startResolve } from "../models/rules.server";
+import { guideWords } from "../models/guide-words.server";
 import {
   createdSummary,
   recordVersion,
@@ -64,7 +70,7 @@ const gid = (id: string | undefined) => {
   if (!id || !/^\d{1,20}$/.test(id)) throw notFound();
   return `gid://shopify/Metaobject/${id}`;
 };
-const logShopifyError = (shop: string, err: AdminApiError) =>
+const logShopifyError = (shop: string, err: Error & { detail?: string }) =>
   console.log(
     JSON.stringify({
       level: "error",
@@ -75,23 +81,49 @@ const logShopifyError = (shop: string, err: AdminApiError) =>
     }),
   );
 
+// What the live preview draws with besides the chart, as the storefront
+// reads it: the Appearance settings and the plan (§7, §8).
+async function lookOf(admin: Admin, plan: Plan) {
+  const { settings, primaryLocale } = await getSettings(admin);
+  return { settings, primaryLocale, plan, words: guideWords };
+}
+
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
-  if (params.id === "new") {
-    // Minted once per visit and resent on every retry, so a retried create lands on one chart (§5).
-    const a = "abcdefghijklmnopqrstuvwxyz0123456789";
-    const handle = `c-${Array.from({ length: 10 }, () => a[randomInt(36)]).join("")}`;
-    // The template picker's choice; anything else starts blank (§5).
-    const t = new URL(request.url).searchParams.get("template");
-    const template = TEMPLATES.find((x) => x === t) ?? "blank";
-    return { mode: "new" as const, handle, template };
-  }
-  const id = gid(params.id);
+  const isNew = params.id === "new";
+  const id = isNew ? "" : gid(params.id);
+  // The preview's Find my size is Pro's, so the shell reloads the editor
+  // when a check confirms another plan (§8).
+  const planAtLoad = await lastConfirmedPlan(session.shop);
   try {
-    return { mode: "edit" as const, stored: await getChart(admin, id) };
+    if (isNew) {
+      // Minted once per visit and resent on every retry, so a retried create lands on one chart (§5).
+      const a = "abcdefghijklmnopqrstuvwxyz0123456789";
+      const handle = `c-${Array.from({ length: 10 }, () => a[randomInt(36)]).join("")}`;
+      // The template picker's choice; anything else starts blank (§5).
+      const t = new URL(request.url).searchParams.get("template");
+      const template = TEMPLATES.find((x) => x === t) ?? "blank";
+      const look = await lookOf(admin, planAtLoad.plan);
+      return { mode: "new" as const, handle, template, planAtLoad, look };
+    }
+    const [stored, look, counts] = await Promise.all([
+      getChart(admin, id),
+      lookOf(admin, planAtLoad.plan),
+      countChartProducts(admin, [id]),
+    ]);
+    return {
+      mode: "edit" as const,
+      stored,
+      planAtLoad,
+      look: { ...look, products: counts[id] },
+    };
   } catch (err) {
     if (err instanceof ChartNotFoundError) throw notFound();
-    if (!(err instanceof AdminApiError)) throw err;
+    if (
+      !(err instanceof AdminApiError) &&
+      !(err instanceof SettingsReadWriteError)
+    )
+      throw err;
     logShopifyError(session.shop, err);
     return data(
       {
@@ -323,6 +355,7 @@ export default function ChartEditor() {
         key="new"
         initial={blankDraft(loaded.template)}
         handle={loaded.handle}
+        look={loaded.look}
       />
     );
   const s = loaded.mode === "edit" ? loaded.stored : undefined;
@@ -338,6 +371,7 @@ export default function ChartEditor() {
         invalid={s.fieldErrors}
         historyMissed={missed}
         imageUrl={s.measureImageUrl}
+        look={loaded.mode === "edit" ? loaded.look : undefined}
       />
     );
   const invalid = loaded.mode === "edit" ? loaded.stored.fieldErrors : null;

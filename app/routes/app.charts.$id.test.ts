@@ -7,10 +7,17 @@ import {
   ChartValidationError,
   type ChartInput,
 } from "../models/chart.server";
+import {
+  SettingsReadWriteError,
+  defaultSettings,
+} from "../models/settings.server";
 
 const m = vi.hoisted(() => ({
   authenticate: vi.fn(),
   getPlan: vi.fn(),
+  lastConfirmedPlan: vi.fn(),
+  getSettings: vi.fn(),
+  countChartProducts: vi.fn(),
   getChart: vi.fn(),
   createChart: vi.fn(),
   updateChart: vi.fn(),
@@ -38,6 +45,11 @@ vi.mock("../models/chart-history.server", async (orig) => ({
 vi.mock("../models/billing.server", async (orig) => ({
   ...(await orig<typeof import("../models/billing.server")>()),
   getPlan: m.getPlan,
+  lastConfirmedPlan: m.lastConfirmedPlan,
+}));
+vi.mock("../models/settings.server", async (orig) => ({
+  ...(await orig<typeof import("../models/settings.server")>()),
+  getSettings: m.getSettings,
 }));
 // The real validator and errors; only the Shopify calls are stubbed.
 vi.mock("../models/chart.server", async (orig) => ({
@@ -48,6 +60,7 @@ vi.mock("../models/chart.server", async (orig) => ({
   publishChart: m.publishChart,
   unpublishChart: m.unpublishChart,
   countActiveCharts: m.countActiveCharts,
+  countChartProducts: m.countChartProducts,
 }));
 const { action, loader, shouldRevalidate } = await import("./app.charts.$id");
 
@@ -139,6 +152,20 @@ beforeEach(() => {
   m.countActiveCharts.mockResolvedValue(2);
   m.pricingPlansUrl.mockResolvedValue(PLANS);
   m.getChart.mockResolvedValue(stored("DRAFT"));
+  m.getSettings.mockResolvedValue({
+    settings: defaultSettings("en"),
+    digest: null,
+    shopId: "gid://shopify/Shop/1",
+    primaryLocale: "en",
+  });
+  m.lastConfirmedPlan.mockResolvedValue({
+    plan: "pro",
+    yearly: false,
+    at: null,
+  });
+  m.countChartProducts.mockResolvedValue({
+    [ID]: { count: 148, atLeast: false },
+  });
   m.updateChart.mockResolvedValue(stored("DRAFT"));
   m.canReadProducts.mockResolvedValue(true);
   m.startResolve.mockResolvedValue(undefined);
@@ -158,8 +185,68 @@ describe("loading the editor", () => {
     expect(await load("42")).toEqual({
       mode: "edit",
       stored: stored("ACTIVE"),
+      planAtLoad: { plan: "pro", yearly: false, at: null },
+      look: {
+        settings: defaultSettings("en"),
+        primaryLocale: "en",
+        plan: "pro",
+        words: expect.objectContaining({ title: "Size guide" }),
+        products: { count: 148, atLeast: false },
+      },
     });
     expect(m.getChart).toHaveBeenCalledWith(admin, ID);
+  });
+
+  it("reads the preview's settings and plan for the session's shop only (§7, §8)", async () => {
+    await load("42");
+    expect(m.getSettings).toHaveBeenCalledWith(admin);
+    expect(m.lastConfirmedPlan).toHaveBeenCalledWith(SHOP);
+    expect(m.countChartProducts).toHaveBeenCalledWith(admin, [ID]);
+    expect(await load("new")).toMatchObject({
+      mode: "new",
+      planAtLoad: { plan: "pro", yearly: false, at: null },
+      look: {
+        settings: defaultSettings("en"),
+        primaryLocale: "en",
+        plan: "pro",
+        words: expect.objectContaining({ title: "Size guide" }),
+      },
+    });
+    expect(m.countChartProducts).toHaveBeenCalledTimes(1);
+  });
+
+  it("answers 502 when the preview's settings or count can't be read", async () => {
+    const failed = {
+      status: 502,
+      body: {
+        mode: "error",
+        error: {
+          code: "shopify",
+          message:
+            "Fitted couldn't reach your store just now. Nothing about the chart has changed, and shoppers still see it as before.",
+        },
+      },
+    };
+    m.getSettings.mockRejectedValue(
+      new SettingsReadWriteError("Admin API returned 503: null"),
+    );
+    expect(await result(load("42"))).toEqual(failed);
+    expect(await result(load("new"))).toEqual(failed);
+    expect(JSON.parse(logs[0])).toMatchObject({
+      level: "error",
+      shop: SHOP,
+      msg: "Admin API returned 503: null",
+    });
+    m.getSettings.mockResolvedValue({
+      settings: defaultSettings("en"),
+      digest: null,
+      shopId: "gid://shopify/Shop/1",
+      primaryLocale: "en",
+    });
+    m.countChartProducts.mockRejectedValue(
+      new AdminApiError("Shopify request failed", "count detail"),
+    );
+    expect(await result(load("42"))).toEqual(failed);
   });
 
   it("mints a fresh handle for a new chart", async () => {
