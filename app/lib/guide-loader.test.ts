@@ -548,6 +548,26 @@ describe("loader", () => {
     ).toBe("");
   });
 
+  it("takes Fitted's styles from a guide that prints them, so markup from before they moved there can't leave the page without them", async () => {
+    document.getElementById("fitted-css")?.remove();
+    // A quick view's product section cached from before the styles moved
+    // into the snippet.
+    const old = block(valid).replace(
+      /<template data-fitted-css>[^<]*<\/template>/,
+      "",
+    );
+    expect(old).not.toContain("data-fitted-css");
+    document.body.innerHTML = old;
+    await tick();
+    expect(shown(document.querySelector<HTMLElement>(".fitted-link")!)).toBe(
+      true,
+    );
+    expect(document.getElementById("fitted-css")).toBeNull();
+    document.body.insertAdjacentHTML("beforeend", block(valid));
+    await tick();
+    expect(document.getElementById("fitted-css")?.textContent).toBe(css);
+  });
+
   it("sets up blocks the theme adds after the page loaded", async () => {
     document.body.innerHTML = "";
     const section = document.createElement("div");

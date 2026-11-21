@@ -2,6 +2,10 @@
 
 Dated entries, newest first. Grep for the area you touch; never read front to back.
 
+## 2026-11-20 Storefront: the guide's styles ride in the snippet, not loader.js
+
+`snippets/guide.liquid` prints Fitted's CSS for the link, the popup and its loading and error states (3.4 KB) as text in an inert `<template>`, and loader.js copies it into its one `<style>`, ahead of the font and the merchant's CSS as before. That took loader.js from 9,944 to about 6,600 of the 10,000 bytes the theme check allows with nothing changing on the page, and a test holds it to 9,000. Moving the popup's code into guide.js instead would leave the loading and error states unstyled while guide.js loads. The cost: each guide's markup carries the CSS (about 1 KB gzipped per page) that cached loader.js carried before. ARCHITECTURE §9.
+
 ## 2026-11-20 Storefront: guide.js before an open, only for the fit line
 
 loader.js loads guide.js as an app block's own product page loads when the shopper has answers kept for its chart, so "From your fit finder answers: M fits you" can show before any open. Computing it needs findSize, which loader.js's 10 KB can't hold. Everyone else still loads guide.js on first open. ARCHITECTURE §9, §10.
