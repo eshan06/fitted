@@ -450,6 +450,23 @@ describe("chart editor screen", () => {
     ]);
   });
 
+  it("keeps the visit's first handle when the screen reloads, so a retried create lands on one chart", async () => {
+    // A reload, such as the shell's after a plan check, mints a new handle.
+    const { sent, loader } = await open(
+      [
+        { mode: "new", handle: "c-first" },
+        { mode: "new", handle: "c-second" },
+      ],
+      [],
+      "/app/charts/new",
+    );
+    await act(async () => nav("/app/charts/new", { replace: true }));
+    await settle();
+    expect(loader).toHaveBeenCalledTimes(2);
+    await createJeans();
+    expect(sent).toEqual([expect.objectContaining({ handle: "c-first" })]);
+  });
+
   it("starts from the picked template, and creates it with the merchant's numbers", async () => {
     const { sent } = await open(
       [{ mode: "new", handle: "c-abc", template: "tops" }],

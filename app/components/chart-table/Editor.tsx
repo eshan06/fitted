@@ -78,7 +78,10 @@ export function Editor(props: {
   /** What the live preview draws with besides the draft. */
   look?: Look;
 }) {
-  const { handle, invalid } = props;
+  const { invalid } = props;
+  // A reload mints a new handle (the loader), but the visit keeps its first,
+  // so a create retried after one still lands on one chart (§5).
+  const [handle] = useState(props.handle);
   const fetcher = useFetcher<Answer>();
   const revalidator = useRevalidator();
   const navigate = useNavigate();
