@@ -377,8 +377,9 @@ describe("size guide Liquid", () => {
       inert?.[1],
       "Copy css from app/lib/guide-css.ts into snippets/guide.liquid",
     ).toBe(css);
-    // A template's text is HTML, which would read these as markup.
-    expect(css).not.toMatch(/[<&]/);
+    // Shopify reads the snippet as Liquid and then the template's text as
+    // HTML, which would take these as markup.
+    expect(css).not.toMatch(/[<&]|\{[{%]/);
   });
 
   it("prints the tab's styles only with the tab", () => {

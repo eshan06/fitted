@@ -17,15 +17,14 @@ export type Load = (
   url: string,
 ) => Promise<{ render: typeof render; fits: typeof fits }>;
 
-// Fitted's styles, which the snippet prints inert so this file carries none,
-// the uploaded font, then the merchant's CSS as written, so it wins ties with
-// Fitted's rules.
-const styles = (block: HTMLElement, g: Guide) =>
+// Fitted's styles, which each guide's snippet prints inert so this file
+// carries none, the uploaded font, then the merchant's CSS as written, so it
+// wins ties with Fitted's rules.
+const styles = (fitted: HTMLTemplateElement, g: Guide) =>
   Object.assign(document.createElement("style"), {
     id: "fitted-css",
     textContent:
-      (block.querySelector<HTMLTemplateElement>("template[data-fitted-css]")
-        ?.content.textContent ?? "") +
+      fitted.content.textContent +
       (g.font
         ? `@font-face{font-family:fitted-font;src:url("${g.font}");font-display:swap}`
         : "") +
@@ -69,9 +68,14 @@ function setup(block: HTMLElement, load: Load) {
   if (!shown) return;
   const page = place === "main" && !popup;
   if (page) block.dataset.page = "";
+  // The styles go in once, from any guide that prints them: markup from
+  // before they moved into the snippet has none, so it leaves them to the next.
   const reveal = () => {
-    if (!document.getElementById("fitted-css"))
-      document.head.append(styles(block, g));
+    const fitted = document.querySelector<HTMLTemplateElement>(
+      "template[data-fitted-css]",
+    );
+    if (fitted && !document.getElementById("fitted-css"))
+      document.head.append(styles(fitted, g));
     link.style.display = "";
   };
   // The merchant's words and icon, else the extension's word and the ruler.
