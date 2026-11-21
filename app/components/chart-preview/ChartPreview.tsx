@@ -148,6 +148,7 @@ function Frame(props: { guide: Guide; name: string; tab: string; size: Size }) {
     <div ref={box} className="frame" style={{ height: height * scale }}>
       <iframe
         title="Size guide preview"
+        sandbox="allow-same-origin"
         tabIndex={-1}
         srcDoc={PAGE}
         onLoad={(e) => setDoc(e.currentTarget.contentDocument)}

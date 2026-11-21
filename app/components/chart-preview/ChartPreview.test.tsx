@@ -220,6 +220,9 @@ describe("live preview", () => {
     s.text.en.header = "Find your fit";
     s.popup.rtl = true;
     s.css = ".fitted-title{letter-spacing:2px}";
+    s.popup.font = {
+      fileUrl: "https://cdn.shopify.com/s/files/1/brand.woff2",
+    };
     await open({ draft: draft(), look: look({ settings: s }), tab: "table" });
     const block = frame().querySelector<HTMLElement>(".fitted-guide")!;
     expect(block.style.getPropertyValue("--fitted-accent")).toBe("#aa0000");
@@ -234,6 +237,13 @@ describe("live preview", () => {
       ".fitted-title{letter-spacing:2px}",
     );
     expect(document.head.innerHTML).not.toContain("letter-spacing:2px");
+    // The uploaded font, with the frame's own standing in while it loads.
+    expect(frame().querySelector("style")?.textContent).toContain(
+      '@font-face{font-family:fitted-font;src:url("https://cdn.shopify.com/s/files/1/brand.woff2")',
+    );
+    expect(block.style.getPropertyValue("--fitted-font")).toMatch(
+      /^fitted-font,system-ui/,
+    );
   });
 
   it("writes the merchant's words as text, never as HTML", async () => {

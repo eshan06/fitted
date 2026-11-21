@@ -158,7 +158,11 @@ beforeEach(() => {
     shopId: "gid://shopify/Shop/1",
     primaryLocale: "en",
   });
-  m.lastConfirmedPlan.mockResolvedValue({ plan: "pro", at: null });
+  m.lastConfirmedPlan.mockResolvedValue({
+    plan: "pro",
+    yearly: false,
+    at: null,
+  });
   m.countChartProducts.mockResolvedValue({
     [ID]: { count: 148, atLeast: false },
   });
@@ -181,6 +185,7 @@ describe("loading the editor", () => {
     expect(await load("42")).toEqual({
       mode: "edit",
       stored: stored("ACTIVE"),
+      planAtLoad: { plan: "pro", yearly: false, at: null },
       look: {
         settings: defaultSettings("en"),
         primaryLocale: "en",
@@ -198,6 +203,7 @@ describe("loading the editor", () => {
     expect(m.countChartProducts).toHaveBeenCalledWith(admin, [ID]);
     expect(await load("new")).toMatchObject({
       mode: "new",
+      planAtLoad: { plan: "pro", yearly: false, at: null },
       look: {
         settings: defaultSettings("en"),
         primaryLocale: "en",

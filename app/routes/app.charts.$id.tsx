@@ -43,6 +43,7 @@ import {
   canPublishChart,
   getPlan,
   lastConfirmedPlan,
+  type Plan,
 } from "../models/billing.server";
 import { SettingsReadWriteError, getSettings } from "../models/settings.server";
 import { startResolve } from "../models/rules.server";
@@ -83,12 +84,9 @@ const logShopifyError = (
   );
 
 // What the live preview draws with besides the chart, as the storefront
-// reads it: the Appearance settings and the last confirmed plan (§7, §8).
-async function look(admin: Admin, shop: string) {
-  const [{ settings, primaryLocale }, { plan }] = await Promise.all([
-    getSettings(admin),
-    lastConfirmedPlan(shop),
-  ]);
+// reads it: the Appearance settings and the plan (§7, §8).
+async function look(admin: Admin, plan: Plan) {
+  const { settings, primaryLocale } = await getSettings(admin);
   return { settings, primaryLocale, plan };
 }
 
@@ -96,6 +94,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const isNew = params.id === "new";
   const id = isNew ? "" : gid(params.id);
+  // The preview's Find my size is Pro's, so the shell reloads the editor
+  // when a check confirms another plan (§8).
+  const planAtLoad = await lastConfirmedPlan(session.shop);
   try {
     if (isNew) {
       // Minted once per visit and resent on every retry, so a retried create lands on one chart (§5).
@@ -104,17 +105,24 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       // The template picker's choice; anything else starts blank (§5).
       const t = new URL(request.url).searchParams.get("template");
       const template = TEMPLATES.find((x) => x === t) ?? "blank";
-      const preview = await look(admin, session.shop);
-      return { mode: "new" as const, handle, template, look: preview };
+      const preview = await look(admin, planAtLoad.plan);
+      return {
+        mode: "new" as const,
+        handle,
+        template,
+        planAtLoad,
+        look: preview,
+      };
     }
     const [stored, preview, counts] = await Promise.all([
       getChart(admin, id),
-      look(admin, session.shop),
+      look(admin, planAtLoad.plan),
       countChartProducts(admin, [id]),
     ]);
     return {
       mode: "edit" as const,
       stored,
+      planAtLoad,
       look: { ...preview, products: counts[id] },
     };
   } catch (err) {
