@@ -50,6 +50,8 @@
     "others": "See other sizes:",
     "add": "Add {size} to cart",
     "privacy": "How we use your measurements",
-    "privacy_note": "We use these measurements to suggest a size for this product."
+    "privacy_note": "We use these measurements to suggest a size for this product.",
+    "fits_from": "From your fit finder answers: {fits}",
+    "fits": "{size} fits you"
   }
 }

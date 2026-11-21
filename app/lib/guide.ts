@@ -1,10 +1,10 @@
 // The shopper's size guide (ARCHITECTURE §9): re-validates the chart Liquid
 // printed and draws the Size chart tab: the US/UK/EU/AU and in/cm switches,
 // the tables, row select, and the footer that picks the size in the theme's
-// product form; the How to measure tab; and on Pro the Find my size tab
-// (§10). No dependencies and no React, so the admin preview (#23) can draw
-// with it too. Chart words reach the page only as text nodes and attribute
-// values, never as HTML.
+// product form; the How to measure tab; and on Pro the Find my size tab and
+// the product page's fit line (§10). No dependencies and no React, so the
+// admin preview (#23) can draw with it too. Chart words reach the page only
+// as text nodes and attribute values, never as HTML.
 import { COLOR, FONT_URL, cssProblem } from "./appearance";
 import {
   convert,
@@ -274,6 +274,164 @@ function track(root: HTMLElement, type: string, size?: string) {
   }
 }
 
+// The canvas's accent. "Match my theme" keeps it where it reads 4.5:1 on the
+// theme's background and on its tint, and takes the theme's text color elsewhere.
+const ACCENT = "#2448a8";
+const WHITE = "rgb(255, 255, 255)";
+const BLACK = "rgb(18, 18, 18)";
+// WCAG relative luminance of an rgb() or rgba() color (its alpha aside), and
+// -1 for any other syntax.
+const luminance = (c: string) => {
+  const rgb = /^rgba?\(([\d.]+), ([\d.]+), ([\d.]+)/.exec(c)?.slice(1);
+  if (!rgb) return -1;
+  const [r, g, b] = rgb.map((n) => {
+    const s = +n / 255;
+    return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+const ratio = (a: number, b: number) =>
+  (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+/**
+ * The theme's text color where the block sits, and the nearest opaque
+ * background behind it (rgba() and "/ a" carry an alpha below 1). A section
+ * painted with a gradient has no background color, so the text can come from
+ * one look and the background from another: if they don't read 4.5:1, the
+ * text becomes near-black or white, whichever reads on that background.
+ */
+export function themeColors(block: HTMLElement) {
+  let bg = WHITE;
+  for (let el: Element | null = block; el; el = el.parentElement) {
+    const c = getComputedStyle(el).backgroundColor;
+    if (c && !/rgba|\/|transparent/.test(c)) {
+      bg = c;
+      break;
+    }
+  }
+  let text = getComputedStyle(block).color;
+  const [ink, paper] = [luminance(text), luminance(bg)];
+  if (ink >= 0 && paper >= 0 && ratio(ink, paper) < 4.5)
+    text = ratio(paper, luminance(BLACK)) > ratio(paper, 1) ? BLACK : WHITE;
+  return { text, accent: paper >= 0.65 ? ACCENT : text, bg };
+}
+
+// The extension's word k, from the data-t-* attributes Liquid printed on root.
+const say = (root: HTMLElement, k: string) =>
+  root.dataset[`t${k[0].toUpperCase()}${k.slice(1)}`] ?? "";
+// Each row's size word. A merge in the size column gives every row it covers
+// the merge's word, so they read as one size.
+const sizesOf = (g: Guide, tb: Grid) => {
+  const keys = tb.rows.map(
+    (r) => g.words[`${tb.id}.${r.id}.${tb.columns[0].id}`] ?? "",
+  );
+  for (const m of tb.merges ?? []) {
+    const r = tb.rows.findIndex((x) => x.id === m.row);
+    if (m.col === tb.columns[0].id) keys.fill(keys[r], r, r + m.rows);
+  }
+  return keys;
+};
+// The units a measurement can be answered in: lengths, or weights.
+const kinds = (g: Guide, c: Measure): Unit[] =>
+  ["in", "cm"].includes(c.unit ?? g.unit) ? ["in", "cm"] : ["lb", "kg"];
+const FITS = ["snug", "regular", "relaxed"];
+type Found = NonNullable<ReturnType<typeof fitOf>>;
+/** Where Find my size keeps a chart's answers until the tab closes (§10). */
+export const keyOf = (g: Guide) =>
+  isStr(g.raw.handle) ? `fitted:answers:${g.raw.handle}` : "";
+// The answers kept for this chart that Find my size's fields can take back: a
+// number in the measurement's kind of unit, one of the table's rows, a fit,
+// or one of the question's options.
+function kept(g: Guide, { table, fit }: Found) {
+  const a: Answers = {};
+  const col = (c: string) => table.columns.find((x) => x.id === c) as Measure;
+  try {
+    const k = keyOf(g);
+    const json: unknown = JSON.parse((k && sessionStorage.getItem(k)) || "{}");
+    const old = isObj(json) ? json : {};
+    for (const q of fit.questions) {
+      const v = old[q.id];
+      if (
+        q.kind === "measure"
+          ? isObj(v) &&
+            isNum(v.value) &&
+            kinds(g, col(q.col)).includes(v.unit as Unit)
+          : q.kind === "usual_size"
+            ? table.rows.some((r) => r.id === v)
+            : q.kind === "fit"
+              ? FITS.includes(v as string)
+              : q.options.some((o) => o.id === v)
+      )
+        a[q.id] = v as Answers[string];
+    }
+  } catch {
+    // No storage, or nothing readable there: no answers.
+  }
+  return a;
+}
+// findSize's pick once every question a shopper can't skip has an answer, and
+// one besides a fit when the finder asks more; null until then.
+function result(g: Guide, fit: Fit, a: Answers) {
+  const qs = fit.questions;
+  const other = qs.filter((q) => q.kind !== "fit");
+  const ready =
+    (!other.length || other.some((q) => a[q.id] !== undefined)) &&
+    qs.every(
+      (q) => (q.kind === "measure" && q.optional) || a[q.id] !== undefined,
+    );
+  return ready ? findSize({ unit: g.unit, tables: g.tables, fit }, a) : null;
+}
+// The styles of render's parts and the fit line, before the loader's, whose
+// merchant CSS must win ties with these.
+function addCss() {
+  if (document.getElementById("fitted-table-css")) return;
+  const style = h("style", { id: "fitted-table-css" }, tableCss);
+  const loader = document.getElementById("fitted-css");
+  if (loader) loader.before(style);
+  else document.head.append(style);
+}
+
+/**
+ * The fit line (§10): "From your fit finder answers: M fits you" under the
+ * link of each app block on its product page (the loader marks it data-page),
+ * from the answers kept for its chart, while they give a size and the Result
+ * screen's "Show the result on the product page button" is on. Its colors are
+ * the theme's, as the link's are. The loader calls it once a page with kept
+ * answers loads, and Find my size after each answer. Nothing leaves the
+ * browser.
+ */
+export function fits() {
+  const blocks = document.querySelectorAll<HTMLElement>(
+    ".fitted-guide[data-page]",
+  );
+  for (const block of blocks) {
+    block.querySelector(":scope > .fitted-fits")?.remove();
+    const json = block.querySelector("script[data-fitted]")?.textContent;
+    const g = parseGuide(json);
+    const found = g && fitOf(g);
+    const body = block.querySelector<HTMLElement>(".fitted-body");
+    const link = block.querySelector(":scope > .fitted-link");
+    if (!found || !body || !link) continue;
+    const ff = isObj(g.raw.fitFinder) ? g.raw.fitFinder : {};
+    const r = ff.onButton !== false && result(g, found.fit, kept(g, found));
+    const i = r ? found.table.rows.findIndex((x) => x.id === r.row) : -1;
+    const size = sizesOf(g, found.table)[i] ?? "";
+    if (!size.trim()) continue;
+    const [a, b = ""] = say(body, "fits_from").split("{fits}");
+    const [c, d = ""] = say(body, "fits").split("{size}");
+    const line = h(
+      "p",
+      { class: "fitted-fits" },
+      a,
+      h("strong", {}, c, size, d),
+      b,
+    );
+    for (const [k, v] of Object.entries(themeColors(block)))
+      line.style.setProperty(`--fitted-${k}`, v);
+    addCss();
+    link.after(line);
+  }
+}
+
 /**
  * Draws the Size chart tab into root, whose data-t-* attributes hold the
  * extension's words. Returns sync, which records the open and picks the size
@@ -281,15 +439,8 @@ function track(root: HTMLElement, type: string, size?: string) {
  * open.
  */
 export function render(root: HTMLElement, g: Guide) {
-  // Before the loader's styles, whose merchant CSS must win ties with these.
-  if (!document.getElementById("fitted-table-css")) {
-    const style = h("style", { id: "fitted-table-css" }, tableCss);
-    const loader = document.getElementById("fitted-css");
-    if (loader) loader.before(style);
-    else document.head.append(style);
-  }
-  const t = (k: string) =>
-    root.dataset[`t${k[0].toUpperCase()}${k.slice(1)}`] ?? "";
+  addCss();
+  const t = (k: string) => say(root, k);
   // An extension word with {size} in it, split around the size.
   const around = (k: string, size: Node | string) => {
     const [a, b = ""] = t(k).split("{size}");
@@ -330,18 +481,6 @@ export function render(root: HTMLElement, g: Guide) {
   let pick = ""; // the picked size, as a key of labels
   const labels = new Map<string, string>(); // size key to its label as written
   const across = new Map<Element, string[]>(); // cells merged across rows: their sizes
-  // Each row's size word. A merge in the size column gives every row it
-  // covers the merge's word, so they read as one size.
-  const sizesOf = (tb: Grid) => {
-    const keys = tb.rows.map((r) =>
-      word(`${tb.id}.${r.id}.${tb.columns[0].id}`),
-    );
-    for (const m of tb.merges ?? []) {
-      const r = tb.rows.findIndex((x) => x.id === m.row);
-      if (m.col === tb.columns[0].id) keys.fill(keys[r], r, r + m.rows);
-    }
-    return keys;
-  };
 
   const table = (tb: Grid): Kid[] => {
     const own = systems(tb);
@@ -351,7 +490,7 @@ export function render(root: HTMLElement, g: Guide) {
     );
     const wrap = (c: Column) =>
       tb.wrap?.includes(c.id) ? "fitted-wrap" : undefined;
-    const keys = sizesOf(tb);
+    const keys = sizesOf(g, tb);
     // Cells a merge covers are left out, except its first shown cell, which
     // holds the merge's top-left cell across the shown columns it spans.
     const spans = new Map<string, { c: number; rows: number; cols: number }>();
@@ -610,8 +749,8 @@ export function render(root: HTMLElement, g: Guide) {
     const { table: ft, fit } = found;
     const qs = fit.questions;
     const measured = qs.flatMap((q) => (q.kind === "measure" ? [q] : []));
-    const key = isStr(g.raw.handle) && `fitted:answers:${g.raw.handle}`;
-    const sized = sizesOf(ft);
+    const key = keyOf(g);
+    const sized = sizesOf(g, ft);
     const size = (row: string) =>
       sized[ft.rows.findIndex((r) => r.id === row)] ?? "";
     const label = (c: string) => word(`${ft.id}.${c}`);
@@ -621,13 +760,13 @@ export function render(root: HTMLElement, g: Guide) {
     // A measurement as typed, like "35.5", "35,5 cm" or "90cm": in the unit
     // it names, else the units the guide shows. Leaving the field writes it
     // out, so the shopper sees which unit Fitted read.
-    const kinds = (c: Measure): Unit[] =>
-      ["in", "cm"].includes(c.unit ?? g.unit) ? ["in", "cm"] : ["lb", "kg"];
     const typed = (text: string, c: Measure) => {
       const m = /^\s*(\d+(?:[.,]\d+)?)\s*(.*)$/.exec(text);
       const value = Number(m?.[1].replace(",", "."));
       if (!m || !isNum(value)) return undefined;
-      const unit = kinds(c).find((u) => [u, norm(t(u))].includes(norm(m[2])));
+      const unit = kinds(g, c).find((u) =>
+        [u, norm(t(u))].includes(norm(m[2])),
+      );
       return { value, unit: unit ?? shown(c.unit ?? g.unit, c.convert, sys) };
     };
     const written = (m: { value: number; unit: Unit }) =>
@@ -644,7 +783,7 @@ export function render(root: HTMLElement, g: Guide) {
       const words = word(`fit.${q.id}`);
       const opts =
         q.kind === "fit"
-          ? ["snug", "regular", "relaxed"].map((v) => [v, t(v)])
+          ? FITS.map((v) => [v, t(v)])
           : q.kind === "choice"
             ? q.options.map((o) => [o.id, word(`fit.${q.id}.${o.id}`)])
             : null;
@@ -710,26 +849,15 @@ export function render(root: HTMLElement, g: Guide) {
       return a;
     };
     // What another product with this chart left, back in the fields.
-    try {
-      const old: unknown = JSON.parse(
-        (key && sessionStorage.getItem(key)) || "{}",
-      );
-      for (const q of isObj(old) ? qs : []) {
-        const a = (old as Record<string, unknown>)[q.id];
-        for (const el of fields(q))
-          if (q.kind === "measure")
-            el.value =
-              isObj(a) &&
-              isNum(a.value) &&
-              kinds(col(q.col)).includes(a.unit as Unit)
-                ? written(a as { value: number; unit: Unit })
-                : "";
-          else if (el.type === "radio")
-            (el as HTMLInputElement).checked = el.value === a;
-          else el.value = isStr(a) ? a : "";
-      }
-    } catch {
-      // No storage, or nothing readable there: the fields start empty.
+    const old = kept(g, found);
+    for (const q of qs) {
+      const a = old[q.id];
+      if (a === undefined) continue;
+      for (const el of fields(q))
+        if (isObj(a)) el.value = written(a);
+        else if (el.type === "radio")
+          (el as HTMLInputElement).checked = el.value === a;
+        else el.value = a;
     }
 
     // Why findSize picked what it did, in the extension's words.
@@ -1022,23 +1150,14 @@ export function render(root: HTMLElement, g: Guide) {
       } catch {
         // No storage: the answers last until the page goes.
       }
-      // Every answer a shopper can't skip, and one besides a fit to go on
-      // when the finder asks one.
-      const other = qs.filter((q) => q.kind !== "fit");
-      const ready =
-        (!other.length || other.some((q) => a[q.id] !== undefined)) &&
-        qs.every(
-          (q) => (q.kind === "measure" && q.optional) || a[q.id] !== undefined,
-        );
-      const r = ready
-        ? findSize({ unit: g.unit, tables: g.tables, fit }, a)
-        : null;
+      const r = result(g, fit, a);
       // A result unlike the last one told.
       if (tell && r && (r.row ?? "") !== sent) {
         sent = r.row ?? "";
         track(root, "fit_result", r.row ?? undefined);
       }
       show(r);
+      fits(); // the product page's line follows the kept answers
     };
     // The result follows a field the shopper leaves, a pick, or Enter, which
     // never submits. No submit, input or change reaches a theme's form around
@@ -1109,7 +1228,13 @@ export function render(root: HTMLElement, g: Guide) {
     seg("sections", "fitted-tab", names, "chart", t, "fitted-tabs");
   root.replaceChildren(...[tabs, sized, finder].filter((k) => !!k));
   draw();
+  // "Show only the Find my size link" (§7): Liquid words the link Find my
+  // size, and every open starts there.
+  const popup = isObj(g.raw.popup) ? g.raw.popup : {};
+  const fitFirst = !!finder && popup.fitOnly === true;
   const sync = () => {
+    if (fitFirst && tabs)
+      tabs.querySelector<HTMLElement>('[data-fitted-tab="fit"]')?.click();
     track(root, "open");
     choose(current() || pick);
     redo();

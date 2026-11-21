@@ -5,48 +5,19 @@
 // has the guide pick the size the product form shows. It applies the
 // Appearance settings (§7) to the link and the popup.
 import { css } from "./guide-css";
-import { parseGuide, type Guide, type render } from "./guide";
+import {
+  keyOf,
+  parseGuide,
+  themeColors,
+  type fits,
+  type Guide,
+  type render,
+} from "./guide";
 
-export type Load = (url: string) => Promise<{ render: typeof render }>;
+export type Load = (
+  url: string,
+) => Promise<{ render: typeof render; fits: typeof fits }>;
 
-// The canvas's accent. "Match my theme" keeps it where it reads 4.5:1 on the
-// theme's background and on its tint, and takes the theme's text color elsewhere.
-const ACCENT = "#2448a8";
-const WHITE = "rgb(255, 255, 255)";
-const BLACK = "rgb(18, 18, 18)";
-// WCAG relative luminance of an rgb() or rgba() color (its alpha aside), and
-// -1 for any other syntax.
-const luminance = (c: string) => {
-  const rgb = /^rgba?\(([\d.]+), ([\d.]+), ([\d.]+)/.exec(c)?.slice(1);
-  if (!rgb) return -1;
-  const [r, g, b] = rgb.map((n) => {
-    const s = +n / 255;
-    return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
-  });
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-};
-const ratio = (a: number, b: number) =>
-  (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
-// The theme's text color where the block sits, and the nearest opaque
-// background behind it (rgba() and "/ a" carry an alpha below 1). A section
-// painted with a gradient has no background color, so the text can come from
-// one look and the background from another: if they don't read 4.5:1, the
-// text becomes near-black or white, whichever reads on that background.
-function themeColors(block: HTMLElement) {
-  let bg = WHITE;
-  for (let el: Element | null = block; el; el = el.parentElement) {
-    const c = getComputedStyle(el).backgroundColor;
-    if (c && !/rgba|\/|transparent/.test(c)) {
-      bg = c;
-      break;
-    }
-  }
-  let text = getComputedStyle(block).color;
-  const [ink, paper] = [luminance(text), luminance(bg)];
-  if (ink >= 0 && paper >= 0 && ratio(ink, paper) < 4.5)
-    text = ratio(paper, luminance(BLACK)) > ratio(paper, 1) ? BLACK : WHITE;
-  return { text, accent: paper >= 0.65 ? ACCENT : text, bg };
-}
 // Fitted's styles, the uploaded font, then the merchant's CSS as written, so
 // it wins ties with Fitted's rules.
 const styles = (g: Guide) =>
@@ -95,7 +66,8 @@ function setup(block: HTMLElement, load: Load) {
         : g.page
       : place !== "featured" || g.featured;
   if (!shown) return;
-  if (place === "main" && !popup) block.dataset.page = "";
+  const page = place === "main" && !popup;
+  if (page) block.dataset.page = "";
   const reveal = () => {
     if (!document.getElementById("fitted-css")) document.head.append(styles(g));
     link.style.display = "";
@@ -130,19 +102,28 @@ function setup(block: HTMLElement, load: Load) {
   let state: "idle" | "loading" | "ready" = "idle";
   let tries = 0;
   let sync = () => {}; // once drawn, picks the size the product form shows
+  // guide.js, loaded once: on the first open, or before it for the fit line.
+  // A failed import() stays failed for its URL, so each try asks for its own.
+  let guide: ReturnType<Load> | undefined;
+  const get = () => {
+    if (guide) return guide;
+    const url = new URL(block.dataset.url ?? "", location.href);
+    url.searchParams.set("try", `${++tries}`);
+    return (guide = load(url.href).catch((e) => {
+      guide = undefined;
+      throw e;
+    }));
+  };
   const attempt = () => {
     state = "loading";
     if (body.contains(document.activeElement))
       dialog.querySelector<HTMLElement>("[data-fitted-close]")?.focus();
     dialog.setAttribute("aria-busy", "true");
     show("loading");
-    // A failed import() stays failed for its URL, so each try asks for its own.
-    const url = new URL(block.dataset.url ?? "", location.href);
-    url.searchParams.set("try", `${++tries}`);
-    load(url.href)
-      .then((guide) => {
+    get()
+      .then((m) => {
         body.replaceChildren();
-        sync = guide.render(body, g);
+        sync = m.render(body, g);
         state = "ready";
       })
       .catch(() => {
@@ -169,6 +150,17 @@ function setup(block: HTMLElement, load: Load) {
     else if (state === "ready") sync();
     dialog.showModal();
   });
+  // On its product page, answers kept for this chart show what fits them
+  // under the link (§10), so guide.js loads now to draw it.
+  try {
+    if (page && sessionStorage.getItem(keyOf(g)))
+      get().then(
+        (m) => m.fits(),
+        () => {},
+      );
+  } catch {
+    // No storage: no kept answers.
+  }
   if (place !== "after") return reveal();
   // The link after the merchant's selector waits for that element, which a
   // script may draw later, and goes back after it whenever the theme redraws
