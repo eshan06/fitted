@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type Admin,
+  AccessDeniedError,
   AdminApiError,
   adminGraphql,
   canReadProducts,
   pricingPlansUrl,
+  streamed,
 } from "./admin.server";
 
 const ok = (body: unknown) => new Response(JSON.stringify(body));
@@ -150,6 +152,32 @@ describe("adminGraphql", () => {
     const r = await run(adminGraphql(admin, "q"));
     expect((r.error as Error).message).not.toContain("secret");
   });
+
+  it("names a staff member Shopify refuses, and never retries the refusal (§15)", async () => {
+    const denied = {
+      message: "Access denied for productsCount field.",
+      extensions: { code: "ACCESS_DENIED" },
+    };
+    // How the client throws it, the body as some answer it, and an HTTP 403.
+    const thrown = Object.assign(new Error("GraphQL Client: denied"), {
+      body: { errors: { graphQLErrors: [denied] } },
+    });
+    for (const [step, raw] of [
+      [thrown, "GraphQL Client: denied"],
+      [{ data: null, errors: [denied] }, "Access denied for productsCount"],
+      [new Response(null, { status: 403 }), "HTTP 403"],
+    ] as const) {
+      const { admin, graphql } = adminWith(step, { data: { ok: true } });
+      const r = await run(adminGraphql(admin, "q", {}, { retry: true }));
+      expect(r.error).toBeInstanceOf(AccessDeniedError);
+      // Every route that treats a failed call alike still catches it.
+      expect(r.error).toBeInstanceOf(AdminApiError);
+      expect((r.error as AdminApiError).detail).toContain(raw);
+      // A resolve job shows it as its reason, so it's plain and names no one.
+      expect((r.error as Error).message).toBe("Shopify refused access");
+      expect(graphql).toHaveBeenCalledTimes(1);
+    }
+  });
 });
 
 describe("canReadProducts", () => {
@@ -177,6 +205,8 @@ describe("canReadProducts", () => {
     );
     const body = { data: null, errors: [denied] };
     expect(await canReadProducts(adminWith(body).admin)).toBe(false);
+    const forbidden = new Response(null, { status: 403 });
+    expect(await canReadProducts(adminWith(forbidden).admin)).toBe(false);
   });
 
   it("throws an AdminApiError when the check itself fails, and passes re-auth on", async () => {
@@ -198,6 +228,59 @@ describe("canReadProducts", () => {
     }
     const reauth = new Response(null, { status: 401 });
     await expect(canReadProducts(adminWith(reauth).admin)).rejects.toBe(reauth);
+  });
+});
+
+describe("streamed", () => {
+  // What the library throws once Shopify refuses a revoked token: its bounce
+  // page for a document request, else a 401 the browser retries.
+  const revoked = () =>
+    new Response(null, {
+      status: 302,
+      headers: { Location: "/auth/session-token" },
+    });
+  const first = { graphql: vi.fn() } as unknown as Admin;
+  const fresh = { graphql: vi.fn() } as unknown as Admin;
+
+  it("signs in again and loads once more when the staff member's token was revoked (§3)", async () => {
+    const signIn = vi.fn(async () => ({ admin: fresh }));
+    const load = vi.fn(async (admin: Admin) => {
+      if (admin === first) throw revoked();
+      return "loaded";
+    });
+    await expect(streamed(first, signIn, load)).resolves.toBe("loaded");
+    expect(load.mock.calls.map(([a]) => a)).toEqual([first, fresh]);
+    expect(signIn).toHaveBeenCalledTimes(1);
+  });
+
+  it("signs in again only for a revoked token, and tries only once more", async () => {
+    const signIn = vi.fn(async () => ({ admin: fresh }));
+    const failed = new AdminApiError("Shopify request failed", "HTTP 503");
+    await expect(
+      streamed(first, signIn, async () => {
+        throw failed;
+      }),
+    ).rejects.toBe(failed);
+    expect(signIn).not.toHaveBeenCalled();
+
+    const again = revoked();
+    const load = vi.fn(async () => {
+      throw again;
+    });
+    await expect(streamed(first, signIn, load)).rejects.toBe(again);
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves no unhandled rejection when the page was left and nothing reads the load", async () => {
+    vi.useRealTimers();
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    void streamed(first, vi.fn(), async () => {
+      throw new Error("unexpected");
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    process.off("unhandledRejection", unhandled);
+    expect(unhandled).not.toHaveBeenCalled();
   });
 });
 

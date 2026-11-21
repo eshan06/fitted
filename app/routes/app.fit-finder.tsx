@@ -15,9 +15,12 @@ import { SaveBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import {
   type Admin,
+  AccessDeniedError,
   AdminApiError,
   pricingPlansUrl,
+  streamed,
 } from "../models/admin.server";
+import { NO_ACCESS, NoAccess } from "../components/no-access";
 import {
   ChartConflictError,
   ChartNotFoundError,
@@ -113,7 +116,9 @@ const listCharts = async (admin: Admin) => {
 
 // Only Pro's live line names how many products show the picked chart, and
 // only a chart with saved questions is live. A failed count is that line's
-// own error, so the rest of the screen stays and can be saved.
+// own error, so the rest of the screen stays and can be saved. One Shopify
+// refuses this staff member shows the screen's no-access message (§15)
+// instead, since the line's Try again could never fix it.
 async function liveCounts(
   admin: Admin,
   shop: string,
@@ -128,7 +133,8 @@ async function liveCounts(
       live.map((c) => c.id),
     );
   } catch (err) {
-    if (!(err instanceof AdminApiError)) throw err;
+    if (!(err instanceof AdminApiError) || err instanceof AccessDeniedError)
+      throw err;
     log(shop, err);
     return "error" as const;
   }
@@ -151,7 +157,9 @@ async function load(admin: Admin, shop: string, plan: Plan) {
     ))
       throw err;
     log(shop, err);
-    return refusal("load");
+    return err instanceof AccessDeniedError
+      ? { error: NO_ACCESS }
+      : refusal("load");
   }
 }
 type Ok = Exclude<Awaited<ReturnType<typeof load>>, { error: unknown }>;
@@ -188,7 +196,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const planAtLoad = await lastConfirmedPlan(session.shop);
   return {
     planAtLoad,
-    fitFinder: load(admin, session.shop, planAtLoad.plan),
+    fitFinder: streamed(
+      admin,
+      () => authenticate.admin(request),
+      (a) => load(a, session.shop, planAtLoad.plan),
+    ),
     storeUrl: `https://${session.shop}`,
   };
 };
@@ -342,7 +354,9 @@ export default function FitFinder() {
           held && ("error" in f || editorKey(f) !== editorKey(held)) ? (
             editor(held)
           ) : "error" in f ? (
-            <Page body={<LoadError />} />
+            <Page
+              body={f.error?.code === "access" ? <NoAccess /> : <LoadError />}
+            />
           ) : !f.hasCharts ? (
             <Page body={<Empty />} />
           ) : (

@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AdminApiError } from "../models/admin.server";
+import { AccessDeniedError, AdminApiError } from "../models/admin.server";
 import {
   RulesConflictError,
   RulesPlanError,
@@ -302,6 +302,45 @@ describe("loading display rules", () => {
       shop: SHOP,
       route: "app.rules",
       detail: "HTTP 503",
+    });
+  });
+
+  it("answers 403 saying so when Shopify refuses the staff member the charts or rules (§15)", async () => {
+    const denied = () =>
+      new AccessDeniedError("Access denied for metaobjects field.");
+    m.chartPages.mockImplementationOnce(async function* () {
+      yield [];
+      throw denied();
+    });
+    m.getRules.mockRejectedValueOnce(denied());
+    for (let i = 0; i < 2; i++)
+      expect(await result(load())).toEqual({
+        status: 403,
+        body: {
+          mode: "error",
+          error: {
+            code: "access",
+            message: expect.stringContaining("You need Products access"),
+          },
+        },
+      });
+    expect(JSON.parse(logs[0])).toMatchObject({
+      shop: SHOP,
+      route: "app.rules",
+      detail: "Access denied for metaobjects field.",
+    });
+  });
+
+  it("still loads without the counts and names Shopify refuses staff without Products access", async () => {
+    const denied = new AccessDeniedError("Access denied for products field.");
+    m.countProducts.mockRejectedValue(denied);
+    m.countChartProducts.mockRejectedValue(denied);
+    m.pickedNames.mockRejectedValue(denied);
+    expect(await load()).toMatchObject({
+      mode: "edit",
+      products: null,
+      counts: null,
+      names: {},
     });
   });
 

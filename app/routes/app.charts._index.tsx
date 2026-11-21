@@ -11,10 +11,13 @@ import {
 import { authenticate } from "../shopify.server";
 import {
   type Admin,
+  AccessDeniedError,
   AdminApiError,
   canReadProducts,
   pricingPlansUrl,
+  streamed,
 } from "../models/admin.server";
+import { NO_ACCESS, NoAccess } from "../components/no-access";
 import {
   ChartNotFoundError,
   chartPages,
@@ -88,6 +91,7 @@ async function loadList(
   } catch (err) {
     if (!(err instanceof AdminApiError)) throw err;
     logShopifyError(shop, err);
+    if (err instanceof AccessDeniedError) return { error: NO_ACCESS };
     const message = "Fitted didn't get an answer from your store.";
     return { error: { code: "shopify", message } };
   }
@@ -101,7 +105,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const planAtLoad = await lastConfirmedPlan(session.shop);
   return {
     planAtLoad,
-    list: loadList(admin, session.shop, planAtLoad.plan),
+    list: streamed(
+      admin,
+      () => authenticate.admin(request),
+      (a) => loadList(a, session.shop, planAtLoad.plan),
+    ),
   };
 };
 
@@ -278,7 +286,15 @@ export default function SizeCharts() {
         )}
         <Suspense fallback={<Loading />}>
           <Await resolve={list} errorElement={<LoadError />}>
-            {(l) => ("error" in l ? <LoadError /> : <Charts {...l} />)}
+            {(l) =>
+              !("error" in l) ? (
+                <Charts {...l} />
+              ) : l.error.code === "access" ? (
+                <NoAccess />
+              ) : (
+                <LoadError />
+              )
+            }
           </Await>
         </Suspense>
       </s-stack>

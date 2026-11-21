@@ -682,6 +682,23 @@ describe("chart editor screen", () => {
     expect(byLabel("XS, Bust").value).toBe("31–32");
   });
 
+  it("tells staff without Products access so, and tries again", async () => {
+    const { loader } = await open([
+      { mode: "error", error: { code: "access", message: "x" } },
+      stored(),
+    ]);
+    expect(document.querySelector("s-banner")?.getAttribute("heading")).toBe(
+      "You need Products access",
+    );
+    expect(document.body.textContent).toContain(
+      "Fitted can't show this page without it. Ask the store owner to add it to your account in Settings › Users.",
+    );
+    expect(document.body.textContent).not.toContain("Still not working?");
+    await click("Try again");
+    expect(loader).toHaveBeenCalledTimes(2);
+    expect(byLabel("XS, Bust").value).toBe("31–32");
+  });
+
   it("shows the loading state while it tries again", async () => {
     let finish = () => {};
     const slow = new Promise<void>((r) => (finish = r)).then(() => stored());

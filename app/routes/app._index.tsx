@@ -7,10 +7,13 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import {
   type Admin,
+  AccessDeniedError,
   AdminApiError,
   pricingPlansUrl,
+  streamed,
   themeEditorUrl,
 } from "../models/admin.server";
+import { NO_ACCESS, NoAccess } from "../components/no-access";
 import {
   chartPages,
   countChartProducts,
@@ -111,6 +114,7 @@ async function loadHome(
         detail: err.detail,
       }),
     );
+    if (err instanceof AccessDeniedError) return { error: NO_ACCESS };
     const message = "Fitted didn't get an answer from your store.";
     return { error: { code: "shopify", message } };
   }
@@ -126,7 +130,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return {
     storeUrl: `https://${session.shop}`,
     planAtLoad,
-    home: loadHome(admin, session.shop, planAtLoad),
+    home: streamed(
+      admin,
+      () => authenticate.admin(request),
+      (a) => loadHome(a, session.shop, planAtLoad),
+    ),
   };
 };
 
@@ -147,7 +155,15 @@ export default function Home() {
         <s-paragraph color="subdued">Your size guides at a glance</s-paragraph>
         <Suspense fallback={<Loading />}>
           <Await resolve={home} errorElement={<LoadError />}>
-            {(h) => ("error" in h ? <LoadError /> : <Dashboard {...h} />)}
+            {(h) =>
+              !("error" in h) ? (
+                <Dashboard {...h} />
+              ) : h.error.code === "access" ? (
+                <NoAccess />
+              ) : (
+                <LoadError />
+              )
+            }
           </Await>
         </Suspense>
       </s-stack>

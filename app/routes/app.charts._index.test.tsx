@@ -4,7 +4,7 @@ import { createRoot } from "react-dom/client";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { createRoutesStub } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AdminApiError } from "../models/admin.server";
+import { AccessDeniedError, AdminApiError } from "../models/admin.server";
 import { ChartNotFoundError, type StoredChart } from "../models/chart.server";
 
 const m = vi.hoisted(() => ({
@@ -182,6 +182,45 @@ describe("loading the list", () => {
       shop: SHOP,
       route: "app.charts._index",
       detail: "HTTP 503 raw text",
+    });
+  });
+
+  it("signs in again and lists the charts when Shopify revoked the staff member's token (§3)", async () => {
+    const fresh = { graphql: vi.fn() };
+    m.authenticate
+      .mockResolvedValueOnce({ admin, session: { shop: SHOP } })
+      .mockResolvedValueOnce({ admin: fresh, session: { shop: SHOP } });
+    const chart = stored(1, "ACTIVE", "2026-11-14T10:00:00Z");
+    m.chartPages.mockImplementation((a: unknown) =>
+      a === admin
+        ? (async function* () {
+            yield [];
+            // The library's bounce once it cleared the revoked token.
+            throw new Response(null, { status: 302 });
+          })()
+        : pages([chart]),
+    );
+    expect(await load()).toMatchObject({ rows: [{ id: chart.id }] });
+    expect(m.countChartProducts).toHaveBeenCalledWith(fresh, [chart.id]);
+  });
+
+  it("answers a count Shopify refuses the staff member with the no-access state (§15)", async () => {
+    m.chartPages.mockReturnValue(
+      pages([stored(1, "ACTIVE", "2026-11-14T10:00:00Z")]),
+    );
+    m.countChartProducts.mockRejectedValue(
+      new AccessDeniedError("Access denied for productsCount field."),
+    );
+    expect(await load()).toEqual({
+      error: {
+        code: "access",
+        message: expect.stringContaining("You need Products access"),
+      },
+    });
+    expect(JSON.parse(logs[0])).toMatchObject({
+      shop: SHOP,
+      route: "app.charts._index",
+      detail: "Access denied for productsCount field.",
     });
   });
 
@@ -406,6 +445,26 @@ describe("the screen", () => {
       expect(el.querySelectorAll("s-table-row")).toHaveLength(3);
     },
   );
+
+  it("tells staff without Products access so under the list's title, and Try again lists the charts", async () => {
+    const el = await show(
+      Promise.resolve({ error: { code: "access", message: "x" } }),
+      Promise.resolve({ rows: ROWS, limit: null }),
+    );
+    expect(el.querySelector("s-page")?.getAttribute("heading")).toBe(
+      "Size charts",
+    );
+    expect(el.querySelector("s-banner")?.getAttribute("heading")).toBe(
+      "You need Products access",
+    );
+    expect(el.textContent).toContain(
+      "Fitted can't show this page without it. Ask the store owner to add it to your account in Settings › Users.",
+    );
+    await act(async () => button(el, "Try again").click());
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+    expect(el.querySelector("s-banner")).toBeNull();
+    expect(el.querySelectorAll("s-table-row")).toHaveLength(3);
+  });
 
   it("names the status when only the status filter matches nothing", async () => {
     const el = await show(Promise.resolve({ rows: [ROWS[0]], limit: null }));

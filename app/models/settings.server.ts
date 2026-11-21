@@ -2,6 +2,7 @@
 // Appearance and Fit finder screens write it whole, with the digest they
 // loaded, so a save over a newer one is refused (§6) instead of dropping it.
 import { COLOR, CSS_WORDS, FONT_URL, cssProblem } from "../lib/appearance";
+import { AccessDeniedError, accessDenied } from "./admin.server";
 
 // A check returns the problem, or undefined. `T` is the type it accepts, so
 // Settings below is derived from the checks and can't drift from them.
@@ -273,10 +274,13 @@ async function call(
   const response = await admin
     .graphql(query, { variables, signal: AbortSignal.timeout(TIMEOUT_MS) })
     .catch((error) => {
+      if (accessDenied(error)) throw new AccessDeniedError(error);
       if (error instanceof Response) throw error; // re-auth
       throw new SettingsReadWriteError(`Admin API request failed: ${error}`);
     });
   const body = await response.json().catch(() => null);
+  if (accessDenied(null, body?.errors))
+    throw new AccessDeniedError(JSON.stringify(body.errors));
   if (!response.ok || !body?.data || body.errors)
     throw new SettingsReadWriteError(
       `Admin API returned ${response.status}: ${JSON.stringify(body?.errors ?? null)}`,

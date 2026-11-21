@@ -22,6 +22,34 @@ export class AdminApiError extends Error {
   }
 }
 
+const detail = (err: unknown) =>
+  err instanceof Response ? `HTTP ${err.status}` : String(err);
+
+// Shopify refused the token: a staff member's online one lacks a permission
+// the call needs (§3). Retrying never helps; screens show the staff-without-
+// access message for it (§15), and every other catch treats it as a failed
+// call. Its message is a resolve job's reason too, so it names no staff member.
+export class AccessDeniedError extends AdminApiError {
+  constructor(err: unknown) {
+    super("Shopify refused access", detail(err));
+  }
+}
+
+type GraphqlError = { extensions?: { code?: string } } | null;
+// The client throws its GraphqlQueryError with the GraphQL errors on it.
+const thrownErrors = (err: unknown) =>
+  (err as { body?: { errors?: { graphQLErrors?: unknown } } })?.body?.errors
+    ?.graphQLErrors;
+/**
+ * Whether a call failed because Shopify refused the staff member: an HTTP 403,
+ * or ACCESS_DENIED in the GraphQL errors (`errors`, else the thrown ones).
+ */
+export function accessDenied(err: unknown, errors = thrownErrors(err)) {
+  if (err instanceof Response) return err.status === 403;
+  const denied = (e: GraphqlError) => e?.extensions?.code === "ACCESS_DENIED";
+  return Array.isArray(errors) && errors.some(denied);
+}
+
 const BACKOFF_MS = [500, 1500];
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // The library throws a Response to re-authenticate (401, or a redirect to its
@@ -31,10 +59,7 @@ const reauth = (err: unknown): err is Response =>
   err instanceof Response &&
   (err.status === 401 || (err.status >= 300 && err.status < 400));
 const failed = (err: unknown) =>
-  new AdminApiError(
-    "Shopify request failed",
-    err instanceof Response ? `HTTP ${err.status}` : String(err),
-  );
+  new AdminApiError("Shopify request failed", detail(err));
 
 export async function adminGraphql<T>(
   admin: Admin,
@@ -44,12 +69,15 @@ export async function adminGraphql<T>(
 ): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     let body: { data?: Record<string, unknown>; errors?: unknown };
+    let errors: unknown; // the body's, once it parsed
     try {
       body = await (await admin.graphql(query, { variables })).json();
+      errors = body.errors;
       if (body.errors || !body.data)
         throw new Error(`GraphQL errors: ${JSON.stringify(body.errors)}`);
     } catch (err) {
       if (reauth(err)) throw err;
+      if (accessDenied(err, errors)) throw new AccessDeniedError(err);
       if (retry && attempt < BACKOFF_MS.length) {
         await sleep(BACKOFF_MS[attempt]);
         continue;
@@ -73,7 +101,27 @@ export async function adminGraphql<T>(
   }
 }
 
-type GraphqlError = { extensions?: { code?: string } } | null;
+/**
+ * A screen's streamed load (§15), run with the staff member's token. Shopify
+ * revokes an online token before it expires when its staff member signs out of
+ * the admin (§3). The library then clears it and throws its re-auth Response,
+ * which a stream that has already answered can't send, so the load signs in
+ * again from the request's session token and runs once more.
+ */
+export function streamed<T>(
+  admin: Admin,
+  signIn: () => Promise<{ admin: Admin }>,
+  load: (admin: Admin) => Promise<T>,
+): Promise<T> {
+  const run = load(admin).catch(async (err: unknown) => {
+    if (!reauth(err)) throw err;
+    return load((await signIn()).admin);
+  });
+  // A load whose page was left has no reader; an unhandled rejection would stop the server.
+  run.catch(() => {});
+  return run;
+}
+
 /**
  * Whether the session's staff member can read products. Jobs run with the
  * offline token, so an action checks this before it starts one (§13). An
@@ -90,13 +138,11 @@ export async function canReadProducts(admin: Admin) {
     errors = body.errors;
   } catch (err) {
     if (reauth(err)) throw err;
-    // The client throws its GraphqlQueryError with the GraphQL errors on it.
-    errors = (err as { body?: { errors?: { graphQLErrors?: unknown } } })?.body
-      ?.errors?.graphQLErrors;
+    if (accessDenied(err)) return false;
+    errors = thrownErrors(err);
     if (!errors) throw failed(err);
   }
-  const denied = (e: GraphqlError) => e?.extensions?.code === "ACCESS_DENIED";
-  if (Array.isArray(errors) && errors.some(denied)) return false;
+  if (accessDenied(null, errors)) return false;
   throw new AdminApiError(
     "Shopify request failed",
     JSON.stringify(errors ?? null),

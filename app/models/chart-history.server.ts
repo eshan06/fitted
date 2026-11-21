@@ -12,8 +12,8 @@ import { TEMPLATES } from "../components/chart-table/model";
 export const VERSION_LIMIT = 30;
 
 /**
- * "Priya N.": first name and last initial only (§3). Offline sessions carry no
- * staff member until online tokens are on (#131), so they read "Staff".
+ * "Priya N.": first name and last initial only, from the staff member's online
+ * session (§3). One without a first name reads "Staff".
  */
 export function staffName(session: Pick<Session, "onlineAccessInfo">) {
   const u = session.onlineAccessInfo?.associated_user;

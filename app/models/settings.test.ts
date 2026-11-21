@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { AccessDeniedError } from "./admin.server";
 import {
   SettingsConflictError,
   SettingsReadWriteError,
@@ -274,7 +275,34 @@ describe("saving and reading settings", () => {
     });
     await expect(getSettings({ graphql })).rejects.toBe(reauth);
   });
+
+  it.each([
+    [
+      "as the client throws it",
+      () => {
+        throw Object.assign(new Error("GraphQL Client: denied"), {
+          body: { errors: { graphQLErrors: [denied] } },
+        });
+      },
+    ],
+    ["in the body", () => json({ data: null, errors: [denied] })],
+    [
+      "as an HTTP 403",
+      () => {
+        throw new Response(null, { status: 403 });
+      },
+    ],
+  ])("says Shopify refused the staff member, %s (§15)", async (_, reply) => {
+    const graphql = vi.fn(async () => reply());
+    await expect(getSettings({ graphql })).rejects.toBeInstanceOf(
+      AccessDeniedError,
+    );
+  });
 });
+const denied = {
+  message: "Access denied for shopLocales field.",
+  extensions: { code: "ACCESS_DENIED" },
+};
 
 describe("validateSettings", () => {
   const errors = (input: unknown, locale = "en") => {

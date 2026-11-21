@@ -39,10 +39,24 @@ function fakeStore(initial: Settings | null = null) {
     digest: initial ? "d0" : null,
     writes: 0,
     down: false,
+    denied: false, // Shopify refuses this staff member, as its client throws it
   };
   const graphql = vi.fn(
     async (query: string, opts?: { variables?: Record<string, unknown> }) => {
       if (store.down) throw new Error("socket hang up");
+      if (store.denied)
+        throw Object.assign(new Error("GraphQL Client: denied"), {
+          body: {
+            errors: {
+              graphQLErrors: [
+                {
+                  message: "Access denied for shopLocales field.",
+                  extensions: { code: "ACCESS_DENIED" },
+                },
+              ],
+            },
+          },
+        });
       if (query.includes("query FittedSettings"))
         return json({
           data: {
@@ -169,6 +183,24 @@ describe("loading and saving appearance", () => {
     expect(got.themeUrl).toBe(
       "https://admin.shopify.com/store/fitted-dev/themes/current/editor?template=product&addAppBlockId=key123/size-guide&target=mainSection",
     );
+  });
+
+  it("signs in again and loads when Shopify revoked the staff member's token (§3)", async () => {
+    // The library's bounce once it cleared the revoked token.
+    const revoked = {
+      graphql: vi.fn(async () => {
+        throw new Response(null, { status: 302 });
+      }),
+    };
+    m.authenticate.mockResolvedValueOnce({
+      admin: revoked,
+      session: { shop: SHOP },
+    });
+    expect((await load()).appearance).toMatchObject({
+      settings: saved(),
+      digest: "d0",
+    });
+    expect(m.authenticate).toHaveBeenCalledTimes(2);
   });
 
   it("saves the edits and reads them back, keeping the fit finder and other languages", async () => {
@@ -456,6 +488,34 @@ describe("appearance screen", () => {
     expect(text()).toContain("Still not working?");
 
     store.down = false;
+    await click("Try again");
+    expect(heading()).toEqual([]);
+    expect(byId("label").value).toBe("Size guide");
+  });
+
+  it("tells staff Shopify refuses the settings so, and Try again loads them once they have access (§15)", async () => {
+    store.denied = true;
+    expect((await load()).appearance).toEqual({
+      error: {
+        code: "access",
+        message: expect.stringContaining("You need Products access"),
+      },
+    });
+    // A save then is a failed one, never an error page, until #216 draws its own refusal.
+    expect(await post({ digest: "d0", edits: edits() })).toMatchObject({
+      status: 502,
+      body: { error: { code: "shopify" } },
+    });
+
+    await open();
+    expect(document.querySelector("h1")?.textContent).toBe(
+      "Appearance & languages",
+    );
+    expect(heading()).toEqual(["You need Products access"]);
+    expect(text()).toContain(
+      "Fitted can't show this page without it. Ask the store owner to add it to your account in Settings › Users.",
+    );
+    store.denied = false;
     await click("Try again");
     expect(heading()).toEqual([]);
     expect(byId("label").value).toBe("Size guide");

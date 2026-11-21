@@ -4,7 +4,7 @@ import { createRoot } from "react-dom/client";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { createRoutesStub } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AdminApiError } from "../models/admin.server";
+import { AccessDeniedError, AdminApiError } from "../models/admin.server";
 import type { StoredChart } from "../models/chart.server";
 
 const m = vi.hoisted(() => ({
@@ -246,6 +246,45 @@ describe("loading Home", () => {
       route: "app._index",
       detail: "HTTP 503 raw text",
     });
+  });
+
+  it("answers a read Shopify refuses the staff member with the no-access state, logging why (§15)", async () => {
+    m.chartPages.mockReturnValue(pages([]));
+    m.productCoverage.mockRejectedValue(
+      new AccessDeniedError("Access denied for productsCount field."),
+    );
+    const home = await (await load()).home;
+    expect(home).toEqual({
+      error: {
+        code: "access",
+        message: expect.stringContaining("You need Products access"),
+      },
+    });
+    expect(JSON.parse(logs[0])).toMatchObject({
+      level: "error",
+      shop: SHOP,
+      route: "app._index",
+      detail: "Access denied for productsCount field.",
+    });
+  });
+
+  it("signs in again and loads Home when Shopify revoked the staff member's token (§3)", async () => {
+    const fresh = { graphql: vi.fn() };
+    m.authenticate
+      .mockResolvedValueOnce({ admin, session: { shop: SHOP } })
+      .mockResolvedValueOnce({ admin: fresh, session: { shop: SHOP } });
+    m.chartPages.mockImplementation((a: unknown) =>
+      a === admin
+        ? (async function* () {
+            yield [];
+            // The library's bounce once it cleared the revoked token.
+            throw new Response(null, { status: 302 });
+          })()
+        : pages([stored(1, "ACTIVE")]),
+    );
+    expect(await (await load()).home).toMatchObject({ charts: 1 });
+    expect(m.authenticate).toHaveBeenCalledTimes(2);
+    expect(m.productCoverage).toHaveBeenCalledWith(fresh);
   });
 
   it("passes the library's login redirect on and reads nothing", async () => {
@@ -539,6 +578,22 @@ describe("the screen", () => {
       ),
     ).not.toBeNull();
     expect(button(el, "Try again")).toBeDefined();
+  });
+
+  it("tells staff without Products access so under Home's title, and Try again loads Home once they have it", async () => {
+    const el = await show(
+      Promise.resolve({ error: { code: "access", message: "x" } }),
+      Promise.resolve(OK),
+    );
+    expect(el.querySelector("s-page")?.getAttribute("heading")).toBe("Home");
+    expect(banner(el)).toBe("You need Products access");
+    expect(text(el)).toContain(
+      "Fitted can't show this page without it. Ask the store owner to add it to your account in Settings › Users.",
+    );
+    expect(text(el)).not.toContain("Still not working?");
+    await act(async () => button(el, "Try again")?.click());
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+    expect(text(el)).toContain("Women's tops");
   });
 
   it("leaves out the coverage card in a store with no products", async () => {

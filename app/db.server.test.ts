@@ -135,6 +135,44 @@ describe.runIf(hasDatabase)("the app database on Postgres", () => {
     expect(await storage.loadSession(`offline_${otherShop}`)).toBeDefined();
   });
 
+  it("deletes a shop's expired staff sessions when it stores a new one (§14)", async () => {
+    Object.assign(process.env, {
+      SHOPIFY_API_KEY: "test-api-key",
+      SHOPIFY_API_SECRET: "test-api-secret",
+      SHOPIFY_APP_URL: "https://fitted.test",
+    });
+    const { SessionStorage } =
+      await vi.importActual<typeof import("./shopify.server")>(
+        "./shopify.server",
+      );
+    const fitted = new SessionStorage(prisma);
+    const shop = newShop();
+    const otherShop = newShop();
+    const online = (forShop: string, user: number, expires: Date) =>
+      new Session({
+        id: `${forShop}_${user}`,
+        shop: forShop,
+        state: "state",
+        isOnline: true,
+        accessToken: "test-online-token",
+        expires,
+      });
+    const past = new Date(Date.now() - 60_000);
+    const later = new Date(Date.now() + 3_600_000);
+    // The offline session's token has expired too: it is refreshed, never deleted.
+    await storage.storeSession(offlineSession(shop));
+    await storage.storeSession(online(shop, 1, past));
+    await storage.storeSession(online(shop, 2, later));
+    await storage.storeSession(online(otherShop, 1, past));
+
+    await fitted.storeSession(online(shop, 3, later));
+
+    expect(
+      (await storage.findSessionsByShop(shop)).map((s) => s.id).sort(),
+    ).toEqual([`${shop}_2`, `${shop}_3`, `offline_${shop}`]);
+    expect(await storage.loadSession(`${otherShop}_1`)).toBeDefined();
+  });
+
   it("keeps one plan cache row per shop, and app/uninstalled resets only that shop's to Free", async () => {
     const shop = newShop();
     const otherShop = newShop();

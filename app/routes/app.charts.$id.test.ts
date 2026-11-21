@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AdminApiError } from "../models/admin.server";
+import { AccessDeniedError, AdminApiError } from "../models/admin.server";
 import {
   ChartConflictError,
   ChartNotFoundError,
@@ -303,6 +303,27 @@ describe("loading the editor", () => {
       shop: SHOP,
       route: "app.charts.$id",
       detail: "secret detail",
+    });
+  });
+
+  it("answers 403 saying so when Shopify refuses the staff member the chart (§15)", async () => {
+    m.getChart.mockRejectedValue(
+      new AccessDeniedError("Access denied for metaobject field."),
+    );
+    expect(await result(load("42"))).toEqual({
+      status: 403,
+      body: {
+        mode: "error",
+        error: {
+          code: "access",
+          message: expect.stringContaining("You need Products access"),
+        },
+      },
+    });
+    expect(JSON.parse(logs[0])).toMatchObject({
+      shop: SHOP,
+      route: "app.charts.$id",
+      detail: "Access denied for metaobject field.",
     });
   });
 
