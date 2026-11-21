@@ -137,7 +137,7 @@ const SPECS: Record<Template, Spec> = {
       sizes: "US sizes",
       extra: "UK and EU size columns; 1 how-to-measure step",
     },
-    size: "US",
+    size: "US size",
     countries: ["UK", "EU"],
     measures: [["foot", "Foot length"]],
     sizes: Array.from({ length: 15 }, (_, i) => `${5 + i / 2}`),
@@ -199,7 +199,7 @@ const SPECS: Record<Template, Spec> = {
       sizes: "US ring sizes",
       extra: "UK and EU size columns; how to measure with string",
     },
-    size: "US",
+    size: "US size",
     countries: ["UK", "EU"],
     measures: [
       ["diam", "Inside diameter"],
@@ -280,7 +280,8 @@ export function templateContent(t: Template): Content {
     ...(s.text ? [{ id: s.text[0], kind: "text" as const }] : []),
   ];
   const words: Record<string, string> = { "t1.size": s.size ?? "Size" };
-  for (const c of s.countries ?? []) words[`t1.${c.toLowerCase()}`] = c;
+  for (const c of s.countries ?? [])
+    words[`t1.${c.toLowerCase()}`] = `${c} size`;
   for (const [id, label] of s.measures ?? []) words[`t1.${id}`] = label;
   if (s.text) words[`t1.${s.text[0]}`] = s.text[1];
   sizes.forEach((size, i) => {
