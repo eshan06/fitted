@@ -713,6 +713,25 @@ describe("display rules screen", () => {
     expect(pages).toHaveLength(2);
     expect(document.querySelector("h2")?.textContent).toBe("Women's tops");
   });
+
+  it("tells staff without Products access so under its title, and tries again", async () => {
+    const { loader } = await open([
+      { mode: "error", error: { code: "access", message: "x" } },
+      edit(ranked()),
+    ]);
+    expect(document.querySelector("h1")?.textContent).toBe("Display rules");
+    expect(headings()).toEqual(["You need Products access"]);
+    expect(text()).toContain(
+      "Fitted can't show this page without it. Ask the store owner to add it to your account in Settings › Users.",
+    );
+    expect(text()).not.toContain("Still not working?");
+    await click(buttons("Try again")[0]);
+    const pages = loader.mock.calls.filter(
+      ([a]) => !a.request.url.includes("preview"),
+    );
+    expect(pages).toHaveLength(2);
+    expect(document.querySelector("h2")?.textContent).toBe("Women's tops");
+  });
 });
 
 const matches = () =>

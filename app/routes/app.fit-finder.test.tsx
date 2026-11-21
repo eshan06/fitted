@@ -122,6 +122,7 @@ function fakeStore(initial: Settings | null = null) {
     products: {} as Record<string, number>, // by chart id
     countReads: 0,
     countsDown: false, // only the product count fails
+    countsDenied: false, // Shopify refuses this staff member the count
   };
   const graphql = vi.fn(
     async (query: string, opts?: { variables?: Record<string, unknown> }) => {
@@ -173,6 +174,20 @@ function fakeStore(initial: Settings | null = null) {
         store.countReads++;
         if (store.countsDown)
           return json({ errors: [{ message: "Throttled" }] });
+        // As the Shopify client throws it.
+        if (store.countsDenied)
+          throw Object.assign(new Error("GraphQL Client: denied"), {
+            body: {
+              errors: {
+                graphQLErrors: [
+                  {
+                    message: "Access denied for productsCount field.",
+                    extensions: { code: "ACCESS_DENIED" },
+                  },
+                ],
+              },
+            },
+          });
         const q = Object.entries(opts!.variables as Record<string, string>);
         const count = (v: string) => store.products[v.split('"')[1]] ?? 0;
         // Shopify counts up to 10,000.
@@ -1360,6 +1375,34 @@ describe("a chart's ease and stretch", () => {
     await type(picked(), BOTTOMS);
     expect(document.querySelector(".live")!.textContent).toContain(
       "on the 1 product with Women's bottoms.",
+    );
+  });
+
+  it("tells staff without Products access so when Shopify refuses Pro's count, and Try again loads once they have it", async () => {
+    lastConfirmed("pro");
+    store.products = { [TOPS]: 148 };
+    store.countsDenied = true;
+    expect((await load()).fitFinder).toEqual({
+      error: {
+        code: "access",
+        message: expect.stringContaining("You need Products access"),
+      },
+    });
+    // Never retried: Shopify answers the same until the owner adds access.
+    expect(store.countReads).toBe(1);
+
+    await open();
+    expect(document.querySelector("h1")?.textContent).toBe("Fit finder");
+    expect(banners()).toEqual(["You need Products access"]);
+    expect(text()).toContain(
+      "Fitted can't show this page without it. Ask the store owner to add it to your account in Settings › Users.",
+    );
+    store.countsDenied = false;
+    await click("Try again");
+    await settle();
+    expect(banners()).toEqual([]);
+    expect(document.querySelector(".live")!.textContent).toContain(
+      "148 products with Women's tops",
     );
   });
 

@@ -4,10 +4,12 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Link, data, useLoaderData, useRevalidator } from "react-router";
 import { authenticate } from "../shopify.server";
 import {
+  AccessDeniedError,
   AdminApiError,
   canReadProducts,
   pricingPlansUrl,
 } from "../models/admin.server";
+import { NO_ACCESS, NoAccess } from "../components/no-access";
 import { getPlan } from "../models/billing.server";
 import { chartPages, countChartProducts } from "../models/chart.server";
 import {
@@ -129,6 +131,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   } catch (err) {
     if (!(err instanceof AdminApiError)) throw err;
     log(shop, err);
+    // Counts, names and the preview do without; the charts and rules can't.
+    if (err instanceof AccessDeniedError)
+      return data(
+        { mode: "error" as const, error: NO_ACCESS },
+        { status: 403 },
+      );
     const error = { code: "shopify", message: COPY.load[1] };
     return data({ mode: "error" as const, error }, { status: 502 });
   }
@@ -219,6 +227,8 @@ export default function DisplayRules() {
         </p>
       </section>
     );
+  else if ("error" in loaded && loaded.error?.code === "access")
+    body = <NoAccess />;
   else
     body = (
       <>

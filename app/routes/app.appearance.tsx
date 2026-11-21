@@ -19,9 +19,11 @@ import { SaveBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import {
   type Admin,
+  AccessDeniedError,
   AdminApiError,
   themeEditorUrl,
 } from "../models/admin.server";
+import { NO_ACCESS, NoAccess } from "../components/no-access";
 import { readFile, uploadFont } from "../models/files.server";
 import { FONT_MAX, FONT_WORDS, fontType } from "../lib/font-file";
 import {
@@ -72,9 +74,14 @@ async function load(admin: Parameters<typeof getSettings>[0], shop: string) {
   try {
     return await getSettings(admin);
   } catch (err) {
-    if (!(err instanceof SettingsReadWriteError)) throw err;
+    if (!(
+      err instanceof SettingsReadWriteError || err instanceof AdminApiError
+    ))
+      throw err;
     log(shop, err);
-    return refusal("load");
+    return err instanceof AccessDeniedError
+      ? { error: NO_ACCESS }
+      : refusal("load");
   }
 }
 
@@ -156,7 +163,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
     if (err instanceof SettingsConflictError)
       return data(refusal("conflict"), { status: 409 });
-    if (!(err instanceof SettingsReadWriteError)) throw err;
+    if (!(
+      err instanceof SettingsReadWriteError || err instanceof AdminApiError
+    ))
+      throw err;
     log(session.shop, err);
     return data(refusal("shopify"), { status: 502 });
   }
@@ -172,7 +182,9 @@ export default function Appearance() {
       <Await resolve={appearance} errorElement={<Page body={<LoadError />} />}>
         {(a) =>
           "error" in a ? (
-            <Page body={<LoadError />} />
+            <Page
+              body={a.error.code === "access" ? <NoAccess /> : <LoadError />}
+            />
           ) : (
             <Editor
               key={a.digest ?? "new"}

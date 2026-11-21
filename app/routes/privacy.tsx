@@ -59,15 +59,16 @@ export default function Privacy() {
       <p>
         When someone on your staff opens Fitted, Shopify sends us their Shopify
         user ID, first and last name, email address, language, and whether they
-        own the store. We keep these with their sign-in session. Chart history
-        shows who saved each change by first name and last initial.
+        own the store. We keep these with their sign-in session. Each saved
+        chart version also keeps the first name and last initial of the staff
+        member who saved it, which chart history shows.
       </p>
       <h3>What you make in Fitted</h3>
       <p>
         Charts, display rules, appearance and fit finder settings and custom
         text are saved in your Shopify store as app data. To show version
         history, we also keep a copy of each saved version of a chart in our
-        database.
+        database, with who saved it.
       </p>
       <h3>Size guide counts</h3>
       <p>
@@ -200,7 +201,7 @@ export default function Privacy() {
               </td>
             </tr>
             <tr>
-              <td>Chart version history</td>
+              <td>Chart version history, with who saved each version</td>
               <td>The last 30 versions of each chart</td>
             </tr>
             <tr>

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type Admin,
+  AccessDeniedError,
   AdminApiError,
   adminGraphql,
   canReadProducts,
@@ -150,6 +151,31 @@ describe("adminGraphql", () => {
     const r = await run(adminGraphql(admin, "q"));
     expect((r.error as Error).message).not.toContain("secret");
   });
+
+  it("names a staff member Shopify refuses, and never retries the refusal (§15)", async () => {
+    const denied = {
+      message: "Access denied for productsCount field.",
+      extensions: { code: "ACCESS_DENIED" },
+    };
+    // How the client throws it, the body as some answer it, and an HTTP 403.
+    const thrown = Object.assign(new Error("GraphQL Client: denied"), {
+      body: { errors: { graphQLErrors: [denied] } },
+    });
+    for (const [step, raw] of [
+      [thrown, "GraphQL Client: denied"],
+      [{ data: null, errors: [denied] }, "Access denied for productsCount"],
+      [new Response(null, { status: 403 }), "HTTP 403"],
+    ] as const) {
+      const { admin, graphql } = adminWith(step, { data: { ok: true } });
+      const r = await run(adminGraphql(admin, "q", {}, { retry: true }));
+      expect(r.error).toBeInstanceOf(AccessDeniedError);
+      // Every route that treats a failed call alike still catches it.
+      expect(r.error).toBeInstanceOf(AdminApiError);
+      expect((r.error as AdminApiError).detail).toContain(raw);
+      expect((r.error as Error).message).not.toContain("productsCount");
+      expect(graphql).toHaveBeenCalledTimes(1);
+    }
+  });
 });
 
 describe("canReadProducts", () => {
@@ -177,6 +203,8 @@ describe("canReadProducts", () => {
     );
     const body = { data: null, errors: [denied] };
     expect(await canReadProducts(adminWith(body).admin)).toBe(false);
+    const forbidden = new Response(null, { status: 403 });
+    expect(await canReadProducts(adminWith(forbidden).admin)).toBe(false);
   });
 
   it("throws an AdminApiError when the check itself fails, and passes re-auth on", async () => {

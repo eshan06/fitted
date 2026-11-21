@@ -5,7 +5,8 @@ import { useState } from "react";
 import type { LoaderFunctionArgs } from "react-router";
 import { Link, data, useLoaderData, useRevalidator } from "react-router";
 import { authenticate } from "../shopify.server";
-import { AdminApiError } from "../models/admin.server";
+import { AccessDeniedError, AdminApiError } from "../models/admin.server";
+import { NO_ACCESS, NoAccess } from "../components/no-access";
 import {
   type ChartInput,
   ChartNotFoundError,
@@ -75,6 +76,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     if (err instanceof ChartNotFoundError) throw notFound();
     if (err instanceof Response) throw err;
     logError(session.shop, err);
+    if (err instanceof AccessDeniedError)
+      return data({ error: NO_ACCESS }, { status: 403 });
     // The screen shows the board's own error copy (§15).
     return data(
       {
@@ -159,6 +162,15 @@ export default function VersionHistory() {
       </s-page>
     );
 
+  if ("error" in loaded && loaded.error.code === "access")
+    return (
+      <s-page>
+        <div className="editor history">
+          {header()}
+          <NoAccess />
+        </div>
+      </s-page>
+    );
   if ("error" in loaded)
     return (
       <s-page>

@@ -18,10 +18,12 @@ import {
 import { authenticate } from "../shopify.server";
 import {
   type Admin,
+  AccessDeniedError,
   AdminApiError,
   canReadProducts,
   pricingPlansUrl,
 } from "../models/admin.server";
+import { NO_ACCESS, NoAccess } from "../components/no-access";
 import { discardImage, readFile, uploadImage } from "../models/files.server";
 import { IMAGE_MAX, imageType } from "../lib/image-file";
 import {
@@ -125,6 +127,11 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     )
       throw err;
     logShopifyError(session.shop, err);
+    if (err instanceof AccessDeniedError)
+      return data(
+        { mode: "error" as const, error: NO_ACCESS },
+        { status: 403 },
+      );
     return data(
       {
         mode: "error" as const,
@@ -386,6 +393,8 @@ export default function ChartEditor() {
             <span className="sk" />
             <span className="sk short" />
           </div>
+        ) : loaded.mode === "error" && loaded.error.code === "access" ? (
+          <NoAccess />
         ) : invalid ? (
           // Too broken to draw as a table: Fitted never wrote it.
           <s-banner

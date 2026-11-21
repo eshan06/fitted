@@ -221,6 +221,10 @@ describe("the products/create and products/update webhook", () => {
     async (topic) => {
       expect((await deliver(products, topic, edited)).status).toBe(200);
 
+      // Admin requests run as a staff member; a webhook, on the shop's offline session (§3).
+      expect(h.db.session.findUnique).toHaveBeenCalledWith({
+        where: { id: `offline_${shop}` },
+      });
       expect(chart).toBe(SWIM);
       expect(calls()).toEqual(["FittedRules", "ResolveOne", "ResolveSet"]);
       expect(h.graphql.mock.calls[1][1].variables).toEqual({

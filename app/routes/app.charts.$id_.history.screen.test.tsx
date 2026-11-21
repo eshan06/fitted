@@ -156,6 +156,24 @@ describe("version history screen", () => {
     expect(text()).toContain("Saved versions");
   });
 
+  it("tells staff without Products access so under its title, and tries again", async () => {
+    const { loader } = await open([
+      { error: { code: "access", message: "x" } },
+      loaded(),
+    ]);
+    expect(document.querySelector("h1")?.textContent).toBe("Version history");
+    expect(document.querySelector("s-banner")?.getAttribute("heading")).toBe(
+      "You need Products access",
+    );
+    expect(text()).toContain(
+      "Fitted can't show this page without it. Ask the store owner to add it to your account in Settings › Users.",
+    );
+    expect(text()).not.toContain("We couldn't load this chart's versions");
+    await click("Try again");
+    expect(loader).toHaveBeenCalledTimes(2);
+    expect(text()).toContain("Saved versions");
+  });
+
   it("shows the loading state while the versions load again", async () => {
     let finish = () => {};
     const slow = new Promise<ReturnType<typeof loaded>>(

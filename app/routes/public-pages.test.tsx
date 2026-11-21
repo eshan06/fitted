@@ -79,6 +79,15 @@ describe("privacy policy", () => {
     expect(policy).toContain("Fitted stores no personal data about shoppers");
   });
 
+  it("says each saved version keeps the name of the staff member who saved it (§3, §14)", () => {
+    expect(policy).toContain(
+      "Each saved chart version also keeps the first name and last initial of the staff member who saved it",
+    );
+    expect(policy).toContain(
+      "Chart version history, with who saved each version The last 30 versions of each chart",
+    );
+  });
+
   it("doesn't claim charts never reach our database (§14 keeps versions)", () => {
     expect(policy).not.toContain("not on our servers");
     expect(policy).toContain("We keep a copy of each saved chart version");

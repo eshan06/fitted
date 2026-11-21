@@ -39,10 +39,24 @@ function fakeStore(initial: Settings | null = null) {
     digest: initial ? "d0" : null,
     writes: 0,
     down: false,
+    denied: false, // Shopify refuses this staff member, as its client throws it
   };
   const graphql = vi.fn(
     async (query: string, opts?: { variables?: Record<string, unknown> }) => {
       if (store.down) throw new Error("socket hang up");
+      if (store.denied)
+        throw Object.assign(new Error("GraphQL Client: denied"), {
+          body: {
+            errors: {
+              graphQLErrors: [
+                {
+                  message: "Access denied for shopLocales field.",
+                  extensions: { code: "ACCESS_DENIED" },
+                },
+              ],
+            },
+          },
+        });
       if (query.includes("query FittedSettings"))
         return json({
           data: {
@@ -456,6 +470,34 @@ describe("appearance screen", () => {
     expect(text()).toContain("Still not working?");
 
     store.down = false;
+    await click("Try again");
+    expect(heading()).toEqual([]);
+    expect(byId("label").value).toBe("Size guide");
+  });
+
+  it("tells staff Shopify refuses the settings so, and Try again loads them once they have access (§15)", async () => {
+    store.denied = true;
+    expect((await load()).appearance).toEqual({
+      error: {
+        code: "access",
+        message: expect.stringContaining("You need Products access"),
+      },
+    });
+    // A save then is a failed one, never an error page.
+    expect(await post({ digest: "d0", edits: edits() })).toMatchObject({
+      status: 502,
+      body: { error: { code: "shopify" } },
+    });
+
+    await open();
+    expect(document.querySelector("h1")?.textContent).toBe(
+      "Appearance & languages",
+    );
+    expect(heading()).toEqual(["You need Products access"]);
+    expect(text()).toContain(
+      "Fitted can't show this page without it. Ask the store owner to add it to your account in Settings › Users.",
+    );
+    store.denied = false;
     await click("Try again");
     expect(heading()).toEqual([]);
     expect(byId("label").value).toBe("Size guide");
