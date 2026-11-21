@@ -1,14 +1,15 @@
 // The size guide's styles (ARCHITECTURE §9), from the Storefront and
-// GuideStates boards. The loader adds css once, so nothing render-blocking
-// lands in the theme's <head>; render adds tableCss with the tabs it draws,
-// so loader.js carries only what the link, the popup and its loading and error
-// states need. The admin preview (#23) can add the same strings. The loader
-// sets the three colors and the font on .fitted-guide from the Appearance
-// settings (§7); the other shades mix from them. A browser without
-// color-mix() (Safari before 16.2) drops those shades: lines, tint and the
-// alert's fill go, and text keeps the main color, so every color still reads.
-// esbuild joins css into one string, which fits loader.js's 10 KB; PURE
-// lets each bundle drop the one it doesn't use.
+// GuideStates boards. css is what the link, the popup and its loading and
+// error states need: snippets/guide.liquid prints it inert in a <template> (a
+// test keeps the two equal) and the loader adds it once, so nothing
+// render-blocking lands in the theme's <head> and loader.js carries no CSS.
+// render adds tableCss with the tabs it draws. The admin preview (#23) can
+// add the same strings. The loader sets the three colors and the font on
+// .fitted-guide from the Appearance settings (§7); the other shades mix from
+// them. A browser without color-mix() (Safari before 16.2) drops those
+// shades: lines, tint and the alert's fill go, and text keeps the main color,
+// so every color still reads. PURE lets loader.js, which bundles guide.ts for
+// parseGuide, drop tableCss.
 export const css =
   ".fitted-guide{--fitted-bg:#fff;--fitted-text:#161616;--fitted-accent:#2448a8}" +
   ".fitted-link{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 2px;border:0;background:none;color:inherit;font:inherit;font-weight:600;text-decoration:underline;text-underline-offset:4px;cursor:pointer}" +

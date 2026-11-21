@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { build } from "esbuild";
 import { describe, expect, it } from "vitest";
 import { parseGuide } from "./guide";
+import { css } from "./guide-css";
 
 // ARCHITECTURE §9: the size guide's scripts are built from app/lib into the
 // extension's assets and committed; this is their gate. The banner keeps the
@@ -46,6 +47,13 @@ describe("size guide assets", () => {
     // Shopify words the limit as compressed, but the check deploy runs
     // (AssetSizeAppBlockJavaScript) measures the file itself.
     expect(Buffer.byteLength(ext("assets/loader.js"))).toBeLessThan(10_000);
+  });
+
+  it("keep loader.js within its 9,000-byte budget, so later steps keep room under the 10 KB", () => {
+    expect(
+      Buffer.byteLength(ext("assets/loader.js")),
+      "loader.js is over budget: move what can wait for an open into guide.js",
+    ).toBeLessThanOrEqual(9_000);
   });
 });
 
@@ -361,6 +369,16 @@ describe("size guide Liquid", () => {
       ].join("\n  "),
     );
     expect(guide.match(/data-(chart|product)=/g)).toHaveLength(2);
+  });
+
+  it("prints Fitted's styles inert for the loader to add, as app/lib/guide-css.ts has them (§9)", () => {
+    const inert = /<template data-fitted-css>([^<]*)<\/template>/.exec(guide);
+    expect(
+      inert?.[1],
+      "Copy css from app/lib/guide-css.ts into snippets/guide.liquid",
+    ).toBe(css);
+    // A template's text is HTML, which would read these as markup.
+    expect(css).not.toMatch(/[<&]/);
   });
 
   it("prints the tab's styles only with the tab", () => {
