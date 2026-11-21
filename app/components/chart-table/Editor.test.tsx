@@ -449,6 +449,45 @@ describe("chart editor screen", () => {
     ]);
   });
 
+  it("starts from the picked template, and creates it with the merchant's numbers", async () => {
+    const { sent } = await open(
+      [{ mode: "new", handle: "c-abc", template: "tops" }],
+      [],
+      "/app/charts/new?template=tops",
+    );
+    expect(text()).not.toContain("A blank chart, ready for sizes");
+    expect(byLabel("XL, Hips").value).toBe("");
+    await type(document.querySelector<HTMLInputElement>("#name")!, "Tees");
+    await type(byLabel("M, Bust"), "36");
+    await click("Save");
+    const c = (sent[0] as { chart: ChartInput }).chart;
+    expect(c.template).toBe("tops");
+    expect(c.content.tables[0].rows.map((r) => r.cells)).toEqual([
+      {},
+      {},
+      { bust: [36] },
+      {},
+      {},
+    ]);
+    expect(c.content.measure.steps).toHaveLength(3);
+  });
+
+  it("fills a blank chart from the Template field, as its line says", async () => {
+    await open([{ mode: "new", handle: "c-abc" }], [], "/app/charts/new");
+    expect(text()).toContain("Or pick a template above.");
+    await type(document.querySelector<HTMLInputElement>("#name")!, "Sneakers");
+    const field = [...document.querySelectorAll("label")]
+      .find((l) => l.textContent?.startsWith("Template"))!
+      .querySelector("select")!;
+    await type(field, "shoes");
+    expect(byLabel("12, Foot length").value).toBe("");
+    // Anything typed stays: another pick changes only the label.
+    await type(byLabel("12, Foot length"), "11.5");
+    await type(field, "rings");
+    expect(byLabel("12, Foot length").value).toBe("11.5");
+    expect(field.value).toBe("rings");
+  });
+
   const newChart = { mode: "new", handle: "c-abc" };
   it("hides the save bar, then replaces the address with the new chart's own", async () => {
     // The admin keeps its address bar while the save bar shows (App Bridge's Navigation API).

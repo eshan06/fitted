@@ -171,6 +171,20 @@ describe("loading the editor", () => {
     expect(m.getChart).not.toHaveBeenCalled();
   });
 
+  it("starts a new chart from the picker's template, else blank", async () => {
+    const from = async (q: string) =>
+      (
+        (await loader({
+          request: new Request(`https://fitted.test/app/charts/new${q}`),
+          params: { id: "new" },
+        } as unknown as LoaderFunctionArgs)) as { template: string }
+      ).template;
+    expect(await from("?template=bras_swimwear")).toBe("bras_swimwear");
+    expect(await load("new")).toMatchObject({ template: "blank" });
+    for (const q of ["?template=capes", "?template=__proto__", "?template="])
+      expect(await from(q)).toBe("blank");
+  });
+
   it("answers 404 for a malformed id or a chart that's gone", async () => {
     for (const id of ["abc", "gid://shopify/Metaobject/1", "1.5"]) {
       const err = await load(id).catch((e) => e);

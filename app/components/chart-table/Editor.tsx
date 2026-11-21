@@ -523,7 +523,11 @@ export function Editor(props: {
               <select
                 className="field"
                 value={draft.template}
-                onChange={(e) => set({ template: e.target.value as Template })}
+                onChange={(e) =>
+                  setDraft(
+                    model.pickTemplate(draft, e.target.value as Template),
+                  )
+                }
               >
                 {Object.entries(model.TEMPLATES).map(([v, label]) => (
                   <option key={v} value={v}>

@@ -55,7 +55,7 @@ Numbers in `content`, words in `words`: a row's `cells` hold only measure column
 
 Words are plain text, at most 500 characters each and `tips` at most 2,000. No text in a chart (name, words, video link, import note) holds a NUL character: CSV import refuses the byte, and Postgres json can't store it. They reach a page only as values Liquid or the guide's script prints escaped (`| escape`, `| json`, `textContent`); app code never puts chart or settings text into a Liquid template's source, where `{%` would run.
 
-`app/models/chart.server.ts` owns the definition's reads and writes (#59) and one validator (#15) that every write goes through: the editor, imports, restores, templates, duplicates and OpenAI output. Invalid input is refused with a field path and a plain message. A chart that fails validation when read shows as an error on that chart; it is never dropped silently. It writes `strings` equal to `content.words` on every save. Templates (#25) live in `app/data/templates/` and set columns, size rows, measure steps and words, never numbers.
+`app/models/chart.server.ts` owns the definition's reads and writes (#59) and one validator (#15) that every write goes through: the editor, imports, restores, templates, duplicates and OpenAI output. Invalid input is refused with a field path and a plain message. A chart that fails validation when read shows as an error on that chart; it is never dropped silently. It writes `strings` equal to `content.words` on every save. Templates (#25) live in `app/data/templates.ts` and set columns, size rows, measure steps and words, never numbers.
 
 Free plan: at most 3 Active charts; drafts are unlimited (§8).
 
