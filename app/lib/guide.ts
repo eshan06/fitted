@@ -1,10 +1,10 @@
 // The shopper's size guide (ARCHITECTURE §9): re-validates the chart Liquid
 // printed and draws the Size chart tab: the US/UK/EU/AU and in/cm switches,
 // the tables, row select, and the footer that picks the size in the theme's
-// product form; the How to measure tab; and on Pro the Find my size tab and
-// the product page's fit line (§10). No dependencies and no React, so the
-// admin preview (#23) can draw with it too. Chart words reach the page only
-// as text nodes and attribute values, never as HTML.
+// product form; the How to measure tab; and on Pro the Find my size tab
+// (§10). No dependencies and no React, so the admin preview (#23) can draw
+// with it too. Chart words reach the page only as text nodes and attribute
+// values, never as HTML.
 import { COLOR, FONT_URL, cssProblem } from "./appearance";
 import {
   convert,
@@ -18,6 +18,9 @@ import {
   type Unit,
 } from "./fit-finder";
 import { tableCss } from "./guide-css";
+// The fit line's colors pick as the loader's "Match my theme" does; used
+// only when called, so the two modules can import each other.
+import { themeColors } from "./guide-loader";
 
 type Sys = "in" | "cm"; // inches and pounds, or centimeters and kilograms
 type Measure = Extract<Column, { kind: "measure" }>;
@@ -272,47 +275,6 @@ function track(root: HTMLElement, type: string, size?: string) {
   } catch {
     // A browser without sendBeacon or randomUUID sends nothing.
   }
-}
-
-// The canvas's accent. "Match my theme" keeps it where it reads 4.5:1 on the
-// theme's background and on its tint, and takes the theme's text color elsewhere.
-const ACCENT = "#2448a8";
-const WHITE = "rgb(255, 255, 255)";
-const BLACK = "rgb(18, 18, 18)";
-// WCAG relative luminance of an rgb() or rgba() color (its alpha aside), and
-// -1 for any other syntax.
-const luminance = (c: string) => {
-  const rgb = /^rgba?\(([\d.]+), ([\d.]+), ([\d.]+)/.exec(c)?.slice(1);
-  if (!rgb) return -1;
-  const [r, g, b] = rgb.map((n) => {
-    const s = +n / 255;
-    return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
-  });
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-};
-const ratio = (a: number, b: number) =>
-  (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
-/**
- * The theme's text color where the block sits, and the nearest opaque
- * background behind it (rgba() and "/ a" carry an alpha below 1). A section
- * painted with a gradient has no background color, so the text can come from
- * one look and the background from another: if they don't read 4.5:1, the
- * text becomes near-black or white, whichever reads on that background.
- */
-export function themeColors(block: HTMLElement) {
-  let bg = WHITE;
-  for (let el: Element | null = block; el; el = el.parentElement) {
-    const c = getComputedStyle(el).backgroundColor;
-    if (c && !/rgba|\/|transparent/.test(c)) {
-      bg = c;
-      break;
-    }
-  }
-  let text = getComputedStyle(block).color;
-  const [ink, paper] = [luminance(text), luminance(bg)];
-  if (ink >= 0 && paper >= 0 && ratio(ink, paper) < 4.5)
-    text = ratio(paper, luminance(BLACK)) > ratio(paper, 1) ? BLACK : WHITE;
-  return { text, accent: paper >= 0.65 ? ACCENT : text, bg };
 }
 
 // The extension's word k, from the data-t-* attributes Liquid printed on root.
