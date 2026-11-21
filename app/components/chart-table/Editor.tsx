@@ -410,7 +410,7 @@ export function Editor(props: {
           Discard
         </button>
       </SaveBar>
-      <div className="editor">
+      <div className="editor split">
         {((props.historyMissed && !answer) || answer?.historyMissed) && (
           <s-banner
             tone="warning"
@@ -508,359 +508,342 @@ export function Editor(props: {
             </details>
           )}
         </div>
-        <div className="split">
-          <section className="card" aria-label="Chart content">
-            <div className="row">
-              <label className="grow">
-                Chart name
-                <input
-                  id="name"
-                  className={errors.name ? "field bad" : "field"}
-                  placeholder="For example, Women's tops"
-                  aria-invalid={errors.name ? true : undefined}
-                  value={draft.name}
-                  onChange={(e) => set({ name: e.target.value })}
+        <section className="card" aria-label="Chart content">
+          <div className="row">
+            <label className="grow">
+              Chart name
+              <input
+                id="name"
+                className={errors.name ? "field bad" : "field"}
+                placeholder="For example, Women's tops"
+                aria-invalid={errors.name ? true : undefined}
+                value={draft.name}
+                onChange={(e) => set({ name: e.target.value })}
+              />
+            </label>
+            <label className="grow">
+              Template
+              <select
+                className="field"
+                value={draft.template}
+                onChange={(e) =>
+                  setDraft(
+                    model.pickTemplate(draft, e.target.value as Template),
+                  )
+                }
+              >
+                {Object.entries(model.TEMPLATES).map(([v, label]) => (
+                  <option key={v} value={v}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="tabs">
+            {Object.entries(TABS).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                className="tab"
+                aria-pressed={tab === id}
+                onClick={() => setTab(id as Tab)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {tab === "measure" && (
+            <MeasureTab
+              draft={draft}
+              drawing={drawing.box}
+              onChange={setDraft}
+            />
+          )}
+          {tab === "tips" && (
+            <div>
+              <label>
+                Fit tips
+                <textarea
+                  id="tips"
+                  className="field"
+                  rows={5}
+                  maxLength={2000}
+                  placeholder="For example, Runs small through the shoulders. Size up if you're between sizes."
+                  value={draft.content.words.tips ?? ""}
+                  onChange={(e) =>
+                    setDraft(model.setWord(draft, "tips", e.target.value))
+                  }
                 />
               </label>
-              <label className="grow">
-                Template
-                <select
-                  className="field"
-                  value={draft.template}
+              <div className="row">
+                <span className="help">
+                  Shoppers see these under the size table.
+                </span>
+                <span className="help">
+                  {(draft.content.words.tips ?? "").length.toLocaleString(
+                    "en-US",
+                  )}{" "}
+                  of 2,000 characters
+                </span>
+              </div>
+            </div>
+          )}
+          {tab === "media" && (
+            <div className="col">
+              <label>
+                Fit video
+                <input
+                  id="video"
+                  type="url"
+                  className={badVideo ? "field bad" : "field"}
+                  aria-invalid={badVideo || undefined}
+                  aria-describedby={badVideo ? "video-err" : undefined}
+                  value={video}
                   onChange={(e) =>
-                    setDraft(
-                      model.pickTemplate(draft, e.target.value as Template),
-                    )
+                    setDraft(model.setVideo(draft, e.target.value))
                   }
-                >
-                  {Object.entries(model.TEMPLATES).map(([v, label]) => (
-                    <option key={v} value={v}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
+                />
               </label>
-            </div>
-            <div className="tabs">
-              {Object.entries(TABS).map(([id, label]) => (
-                <button
-                  key={id}
-                  type="button"
-                  className="tab"
-                  aria-pressed={tab === id}
-                  onClick={() => setTab(id as Tab)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            {tab === "measure" && (
-              <MeasureTab
-                draft={draft}
-                drawing={drawing.box}
-                onChange={setDraft}
-              />
-            )}
-            {tab === "tips" && (
-              <div>
-                <label>
-                  Fit tips
-                  <textarea
-                    id="tips"
-                    className="field"
-                    rows={5}
-                    maxLength={2000}
-                    placeholder="For example, Runs small through the shoulders. Size up if you're between sizes."
-                    value={draft.content.words.tips ?? ""}
-                    onChange={(e) =>
-                      setDraft(model.setWord(draft, "tips", e.target.value))
-                    }
-                  />
-                </label>
-                <div className="row">
-                  <span className="help">
-                    Shoppers see these under the size table.
-                  </span>
-                  <span className="help">
-                    {(draft.content.words.tips ?? "").length.toLocaleString(
-                      "en-US",
-                    )}{" "}
-                    of 2,000 characters
-                  </span>
+              {badVideo ? (
+                <div id="video-err" className="fielderr">
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    aria-hidden="true"
+                  >
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 7.5v5.5M12 16.5v.01" />
+                  </svg>
+                  <span>{VIDEO_ERROR}</span>
                 </div>
-              </div>
-            )}
-            {tab === "media" && (
-              <div className="col">
-                <label>
-                  Fit video
-                  <input
-                    id="video"
-                    type="url"
-                    className={badVideo ? "field bad" : "field"}
-                    aria-invalid={badVideo || undefined}
-                    aria-describedby={badVideo ? "video-err" : undefined}
-                    value={video}
-                    onChange={(e) =>
-                      setDraft(model.setVideo(draft, e.target.value))
-                    }
-                  />
-                </label>
-                {badVideo ? (
-                  <div id="video-err" className="fielderr">
-                    <svg
-                      width="16"
-                      height="16"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      aria-hidden="true"
-                    >
-                      <circle cx="12" cy="12" r="9" />
-                      <path d="M12 7.5v5.5M12 16.5v.01" />
+              ) : (
+                <p className="help">A YouTube or Vimeo link, one per chart.</p>
+              )}
+              {site && (
+                <div className="video">
+                  <div className="thumb" aria-hidden="true">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="#fff">
+                      <path d="M8 5v14l11-7z" />
                     </svg>
-                    <span>{VIDEO_ERROR}</span>
                   </div>
-                ) : (
-                  <p className="help">
-                    A YouTube or Vimeo link, one per chart.
-                  </p>
-                )}
-                {site && (
-                  <div className="video">
-                    <div className="thumb" aria-hidden="true">
-                      <svg
-                        width="22"
-                        height="22"
-                        viewBox="0 0 24 24"
-                        fill="#fff"
-                      >
-                        <path d="M8 5v14l11-7z" />
-                      </svg>
-                    </div>
-                    <div className="grow">
-                      <strong>{site} video</strong>
-                      <div className="help">Plays inside the size guide.</div>
-                    </div>
-                    <button
-                      type="button"
-                      className="btn2"
-                      onClick={() => setDraft(model.setVideo(draft, ""))}
-                    >
-                      Remove video
-                    </button>
+                  <div className="grow">
+                    <strong>{site} video</strong>
+                    <div className="help">Plays inside the size guide.</div>
                   </div>
-                )}
-              </div>
-            )}
-            {tab === "table" && (
-              <>
-                <div className="row">
-                  <div role="group" aria-label="Units" className="segs">
-                    {(["in", "cm"] as const).map((u) => (
-                      <button
-                        key={u}
-                        type="button"
-                        aria-pressed={draft.content.unit === u}
-                        onClick={() => setDraft(model.setUnit(draft, u))}
-                      >
-                        {u}
-                      </button>
-                    ))}
-                  </div>
-                  <s-stack direction="inline" gap="small-200">
-                    <s-button
-                      disabled={t.rows.length >= model.MAX_ROWS}
-                      onClick={() => edit(model.addSize(view))}
-                    >
-                      Add size
-                    </s-button>
-                    <s-button
-                      disabled={t.columns.length >= model.MAX_COLUMNS}
-                      onClick={() => edit(model.addMeasurement(view))}
-                    >
-                      Add measurement
-                    </s-button>
-                  </s-stack>
-                </div>
-                {ti > 0 && !t.rows.length && tableHead}
-                {t.rows.length ? (
-                  <ChartTable
-                    key={t.id}
-                    draft={view}
-                    errors={model.focusErrors(errors, ti)}
-                    problems={listed.filter((p) => p.table === ti)}
-                    dropped={drops.flatMap((x) => x.cells)}
-                    onChange={edit}
-                    onPaste={() => setPasting(true)}
-                    onRemove={(sel) => {
-                      edit(model.remove(view, sel));
-                      // Cell findings name sizes by position, so they move up too.
-                      if (!notice?.fieldErrors) return;
-                      const left = model.focusErrors(
-                        model.removeErrors(
-                          view,
-                          sel,
-                          model.focusErrors(notice.fieldErrors, ti),
-                        ),
-                        ti,
-                      );
-                      settle(left);
-                    }}
-                    head={ti > 0 && tableHead}
-                  />
-                ) : (
-                  <div className="blank">
-                    <svg
-                      width="56"
-                      height="56"
-                      viewBox="0 0 48 48"
-                      fill="none"
-                      stroke="#2448A8"
-                      strokeLinecap="square"
-                      aria-hidden="true"
-                    >
-                      <path
-                        d="M10 40V10h30"
-                        strokeWidth="3"
-                        strokeDasharray="4 3"
-                      />
-                      <path d="M17 40V17h23" strokeWidth="6" />
-                      <path d="M24 40V24h16" strokeWidth="3" />
-                    </svg>
-                    <h2>A blank chart, ready for sizes</h2>
-                    <p className="help">
-                      Paste a whole table from a spreadsheet or supplier sheet
-                      and Fitted fills in the sizes and measurements. Or pick a
-                      template above.
-                    </p>
-                    <s-button
-                      variant="primary"
-                      onClick={() => setPasting(true)}
-                    >
-                      Paste whole chart
-                    </s-button>
-                  </div>
-                )}
-                {pasting && (
-                  <PasteDialog
-                    onClose={() => setPasting(false)}
-                    onFill={fill}
-                  />
-                )}
-                <p className="help">
-                  Type in inches or centimeters. Fitted converts the other unit
-                  for shoppers automatically.
-                </p>
-                {ti === 0 &&
-                  tables.slice(1).map((x, j) => (
-                    <div key={x.id} className="tablerow">
-                      <div>
-                        <strong>
-                          {`Table ${j + 2}${title(j + 1) && `: ${title(j + 1)}`}`}
-                        </strong>
-                        <div className="help">
-                          {model.measuresOf(draft, j + 1)
-                            ? `${model.measuresOf(draft, j + 1)}, shown under its own heading in the same chart`
-                            : "Shown under its own heading in the same chart"}
-                        </div>
-                      </div>
-                      <div className="row start">
-                        <button
-                          type="button"
-                          className="btn2"
-                          disabled={full}
-                          onClick={() => clone(j + 1)}
-                        >
-                          Clone table
-                        </button>
-                        <button
-                          type="button"
-                          className="btn2"
-                          onClick={() => setAt(j + 1)}
-                        >
-                          Edit table
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                <div className="row start">
                   <button
                     type="button"
                     className="btn2"
-                    disabled={full}
-                    onClick={() => {
-                      setDraft(model.addTable(draft));
-                      setAt(tables.length);
-                    }}
+                    onClick={() => setDraft(model.setVideo(draft, ""))}
                   >
-                    Add another table
-                  </button>
-                  {ti > 0 && (
-                    <span className="help">
-                      A chart holds up to 4 tables. Shoppers see them in order,
-                      each under its heading.
-                    </span>
-                  )}
-                </div>
-                <label>
-                  Note under the table
-                  <textarea
-                    className="field"
-                    rows={2}
-                    value={draft.content.words[`${t.id}.note`] ?? ""}
-                    onChange={(e) =>
-                      setDraft(
-                        model.setWord(draft, `${t.id}.note`, e.target.value),
-                      )
-                    }
-                  />
-                </label>
-                {/* The same drawing as How to measure's, shown there. */}
-                <div className="boxes">
-                  <button
-                    type="button"
-                    className="drop"
-                    onClick={() => {
-                      setTab("measure");
-                      drawing.open();
-                    }}
-                  >
-                    <strong>How-to-measure image</strong>
-                    <span className="help">
-                      PNG or JPG, shown in the How to measure tab
-                    </span>
-                  </button>
-                  {/* The same link as the Media tab's, edited there. */}
-                  <button
-                    type="button"
-                    className="drop"
-                    onClick={() => {
-                      setTab("media");
-                      setTimeout(() =>
-                        document.getElementById("video")?.focus(),
-                      );
-                    }}
-                  >
-                    <strong>Fit video</strong>
-                    <span className="help">Paste a YouTube or Vimeo link</span>
+                    Remove video
                   </button>
                 </div>
-              </>
-            )}
-            {drawing.input}
-          </section>
-          {props.look && (
-            <ChartPreview
-              draft={draft}
-              look={props.look}
-              image={drawing.url}
-              tab={tab}
-            />
+              )}
+            </div>
           )}
-        </div>
+          {tab === "table" && (
+            <>
+              <div className="row">
+                <div role="group" aria-label="Units" className="segs">
+                  {(["in", "cm"] as const).map((u) => (
+                    <button
+                      key={u}
+                      type="button"
+                      aria-pressed={draft.content.unit === u}
+                      onClick={() => setDraft(model.setUnit(draft, u))}
+                    >
+                      {u}
+                    </button>
+                  ))}
+                </div>
+                <s-stack direction="inline" gap="small-200">
+                  <s-button
+                    disabled={t.rows.length >= model.MAX_ROWS}
+                    onClick={() => edit(model.addSize(view))}
+                  >
+                    Add size
+                  </s-button>
+                  <s-button
+                    disabled={t.columns.length >= model.MAX_COLUMNS}
+                    onClick={() => edit(model.addMeasurement(view))}
+                  >
+                    Add measurement
+                  </s-button>
+                </s-stack>
+              </div>
+              {ti > 0 && !t.rows.length && tableHead}
+              {t.rows.length ? (
+                <ChartTable
+                  key={t.id}
+                  draft={view}
+                  errors={model.focusErrors(errors, ti)}
+                  problems={listed.filter((p) => p.table === ti)}
+                  dropped={drops.flatMap((x) => x.cells)}
+                  onChange={edit}
+                  onPaste={() => setPasting(true)}
+                  onRemove={(sel) => {
+                    edit(model.remove(view, sel));
+                    // Cell findings name sizes by position, so they move up too.
+                    if (!notice?.fieldErrors) return;
+                    const left = model.focusErrors(
+                      model.removeErrors(
+                        view,
+                        sel,
+                        model.focusErrors(notice.fieldErrors, ti),
+                      ),
+                      ti,
+                    );
+                    settle(left);
+                  }}
+                  head={ti > 0 && tableHead}
+                />
+              ) : (
+                <div className="blank">
+                  <svg
+                    width="56"
+                    height="56"
+                    viewBox="0 0 48 48"
+                    fill="none"
+                    stroke="#2448A8"
+                    strokeLinecap="square"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M10 40V10h30"
+                      strokeWidth="3"
+                      strokeDasharray="4 3"
+                    />
+                    <path d="M17 40V17h23" strokeWidth="6" />
+                    <path d="M24 40V24h16" strokeWidth="3" />
+                  </svg>
+                  <h2>A blank chart, ready for sizes</h2>
+                  <p className="help">
+                    Paste a whole table from a spreadsheet or supplier sheet and
+                    Fitted fills in the sizes and measurements. Or pick a
+                    template above.
+                  </p>
+                  <s-button variant="primary" onClick={() => setPasting(true)}>
+                    Paste whole chart
+                  </s-button>
+                </div>
+              )}
+              {pasting && (
+                <PasteDialog onClose={() => setPasting(false)} onFill={fill} />
+              )}
+              <p className="help">
+                Type in inches or centimeters. Fitted converts the other unit
+                for shoppers automatically.
+              </p>
+              {ti === 0 &&
+                tables.slice(1).map((x, j) => (
+                  <div key={x.id} className="tablerow">
+                    <div>
+                      <strong>
+                        {`Table ${j + 2}${title(j + 1) && `: ${title(j + 1)}`}`}
+                      </strong>
+                      <div className="help">
+                        {model.measuresOf(draft, j + 1)
+                          ? `${model.measuresOf(draft, j + 1)}, shown under its own heading in the same chart`
+                          : "Shown under its own heading in the same chart"}
+                      </div>
+                    </div>
+                    <div className="row start">
+                      <button
+                        type="button"
+                        className="btn2"
+                        disabled={full}
+                        onClick={() => clone(j + 1)}
+                      >
+                        Clone table
+                      </button>
+                      <button
+                        type="button"
+                        className="btn2"
+                        onClick={() => setAt(j + 1)}
+                      >
+                        Edit table
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              <div className="row start">
+                <button
+                  type="button"
+                  className="btn2"
+                  disabled={full}
+                  onClick={() => {
+                    setDraft(model.addTable(draft));
+                    setAt(tables.length);
+                  }}
+                >
+                  Add another table
+                </button>
+                {ti > 0 && (
+                  <span className="help">
+                    A chart holds up to 4 tables. Shoppers see them in order,
+                    each under its heading.
+                  </span>
+                )}
+              </div>
+              <label>
+                Note under the table
+                <textarea
+                  className="field"
+                  rows={2}
+                  value={draft.content.words[`${t.id}.note`] ?? ""}
+                  onChange={(e) =>
+                    setDraft(
+                      model.setWord(draft, `${t.id}.note`, e.target.value),
+                    )
+                  }
+                />
+              </label>
+              {/* The same drawing as How to measure's, shown there. */}
+              <div className="boxes">
+                <button
+                  type="button"
+                  className="drop"
+                  onClick={() => {
+                    setTab("measure");
+                    drawing.open();
+                  }}
+                >
+                  <strong>How-to-measure image</strong>
+                  <span className="help">
+                    PNG or JPG, shown in the How to measure tab
+                  </span>
+                </button>
+                {/* The same link as the Media tab's, edited there. */}
+                <button
+                  type="button"
+                  className="drop"
+                  onClick={() => {
+                    setTab("media");
+                    setTimeout(() => document.getElementById("video")?.focus());
+                  }}
+                >
+                  <strong>Fit video</strong>
+                  <span className="help">Paste a YouTube or Vimeo link</span>
+                </button>
+              </div>
+            </>
+          )}
+          {drawing.input}
+        </section>
+        {props.look && (
+          <ChartPreview
+            draft={draft}
+            look={props.look}
+            image={drawing.url}
+            tab={tab}
+          />
+        )}
       </div>
     </s-page>
   );

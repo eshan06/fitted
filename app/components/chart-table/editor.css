@@ -691,18 +691,20 @@
   flex: none;
   margin-top: 2px;
 }
-/* The live preview beside the editor, under it once space runs out. */
-.editor .split {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
+/* The live preview beside the chart's card, under it once space runs out;
+   everything else in the editor takes a whole line. */
+.editor.split {
+  flex-flow: row wrap;
   align-items: flex-start;
 }
-.editor .split > section {
-  flex: 3 1 30rem;
+.editor.split > * {
+  flex: 1 1 100%;
   min-width: 0;
 }
-.editor .preview {
+.editor.split > section.card {
+  flex: 3 1 30rem;
+}
+.editor.split > .preview {
   flex: 2 1 18.75rem;
   min-width: 0;
   gap: 12px;
