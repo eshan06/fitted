@@ -1,7 +1,7 @@
 // The Editor board (Fitted canvas): name, template, status, and the tabs: the
-// size tables with their tools, units and notes, How to measure, and Fit tips,
-// saved through App Bridge's save bar. Later steps add the Media tab, adding,
-// cloning and removing tables, and the live preview.
+// size tables with their tools, units and notes, How to measure, Fit tips and
+// Media, saved through App Bridge's save bar. A later step adds the live
+// preview.
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
   Link,
@@ -15,6 +15,7 @@ import type { FieldErrors, Template } from "../../models/chart.server";
 import { ChartTable } from "./ChartTable";
 import { PasteDialog } from "./PasteDialog";
 import { MeasureTab, useMeasureImage } from "./MeasureTab";
+import { VIDEO_ERROR, videoSite } from "../../lib/video";
 import * as model from "./model";
 import "./editor.css";
 
@@ -23,11 +24,18 @@ const TABS = {
   table: "Size table",
   measure: "How to measure",
   tips: "Fit tips",
+  media: "Media",
 };
 type Tab = keyof typeof TABS;
 // The tab that holds a field the banner links to (model.problems).
 const tabOf = (id: string): Tab =>
-  id === "tips" ? "tips" : id.startsWith("m-") ? "measure" : "table";
+  id === "tips"
+    ? "tips"
+    : id === "video"
+      ? "media"
+      : id.startsWith("m-")
+        ? "measure"
+        : "table";
 
 /** What the action answers (ARCHITECTURE §15). */
 type Answer = {
@@ -127,6 +135,8 @@ export function Editor(props: {
   const view = model.focus(draft, ti);
   const edit = (d: model.Draft) => setDraft(model.focus(d, ti));
   const t = view.content.tables[0];
+  const video = draft.content.videoUrl ?? "";
+  const site = videoSite(video.trim());
   const set = (patch: Partial<model.Draft>) => setDraft({ ...draft, ...patch });
   const created = answer?.created;
   const dirty =
@@ -299,15 +309,28 @@ export function Editor(props: {
   // Once a save is stored, the numbers are gone, even when only the status
   // failed and the editor stays open.
   const drops = base.updatedAt === props.updatedAt ? model.dropped(draft) : [];
+  const badVideo = !!video.trim() && !site;
+  // Findings left after a remove; with none, the banner goes, as after a fix
+  // and save.
+  const settle = (left: FieldErrors) =>
+    Object.keys(left).length
+      ? setLocal({ ...notice, fieldErrors: left })
+      : dismiss();
 
-  // The Editor board's "Editing table 2".
+  // The Editor board's "Editing table 2". A new or cloned table opens.
+  const full = tables.length >= model.MAX_TABLES;
   const title = (i: number) => model.tableTitle(draft, i);
+  const clone = (i: number) => {
+    setDraft(model.cloneTable(draft, i));
+    setAt(tables.length);
+  };
   const word = (key: string, name: string) => (
     <label className="grow">
       {name}
       <input
         id={key.replace(".", "-")}
         className="field"
+        maxLength={500}
         value={draft.content.words[key] ?? ""}
         onChange={(e) => setDraft(model.setWord(draft, key, e.target.value))}
       />
@@ -315,18 +338,42 @@ export function Editor(props: {
   );
   const tableHead = (
     <>
-      {/* Clone table and Remove table join it with #199. */}
-      <div role="group" aria-label="Tables in this chart" className="segs">
-        {tables.map((x, i) => (
+      <div className="row">
+        <div role="group" aria-label="Tables in this chart" className="segs">
+          {tables.map((x, i) => (
+            <button
+              key={x.id}
+              type="button"
+              aria-pressed={i === ti}
+              onClick={() => setAt(i)}
+            >
+              {`${i + 1}. ${title(i) || `Table ${i + 1}`}`}
+            </button>
+          ))}
+        </div>
+        <div className="row start">
           <button
-            key={x.id}
             type="button"
-            aria-pressed={i === ti}
-            onClick={() => setAt(i)}
+            className="btn2"
+            disabled={full}
+            onClick={() => clone(ti)}
           >
-            {`${i + 1}. ${title(i) || `Table ${i + 1}`}`}
+            Clone table
           </button>
-        ))}
+          <button
+            type="button"
+            className="btn2 danger"
+            disabled={!model.canRemoveTable(draft, ti)}
+            onClick={() => {
+              const errs = notice?.fieldErrors;
+              setDraft(model.removeTable(draft, ti));
+              setAt(ti - 1);
+              if (errs) settle(model.removeTableErrors(draft, ti, errs));
+            }}
+          >
+            Remove table
+          </button>
+        </div>
       </div>
       <div className="row">
         {word(`${t.id}.title`, "Heading")}
@@ -535,6 +582,64 @@ export function Editor(props: {
               </div>
             </div>
           )}
+          {tab === "media" && (
+            <div className="col">
+              <label>
+                Fit video
+                <input
+                  id="video"
+                  type="url"
+                  className={badVideo ? "field bad" : "field"}
+                  aria-invalid={badVideo || undefined}
+                  aria-describedby={badVideo ? "video-err" : undefined}
+                  value={video}
+                  onChange={(e) =>
+                    setDraft(model.setVideo(draft, e.target.value))
+                  }
+                />
+              </label>
+              {badVideo ? (
+                <div id="video-err" className="fielderr">
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    aria-hidden="true"
+                  >
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 7.5v5.5M12 16.5v.01" />
+                  </svg>
+                  <span>{VIDEO_ERROR}</span>
+                </div>
+              ) : (
+                <p className="help">A YouTube or Vimeo link, one per chart.</p>
+              )}
+              {site && (
+                <div className="video">
+                  <div className="thumb" aria-hidden="true">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="#fff">
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
+                  </div>
+                  <div className="grow">
+                    <strong>{site} video</strong>
+                    <div className="help">Plays inside the size guide.</div>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn2"
+                    onClick={() => setDraft(model.setVideo(draft, ""))}
+                  >
+                    Remove video
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           {tab === "table" && (
             <>
               <div className="row">
@@ -587,10 +692,7 @@ export function Editor(props: {
                       ),
                       ti,
                     );
-                    // With none left, the banner goes, as after a fix and save.
-                    if (Object.keys(left).length)
-                      setLocal({ ...notice, fieldErrors: left });
-                    else dismiss();
+                    settle(left);
                   }}
                   head={ti > 0 && tableHead}
                 />
@@ -644,15 +746,44 @@ export function Editor(props: {
                           : "Shown under its own heading in the same chart"}
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      className="btn2"
-                      onClick={() => setAt(j + 1)}
-                    >
-                      Edit table
-                    </button>
+                    <div className="row start">
+                      <button
+                        type="button"
+                        className="btn2"
+                        disabled={full}
+                        onClick={() => clone(j + 1)}
+                      >
+                        Clone table
+                      </button>
+                      <button
+                        type="button"
+                        className="btn2"
+                        onClick={() => setAt(j + 1)}
+                      >
+                        Edit table
+                      </button>
+                    </div>
                   </div>
                 ))}
+              <div className="row start">
+                <button
+                  type="button"
+                  className="btn2"
+                  disabled={full}
+                  onClick={() => {
+                    setDraft(model.addTable(draft));
+                    setAt(tables.length);
+                  }}
+                >
+                  Add another table
+                </button>
+                {ti > 0 && (
+                  <span className="help">
+                    A chart holds up to 4 tables. Shoppers see them in order,
+                    each under its heading.
+                  </span>
+                )}
+              </div>
               <label>
                 Note under the table
                 <textarea
@@ -680,6 +811,18 @@ export function Editor(props: {
                   <span className="help">
                     PNG or JPG, shown in the How to measure tab
                   </span>
+                </button>
+                {/* The same link as the Media tab's, edited there. */}
+                <button
+                  type="button"
+                  className="drop"
+                  onClick={() => {
+                    setTab("media");
+                    setTimeout(() => document.getElementById("video")?.focus());
+                  }}
+                >
+                  <strong>Fit video</strong>
+                  <span className="help">Paste a YouTube or Vimeo link</span>
                 </button>
               </div>
             </>

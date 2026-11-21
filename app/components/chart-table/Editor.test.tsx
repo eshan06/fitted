@@ -1481,7 +1481,7 @@ describe("How to measure and Fit tips tabs", () => {
     const { sent } = await open([stored()]);
     expect(
       [...document.querySelectorAll(".tab")].map((b) => b.textContent),
-    ).toEqual(["Size table", "How to measure", "Fit tips"]);
+    ).toEqual(["Size table", "How to measure", "Fit tips", "Media"]);
     expect(tab("Size table").getAttribute("aria-pressed")).toBe("true");
     await openTab("How to measure");
     expect(tab("How to measure").getAttribute("aria-pressed")).toBe("true");
@@ -1811,12 +1811,16 @@ describe("More tables", () => {
     expect(row.textContent).toContain(
       "Length and sleeve, shown under its own heading in the same chart",
     );
+    expect(text()).not.toContain("A chart holds up to 4 tables");
     await click("Edit table");
     expect(tables()).toEqual([
       "1. Body measurements",
       "2. Garment measurements *",
     ]);
     expect(document.querySelector(".tablerow")).toBeNull();
+    expect(text()).toContain(
+      "A chart holds up to 4 tables. Shoppers see them in order, each under its heading.",
+    );
     expect(byLabel("XS, Bust")).toBeNull();
     await type(byLabel("XS, Length"), "24.5");
     await type(
@@ -1893,12 +1897,13 @@ describe("More tables", () => {
     expect(byLabel("Size 1").className).toContain("drop");
   });
 
-  it("keeps table 2's fit finder measurement, and the chart still saves", async () => {
+  it("keeps table 2's fit finder measurement, and never removes the fit finder's table", async () => {
     const { sent } = await open([twoTables(true)]);
     await click("Edit table");
     await act(async () => byLabel("Column 2 name").focus());
     await click("Remove measurement");
     expect(missed()).toBe("Length can't be removed");
+    expect((button("Remove table") as HTMLButtonElement).disabled).toBe(true);
     await type(document.querySelector<HTMLInputElement>("#name")!, "Tops");
     await click("Save");
     expect(validateChart(sent[0].chart).content.fit?.table).toBe("t2");
@@ -1977,6 +1982,70 @@ describe("More tables", () => {
     expect(tables()).toContain("2. Garment measurements *");
   });
 
+  it("clones and adds tables up to 4, removes one, and discards back to the stored two", async () => {
+    const { sent } = await open([twoTables()]);
+    await click("Clone table");
+    expect(tables()).toEqual([
+      "1. Body measurements",
+      "2. Garment measurements",
+      "3. Garment measurements *",
+    ]);
+    expect(byLabel("XS, Length").value).toBe("24");
+    await click("Add another table");
+    expect(tables()).toEqual([
+      "1. Body measurements",
+      "2. Garment measurements",
+      "3. Garment measurements",
+      "4. Table 4 *",
+    ]);
+    expect(byLabel("Size 1").value).toBe("XS");
+    for (const b of ["Add another table", "Clone table"])
+      expect((button(b) as HTMLButtonElement).disabled).toBe(true);
+    await click("Remove table");
+    expect(tables()).toContain("3. Garment measurements *");
+    expect((button("Add another table") as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+    await click("Discard");
+    expect(document.querySelectorAll(".tablerow")).toHaveLength(0);
+    expect(tables()).toContain("2. Garment measurements *");
+    await click("Remove table");
+    await click("Save");
+    expect(validateChart(sent[0].chart).content.tables).toHaveLength(1);
+  });
+
+  it("takes a removed table's findings off the banner, and caps its heading at 500 characters", async () => {
+    await open([twoTables()]);
+    await click("Edit table");
+    for (const id of ["#t2-title", "#t2-sub"])
+      expect(document.querySelector(id)?.getAttribute("maxlength")).toBe("500");
+    await type(byLabel("XS, Length"), "0");
+    await type(document.querySelector<HTMLInputElement>("#name")!, "");
+    await click("Save");
+    const banner = () => document.querySelector('s-banner[tone="critical"]');
+    expect(banner()?.textContent).toContain("XS, Length is 0");
+    await click("Remove table");
+    expect(tables()).toEqual([]);
+    expect(banner()?.textContent).not.toContain("XS, Length");
+    expect(banner()?.textContent).toContain("Chart name");
+  });
+
+  it("moves a later table's findings up when a table before it is removed", async () => {
+    await open([twoTables()]);
+    await click("Clone table");
+    await type(byLabel("XS, Length"), "0");
+    await click("Save");
+    await click("2. Garment measurements");
+    await click("Remove table");
+    expect(document.querySelectorAll(".tablerow")).toHaveLength(1);
+    const banner = document.querySelector('s-banner[tone="critical"]')!;
+    await act(async () => banner.querySelector("a")!.click());
+    await settle();
+    expect(tables()).toContain("2. Garment measurements *");
+    expect(document.activeElement).toBe(byLabel("XS, Length"));
+    expect(byLabel("XS, Length").getAttribute("aria-invalid")).toBe("true");
+  });
+
   it("asks before leaving with unsaved edits in table 2", async () => {
     bridge.saveBar.leaveConfirmation.mockReturnValue(new Promise(() => {}));
     await open([twoTables()]);
@@ -1991,5 +2060,60 @@ describe("More tables", () => {
     expect(bridge.saveBar.leaveConfirmation).toHaveBeenCalledTimes(1);
     expect(text()).not.toContain("Left for");
     expect(byLabel("XS, Length").value).toBe("30");
+  });
+});
+
+describe("Media tab", () => {
+  const field = () => document.querySelector<HTMLInputElement>("#video")!;
+  const openMedia = async () => {
+    await act(async () =>
+      [...document.querySelectorAll<HTMLButtonElement>(".tab")]
+        .find((b) => b.textContent === "Media")!
+        .click(),
+    );
+  };
+
+  it("marks a link that isn't YouTube or Vimeo as it's typed, and saves a good one", async () => {
+    const { sent } = await open([stored()]);
+    await openMedia();
+    expect(text()).toContain("A YouTube or Vimeo link, one per chart.");
+    await type(field(), "https://www.tiktok.com/@north-linen/video/1");
+    expect(field().getAttribute("aria-invalid")).toBe("true");
+    expect(field().getAttribute("aria-describedby")).toBe("video-err");
+    expect(document.querySelector("#video-err")?.textContent).toBe(
+      "Use an https link from YouTube or Vimeo.",
+    );
+    expect(text()).not.toContain("YouTube video");
+    await click("Save");
+    expect(sent).toEqual([]);
+    const banner = document.querySelector('s-banner[tone="critical"]')!;
+    expect(banner.querySelector("a")?.getAttribute("href")).toBe("#video");
+    await type(field(), "https://www.youtube.com/watch?v=abc");
+    expect(field().getAttribute("aria-invalid")).toBeNull();
+    expect(text()).toContain("YouTube video");
+    expect(text()).toContain("Plays inside the size guide.");
+    await click("Save");
+    expect(validateChart(sent[0].chart).content.videoUrl).toBe(
+      "https://www.youtube.com/watch?v=abc",
+    );
+  });
+
+  it("opens from the Fit video box, and Remove video saves the chart without it", async () => {
+    const withVideo = stored();
+    withVideo.stored.chart.content.videoUrl = "https://vimeo.com/76979871";
+    const { sent } = await open([withVideo]);
+    await act(async () => {
+      [...document.querySelectorAll<HTMLButtonElement>(".boxes .drop")]
+        .find((b) => b.textContent?.startsWith("Fit video"))!
+        .click();
+    });
+    await settle();
+    expect(document.activeElement).toBe(field());
+    expect(field().value).toBe("https://vimeo.com/76979871");
+    expect(text()).toContain("Vimeo video");
+    await click("Remove video");
+    expect(field().value).toBe("");
+    await click("Save");
+    expect("videoUrl" in validateChart(sent[0].chart).content).toBe(false);
   });
 });

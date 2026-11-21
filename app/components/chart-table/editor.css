@@ -647,11 +647,15 @@
   max-width: 100%;
   max-height: 240px;
 }
-/* Later tables (Editor board). */
+/* Later tables and the Media tab (Editor board). */
 .editor .segs {
   flex-wrap: wrap;
 }
-.editor .tablerow {
+.editor .btn2.danger:not(:disabled) {
+  color: #8e1f0b;
+}
+.editor .tablerow,
+.editor .video {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
@@ -660,4 +664,30 @@
   padding: 12px 14px;
   border: 1px solid #e1e3e5;
   border-radius: 8px;
+}
+.editor .video {
+  border-radius: 10px;
+  padding: 12px;
+}
+.editor .video .thumb {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 120px;
+  height: 68px;
+  border-radius: 8px;
+  background: #202223;
+}
+.editor .fielderr {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: #8e1f0b;
+}
+.editor .fielderr svg {
+  flex: none;
+  margin-top: 2px;
 }
